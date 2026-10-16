@@ -1,0 +1,56 @@
+from __future__ import annotations
+
+import os
+
+os.environ["DATABASE_URL"] = os.environ.get(
+    "DATABASE_URL", "postgresql+psycopg://imm:imm@localhost:54329/imm"
+)
+os.environ["SESSION_SECRET"] = "test-session-secret"
+os.environ["OPERATOR_PASSWORD"] = "test-password"
+os.environ["LIVE_ORDER_SERVER_FLAG"] = "false"
+os.environ["WEB_ORIGIN"] = "http://localhost:3000"
+os.environ["INTEGRATIONS_SECRET_KEY"] = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+
+from alembic import command
+from alembic.config import Config
+from fastapi.testclient import TestClient
+import pytest
+from sqlalchemy import text
+
+from app.db import get_engine, reset_engine
+from app.main import app
+from app.settings import get_settings
+
+
+@pytest.fixture(scope="session", autouse=True)
+def migrated_database():
+    get_settings.cache_clear()
+    reset_engine()
+    command.upgrade(Config("alembic.ini"), "head")
+    yield
+    reset_engine()
+
+
+@pytest.fixture
+def db(migrated_database):
+    with get_engine().begin() as connection:
+        connection.execute(
+            text(
+                "TRUNCATE audit_events, config_revisions, ops_state, integration_credentials, risk_events, risk_sessions, paper_transitions, paper_account_events, operator_accounts, worker_leases, watchlist_suggestions RESTART IDENTITY"
+            )
+        )
+    yield
+
+
+@pytest.fixture
+def client(db):
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+def login(client: TestClient) -> str:
+    response = client.post("/api/session/login", json={"password": "test-password"})
+    assert response.status_code == 200, response.text
+    token = client.cookies.get("imm_csrf")
+    assert token
+    return token

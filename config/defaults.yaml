@@ -1,0 +1,78 @@
+# Revision 1 defaults. These are policy starting points, not measured optima.
+# No market prices, model probabilities, or broker results are stored here.
+runtime:
+  mode: PAPER
+  live_trading_enabled: false
+  unattended_orders: false
+sources: []
+freshness:
+  index_warn_seconds: 60
+  option_block_seconds: 15
+  crude_warn_seconds: 900
+  crude_shock_warn_seconds: 300
+context_book:
+  standing:
+    - NIFTY
+    - SENSEX
+    - INDIA_VIX
+    - USDINR
+    - BRENT
+    - MCX_CRUDE
+    - WTI
+    - GOLD
+  situations:
+    - code: ENERGY_SUPPLY
+      scope: WEEK
+      driver_codes: [BRENT_WTI_SPREAD]
+    - code: SHIPPING_DISRUPTION
+      scope: WEEK
+      driver_codes: [FREIGHT]
+    - code: RATES_LIQUIDITY
+      scope: MONTH
+      driver_codes: [US_YIELDS, INDIA_10Y]
+    - code: TRADE_TARIFF
+      scope: MONTH
+      driver_codes: [DXY, SECTOR_INDICES]
+    - code: RISK_OFF
+      scope: DAY
+      driver_codes: [GLOBAL_FUTURES]
+    - code: DOMESTIC_POLICY
+      scope: WEEK
+      driver_codes: [INDIA_YIELDS, SECTOR_INDICES]
+horizons:
+  enabled: [M15, M30, SESSION, NEXT_SESSION]
+  threshold_grid: []
+  selection_metric: null
+fusion:
+  enabled: true
+  min_log_loss_improvement: null
+  tail_metric: worst_decile_mean_return
+risk:
+  risk_capital_inr: null
+  max_risk_fraction_per_trade: 0.01
+  daily_loss_fraction: 0.02
+  daily_loss_includes_unrealized: true
+  cash_buffer_fraction: 0.20
+  max_open_positions: 2
+  max_new_entries_per_session: 3
+  consecutive_loss_cooldown: 2
+  drawdown_lockout_fraction: null
+  allowed_structures: [LONG_CE, LONG_PE]
+  allowed_underlyings: [NIFTY, SENSEX, CRUDEOILMINI]
+  max_futures_lots_per_trade: 1
+  quote_max_age_seconds: 15
+execution:
+  quote_max_age_seconds: 15
+  paper_haircut: half_spread
+  extra_tick_penalty: false
+schedule:
+  analysis_cadence_seconds: 300
+  holiday_calendar_source_id: null
+cursor:
+  model_id: composer-2.5
+  news_open_web: false
+  macro_open_web: false
+  repair_attempts: 1
+notify:
+  adapter: log
+  events: []
