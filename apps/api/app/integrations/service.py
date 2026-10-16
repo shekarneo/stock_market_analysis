@@ -73,6 +73,12 @@ def read_status(session: Session) -> dict:
     return {
         "groww": groww,
         "openai": _public_openai(rows.get("openai")),
+        "gemini": _public_gemini(rows.get("gemini")),
+        "upstox": _public_upstox(rows.get("upstox")),
+        "kite": _public_kite(rows.get("kite")),
+        "angelone": _public_angelone(rows.get("angelone")),
+        "indmoney": _public_indmoney(),
+        "nse_official": _public_nse_official(),
         **public_status(),
     }
 
@@ -219,6 +225,90 @@ def set_openai_enabled(session: Session, enabled: bool) -> dict:
     return read_status(session)
 
 
+def save_upstox(session: Session, settings: Settings, body: dict) -> dict:
+    access_token = _required(body.get("access_token"), "Access token")
+    row = _row(session, "upstox")
+    row.ciphertext = encrypt_secrets(settings, {"access_token": access_token})
+    row.auth_method = "access_token"
+    row.label = _label(body.get("label") or "") or None
+    if "enabled" in body:
+        row.enabled = bool(body["enabled"])
+    _clear_test(row)
+    row.updated_at = utcnow()
+    session.flush()
+    return read_status(session)
+
+
+def save_kite(session: Session, settings: Settings, body: dict) -> dict:
+    api_key = _required(body.get("api_key"), "API key")
+    access_token = _required(body.get("access_token"), "Access token")
+    row = _row(session, "kite")
+    row.ciphertext = encrypt_secrets(settings, {"api_key": api_key, "access_token": access_token})
+    row.auth_method = "token"
+    row.label = _label(body.get("label") or "") or None
+    if "enabled" in body:
+        row.enabled = bool(body["enabled"])
+    _clear_test(row)
+    row.updated_at = utcnow()
+    session.flush()
+    return read_status(session)
+
+
+def save_angelone(session: Session, settings: Settings, body: dict) -> dict:
+    api_key = _required(body.get("api_key"), "API key")
+    client_code = _required(body.get("client_code"), "Client code")
+    jwt_token = _required(body.get("jwt_token"), "JWT token")
+    row = _row(session, "angelone")
+    row.ciphertext = encrypt_secrets(settings, {"api_key": api_key, "client_code": client_code, "jwt_token": jwt_token})
+    row.auth_method = "jwt"
+    row.label = _label(body.get("label") or "") or None
+    if "enabled" in body:
+        row.enabled = bool(body["enabled"])
+    _clear_test(row)
+    row.updated_at = utcnow()
+    session.flush()
+    return read_status(session)
+
+
+def save_gemini(session: Session, settings: Settings, body: dict) -> dict:
+    api_key = _required(body.get("api_key"), "API key")
+    model = _model(body.get("model") or "gemini-1.5-pro")
+    row = _row(session, "gemini")
+    row.ciphertext = encrypt_secrets(settings, {"api_key": api_key})
+    row.model = model
+    row.auth_method = "api_key"
+    row.label = _label(body.get("label") or "") or None
+    if "enabled" in body:
+        row.enabled = bool(body["enabled"])
+    _clear_test(row)
+    row.updated_at = utcnow()
+    session.flush()
+    return read_status(session)
+
+
+def set_provider_enabled(session: Session, provider: str, enabled: bool) -> dict:
+    row = session.get(IntegrationCredential, provider)
+    if row is None or not row.ciphertext:
+        raise IntegrationError("NOT_CONFIGURED", f"Save {provider} credentials before enabling the integration.")
+    row.enabled = bool(enabled)
+    row.updated_at = utcnow()
+    session.flush()
+    return read_status(session)
+
+
+def set_gemini_profile(session: Session, model: str, label: str, *, confirm: bool) -> dict:
+    if confirm is not True:
+        raise IntegrationError("CONFIRMATION_REQUIRED", "Saving the Gemini model needs an explicit confirmation.")
+    row = session.get(IntegrationCredential, "gemini")
+    if row is None or not row.ciphertext:
+        raise IntegrationError("NOT_CONFIGURED", "Save a Gemini API key before changing the model.")
+    row.model = _model(model)
+    row.label = _label(label or "") or None
+    row.updated_at = utcnow()
+    session.flush()
+    return read_status(session)
+
+
 def clear_provider(session: Session, provider: str) -> dict:
     row = session.get(IntegrationCredential, provider)
     if row is not None:
@@ -278,6 +368,155 @@ def run_openai_test(session: Session, settings: Settings, caller=None) -> dict:
         ok, code, message = False, "PROVIDER_ERROR", redact_text(exc.__class__.__name__, [api_key])
     _safe_log(f"openai connection test {code}: {message}", [api_key])
     return _finish(session, row, ok, code, message, provider="openai")
+
+
+def run_upstox_test(session: Session, settings: Settings, caller=None) -> dict:
+    caller = caller or HttpxCaller()
+    from app.market.independent_provider import resolve_credentials_safe
+    creds, _ = resolve_credentials_safe("upstox")
+    row = session.get(IntegrationCredential, "upstox")
+    token = (creds or {}).get("access_token")
+    if not token and (row is None or not row.ciphertext):
+        return _finish(session, None, False, "NOT_CONFIGURED", "Upstox credentials are not saved.", provider="upstox")
+    if row and not row.enabled:
+        return _finish(session, row, False, "INTEGRATION_DISABLED", "Upstox is disabled. No request was sent.", provider="upstox")
+    if not token and row and row.ciphertext:
+        try:
+            secrets = decrypt_secrets(settings, row.ciphertext)
+            token = secrets.get("access_token")
+        except SecretBoxError as exc:
+            raise IntegrationError(exc.code, exc.message) from exc
+    if not token:
+        return _finish(session, row, False, "NOT_CONFIGURED", "Upstox access token missing.", provider="upstox")
+    try:
+        resp = caller.get("https://api.upstox.com/v2/user/profile", headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+        ok = getattr(resp, "status_code", 0) == 200
+        code = "CONNECTED" if ok else f"HTTP_{getattr(resp, 'status_code', 0)}"
+        message = "Upstox connection test succeeded." if ok else f"Upstox profile test failed with status {getattr(resp, 'status_code', 0)}"
+    except TimeoutError:
+        ok, code, message = False, "TIMEOUT", "The Upstox request timed out. It was not retried."
+    except Exception as exc:
+        ok, code, message = False, "PROVIDER_ERROR", exc.__class__.__name__
+    message = redact_text(message, [token])
+    _safe_log(f"upstox connection test {code}", [token])
+    return _finish(session, row, ok, code, message, provider="upstox")
+
+
+def run_kite_test(session: Session, settings: Settings, caller=None) -> dict:
+    caller = caller or HttpxCaller()
+    from app.market.independent_provider import resolve_credentials_safe
+    creds, _ = resolve_credentials_safe("kite")
+    row = session.get(IntegrationCredential, "kite")
+    api_key = (creds or {}).get("api_key")
+    access_token = (creds or {}).get("access_token")
+    if (not api_key or not access_token) and (row is None or not row.ciphertext):
+        return _finish(session, None, False, "NOT_CONFIGURED", "Kite credentials are not saved.", provider="kite")
+    if row and not row.enabled:
+        return _finish(session, row, False, "INTEGRATION_DISABLED", "Kite is disabled. No request was sent.", provider="kite")
+    if (not api_key or not access_token) and row and row.ciphertext:
+        try:
+            secrets = decrypt_secrets(settings, row.ciphertext)
+            api_key = secrets.get("api_key")
+            access_token = secrets.get("access_token")
+        except SecretBoxError as exc:
+            raise IntegrationError(exc.code, exc.message) from exc
+    if not api_key or not access_token:
+        return _finish(session, row, False, "NOT_CONFIGURED", "Kite api_key or access_token missing.", provider="kite")
+    secrets_to_mask = [api_key, access_token]
+    try:
+        resp = caller.get(
+            "https://api.kite.trade/user/profile",
+            headers={"Authorization": f"token {api_key}:{access_token}", "X-Kite-Version": "3", "Accept": "application/json"},
+        )
+        ok = getattr(resp, "status_code", 0) == 200
+        code = "CONNECTED" if ok else f"HTTP_{getattr(resp, 'status_code', 0)}"
+        message = "Kite connection test succeeded." if ok else f"Kite profile test failed with status {getattr(resp, 'status_code', 0)}"
+    except TimeoutError:
+        ok, code, message = False, "TIMEOUT", "The Kite request timed out. It was not retried."
+    except Exception as exc:
+        ok, code, message = False, "PROVIDER_ERROR", exc.__class__.__name__
+    message = redact_text(message, secrets_to_mask)
+    _safe_log(f"kite connection test {code}", secrets_to_mask)
+    return _finish(session, row, ok, code, message, provider="kite")
+
+
+def run_angelone_test(session: Session, settings: Settings, caller=None) -> dict:
+    caller = caller or HttpxCaller()
+    from app.market.independent_provider import resolve_credentials_safe
+    creds, _ = resolve_credentials_safe("angelone")
+    row = session.get(IntegrationCredential, "angelone")
+    api_key = (creds or {}).get("api_key")
+    jwt_token = (creds or {}).get("jwt_token")
+    if (not api_key or not jwt_token) and (row is None or not row.ciphertext):
+        return _finish(session, None, False, "NOT_CONFIGURED", "Angel One credentials are not saved.", provider="angelone")
+    if row and not row.enabled:
+        return _finish(session, row, False, "INTEGRATION_DISABLED", "Angel One is disabled. No request was sent.", provider="angelone")
+    if (not api_key or not jwt_token) and row and row.ciphertext:
+        try:
+            secrets = decrypt_secrets(settings, row.ciphertext)
+            api_key = secrets.get("api_key")
+            jwt_token = secrets.get("jwt_token")
+        except SecretBoxError as exc:
+            raise IntegrationError(exc.code, exc.message) from exc
+    if not api_key or not jwt_token:
+        return _finish(session, row, False, "NOT_CONFIGURED", "Angel One api_key or jwt_token missing.", provider="angelone")
+    secrets_to_mask = [api_key, jwt_token]
+    try:
+        resp = caller.get(
+            "https://apiconnect.angelbroking.com/rest/secure/angelbroking/user/v1/getProfile",
+            headers={
+                "Authorization": f"Bearer {jwt_token}",
+                "X-PrivateKey": api_key,
+                "Accept": "application/json",
+                "X-UserType": "USER",
+                "X-SourceID": "WEB",
+            },
+        )
+        ok = getattr(resp, "status_code", 0) == 200
+        code = "CONNECTED" if ok else f"HTTP_{getattr(resp, 'status_code', 0)}"
+        message = "Angel One connection test succeeded." if ok else f"Angel One profile test failed with status {getattr(resp, 'status_code', 0)}"
+    except TimeoutError:
+        ok, code, message = False, "TIMEOUT", "The Angel One request timed out. It was not retried."
+    except Exception as exc:
+        ok, code, message = False, "PROVIDER_ERROR", exc.__class__.__name__
+    message = redact_text(message, secrets_to_mask)
+    _safe_log(f"angelone connection test {code}", secrets_to_mask)
+    return _finish(session, row, ok, code, message, provider="angelone")
+
+
+def run_gemini_test(session: Session, settings: Settings, caller=None) -> dict:
+    caller = caller or HttpxCaller()
+    import os
+    env_key = os.environ.get("GEMINI_API_KEY")
+    row = session.get(IntegrationCredential, "gemini")
+    api_key = env_key
+    if not api_key and (row is None or not row.ciphertext):
+        return _finish(session, None, False, "NOT_CONFIGURED", "Gemini credentials are not saved.", provider="gemini")
+    if row and not row.enabled:
+        return _finish(session, row, False, "INTEGRATION_DISABLED", "Gemini is disabled. No request was sent.", provider="gemini")
+    if not api_key and row and row.ciphertext:
+        try:
+            secrets = decrypt_secrets(settings, row.ciphertext)
+            api_key = secrets.get("api_key")
+        except SecretBoxError as exc:
+            raise IntegrationError(exc.code, exc.message) from exc
+    model = (row.model if row and row.model else "gemini-1.5-pro")
+    if not api_key:
+        return _finish(session, row, False, "NOT_CONFIGURED", "Gemini API key is missing.", provider="gemini")
+    secrets_to_mask = [api_key]
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
+        resp = caller.get(url, headers={"x-goog-api-key": api_key, "Accept": "application/json"})
+        ok = getattr(resp, "status_code", 0) == 200
+        code = "CONNECTED" if ok else f"HTTP_{getattr(resp, 'status_code', 0)}"
+        message = "Gemini model lookup succeeded." if ok else f"Gemini model lookup failed with status {getattr(resp, 'status_code', 0)}"
+    except TimeoutError:
+        ok, code, message = False, "TIMEOUT", "The Gemini request timed out. It was not retried."
+    except Exception as exc:
+        ok, code, message = False, "PROVIDER_ERROR", exc.__class__.__name__
+    message = redact_text(message, secrets_to_mask)
+    _safe_log(f"gemini connection test {code}", secrets_to_mask)
+    return _finish(session, row, ok, code, message, provider="gemini")
 
 
 def groww_read_token(session: Session, settings: Settings, caller=None) -> str:
@@ -434,6 +673,145 @@ def _public_openai(row: IntegrationCredential | None) -> dict:
             "charges_detail": "Model-test success does not state the provider price. This page does not request a completion.",
         },
         **_test_fields(row),
+    }
+
+
+def _public_gemini(row: IntegrationCredential | None) -> dict:
+    import os
+    env_configured = bool(os.environ.get("GEMINI_API_KEY"))
+    configured = bool(row and row.ciphertext) or env_configured
+    return {
+        "provider": "gemini",
+        "enabled": bool(row and row.enabled),
+        "model": (row.model if row and row.model else "gemini-1.5-pro"),
+        "label": None if row is None else row.label,
+        "configured": configured,
+        "api_key_configured": configured,
+        "connection_test": "GET /v1beta/models/{model}",
+        "connectivity": {
+            "endpoint": "GET /v1beta/models/{model}",
+            "does_not_prove": "A model lookup does not request a completion, a forecast, or a broker action.",
+        },
+        "permissions": {
+            "live_trading": "not_applicable",
+            "charges": "unknown",
+            "charges_detail": "Model-test success does not state the provider price. This page does not request a completion.",
+        },
+        **_test_fields(row),
+    }
+
+
+def _public_upstox(row: IntegrationCredential | None) -> dict:
+    import os
+    env_configured = bool(os.environ.get("UPSTOX_ACCESS_TOKEN"))
+    configured = bool(row and row.ciphertext) or env_configured
+    return {
+        "provider": "upstox",
+        "enabled": bool(row and row.enabled),
+        "label": None if row is None else row.label,
+        "configured": configured,
+        "access_token_configured": configured,
+        "connection_test": "GET /v2/user/profile",
+        "connectivity": {
+            "endpoint": "GET /v2/user/profile",
+            "proves": "The last Upstox profile read succeeded at the recorded time." if row and row.last_test_ok else "No successful Upstox read is recorded.",
+            "does_not_prove": "A profile check does not prove full historical candle data coverage or order authorization.",
+        },
+        "permissions": {
+            "historical_candles": "verified" if row and row.last_test_ok else "unverified",
+            "live_trading": "disabled",
+            "charges": "unknown",
+        },
+        **_test_fields(row),
+    }
+
+
+def _public_kite(row: IntegrationCredential | None) -> dict:
+    import os
+    env_configured = bool(os.environ.get("KITE_API_KEY") and os.environ.get("KITE_ACCESS_TOKEN"))
+    configured = bool(row and row.ciphertext) or env_configured
+    return {
+        "provider": "kite",
+        "enabled": bool(row and row.enabled),
+        "label": None if row is None else row.label,
+        "configured": configured,
+        "api_key_configured": configured,
+        "access_token_configured": configured,
+        "connection_test": "GET /user/profile",
+        "connectivity": {
+            "endpoint": "GET /user/profile",
+            "proves": "The last Kite profile read succeeded at the recorded time." if row and row.last_test_ok else "No successful Kite read is recorded.",
+            "does_not_prove": "A profile check does not prove historical candle subscription or order permissions.",
+        },
+        "permissions": {
+            "historical_candles": "verified" if row and row.last_test_ok else "unverified",
+            "live_trading": "disabled",
+            "charges": "unknown",
+        },
+        **_test_fields(row),
+    }
+
+
+def _public_angelone(row: IntegrationCredential | None) -> dict:
+    import os
+    env_configured = bool(os.environ.get("ANGELONE_API_KEY") and os.environ.get("ANGELONE_JWT_TOKEN"))
+    configured = bool(row and row.ciphertext) or env_configured
+    return {
+        "provider": "angelone",
+        "enabled": bool(row and row.enabled),
+        "label": None if row is None else row.label,
+        "configured": configured,
+        "api_key_configured": configured,
+        "client_code_configured": configured,
+        "jwt_token_configured": configured,
+        "connection_test": "GET /rest/secure/angelbroking/user/v1/getProfile",
+        "connectivity": {
+            "endpoint": "GET /rest/secure/angelbroking/user/v1/getProfile",
+            "proves": "The last Angel One SmartAPI profile read succeeded at the recorded time." if row and row.last_test_ok else "No successful Angel One read is recorded.",
+            "does_not_prove": "A profile check does not prove historical candle entitlement.",
+        },
+        "permissions": {
+            "historical_candles": "verified" if row and row.last_test_ok else "unverified",
+            "live_trading": "disabled",
+            "charges": "unknown",
+        },
+        **_test_fields(row),
+    }
+
+
+def _public_indmoney() -> dict:
+    from app.market.independent_provider import investigate_indmoney_support
+    investigation = investigate_indmoney_support()
+    return {
+        "provider": "indmoney",
+        "configured": False,
+        "enabled": False,
+        "status": investigation["status"],
+        "operational": investigation["supported"],
+        "finding": investigation["finding"],
+        "connection_test": "NONE",
+        "permissions": {
+            "historical_candles": "blocked",
+            "live_trading": "disabled",
+        },
+    }
+
+
+def _public_nse_official() -> dict:
+    from app.market.independent_provider import investigate_nse_official_support
+    investigation = investigate_nse_official_support()
+    return {
+        "provider": "nse_official",
+        "configured": False,
+        "enabled": False,
+        "status": investigation["status"],
+        "operational": investigation["supported"],
+        "finding": investigation["finding"],
+        "connection_test": "NONE",
+        "permissions": {
+            "historical_candles": "limited_to_daily_eod",
+            "live_trading": "disabled",
+        },
     }
 
 

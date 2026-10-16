@@ -5,6 +5,16 @@ from __future__ import annotations
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from app.analysis.agent_nodes import (
+    final_decision_agent_node,
+    global_macro_analyst_node,
+    market_data_analyst_node,
+    news_event_analyst_node,
+    options_analyst_node,
+    quant_forecast_analyst_node,
+    risk_uncertainty_analyst_node,
+    technical_analyst_node,
+)
 from app.analysis.nodes import (
     contrarian_node,
     derivatives_node,
@@ -56,6 +66,14 @@ def build_graph(overrides: dict | None = None):
         "derivatives": derivatives_node,
         "contrarian": contrarian_node,
         "fusion": fusion_node,
+        "market_data_analyst": market_data_analyst_node,
+        "technical_analyst": technical_analyst_node,
+        "global_macro_analyst": global_macro_analyst_node,
+        "news_event_analyst": news_event_analyst_node,
+        "options_analyst": options_analyst_node,
+        "quant_forecast_analyst": quant_forecast_analyst_node,
+        "risk_uncertainty_analyst": risk_uncertainty_analyst_node,
+        "final_decision_agent": final_decision_agent_node,
         "report": report_node,
     }
     if overrides:
@@ -71,7 +89,15 @@ def build_graph(overrides: dict | None = None):
     graph.add_edge("indian", "derivatives")
     graph.add_edge("derivatives", "contrarian")
     graph.add_edge("contrarian", "fusion")
-    graph.add_edge("fusion", "report")
+    graph.add_edge("fusion", "market_data_analyst")
+    graph.add_edge("market_data_analyst", "technical_analyst")
+    graph.add_edge("technical_analyst", "global_macro_analyst")
+    graph.add_edge("global_macro_analyst", "news_event_analyst")
+    graph.add_edge("news_event_analyst", "options_analyst")
+    graph.add_edge("options_analyst", "quant_forecast_analyst")
+    graph.add_edge("quant_forecast_analyst", "risk_uncertainty_analyst")
+    graph.add_edge("risk_uncertainty_analyst", "final_decision_agent")
+    graph.add_edge("final_decision_agent", "report")
     graph.add_edge("report", END)
     return graph.compile(checkpointer=MemorySaver())
 

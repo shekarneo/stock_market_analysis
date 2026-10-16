@@ -48,7 +48,45 @@ def assert_allowed(method: str, url: str) -> None:
         rest = url[len(OPENAI_MODELS_URL) :]
         if rest and "/" not in rest and "?" not in rest:
             return
+    if method == "GET" and _is_kite_historical_url(url):
+        return
+    if method == "GET" and _is_upstox_historical_url(url):
+        return
+    if method == "POST" and _is_angelone_historical_url(url):
+        return
+    if method in {"GET", "POST"} and _is_gemini_url(url):
+        return
     raise UrlRejected("That host or path is not an allowed read endpoint.")
+
+
+def _is_kite_historical_url(url: str) -> bool:
+    parts = urlsplit(url)
+    return parts.scheme == "https" and parts.netloc == "api.kite.trade" and (
+        parts.path.startswith("/instruments/historical/") or parts.path == "/user/profile"
+    )
+
+
+def _is_upstox_historical_url(url: str) -> bool:
+    parts = urlsplit(url)
+    return parts.scheme == "https" and parts.netloc == "api.upstox.com" and (
+        parts.path.startswith("/v2/historical-candle/") or parts.path == "/v2/user/profile"
+    )
+
+
+def _is_angelone_historical_url(url: str) -> bool:
+    parts = urlsplit(url)
+    return parts.scheme == "https" and parts.netloc == "apiconnect.angelbroking.com" and (
+        parts.path == "/rest/secure/angelbroking/historical/v1/getCandleData"
+        or parts.path == "/rest/secure/angelbroking/user/v1/getProfile"
+    )
+
+
+def _is_gemini_url(url: str) -> bool:
+    parts = urlsplit(url)
+    return parts.scheme == "https" and parts.netloc == "generativelanguage.googleapis.com" and (
+        parts.path.startswith("/v1beta/models")
+    )
+
 
 
 def _exact_groww(url: str, path: str, expected: dict[str, str]) -> bool:

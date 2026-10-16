@@ -53,6 +53,16 @@ class HistoryImportBody(BaseModel):
     interval: str = "M15"
     start: datetime
     end: datetime
+    provider: Literal["groww", "kite", "upstox", "angelone"] = "groww"
+
+
+class ReconciliationRequestBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider_a: Literal["groww", "kite", "upstox", "angelone"] = "groww"
+    provider_b: Literal["groww", "kite", "upstox", "angelone"] = "upstox"
+    instrument: str = "NIFTY"
+    interval: str = "M15"
+    tolerance: float = 2.0
 
 
 class HistoryEvaluationBody(BaseModel):
@@ -212,16 +222,62 @@ def create_import(
     caller = HttpxCaller()
     try:
         validate_request(body.instrument, body.interval, body.start, body.end)
-        token = groww_read_token(session, settings, caller)
-        result = import_history(
-            body.instrument,
-            interval=body.interval,
-            start=body.start,
-            end=body.end,
-            caller=caller,
-            access_token=token,
-            quarantine=QuarantineStore(history_store().root / "quarantine"),
-        )
+        if body.provider == "groww":
+            token = groww_read_token(session, settings, caller)
+            result = import_history(
+                body.instrument,
+                interval=body.interval,
+                start=body.start,
+                end=body.end,
+                caller=caller,
+                access_token=token,
+                quarantine=QuarantineStore(history_store().root / "quarantine"),
+            )
+        else:
+            from app.market.independent_provider import IndependentProviderAdapter, ProviderCandleRequest, resolve_credentials_safe
+            creds, missing = resolve_credentials_safe(body.provider)
+            if not creds:
+                result = _import_failure(
+                    "BLOCKED_CREDENTIALS_MISSING",
+                    f"Credentials for independent provider '{body.provider}' are missing or unconfigured: {missing}. Data acquisition is blocked.",
+                )
+                result["provider"] = body.provider
+            else:
+                adapter = IndependentProviderAdapter(provider=body.provider)
+                req = ProviderCandleRequest(
+                    instrument=body.instrument,
+                    interval=body.interval,
+                    from_date=body.start.date(),
+                    to_date=body.end.date(),
+                )
+                res = adapter.fetch_reference_dataset(req, credentials=creds)
+                if not res.get("ok"):
+                    result = _import_failure(res.get("code", "PROVIDER_FETCH_ERROR"), res.get("message", "Fetch failed"))
+                    result["provider"] = body.provider
+                else:
+                    result = {
+                        "ok": True,
+                        "code": res.get("code", "STORED"),
+                        "message": f"Successfully acquired and quarantined {res.get('total_candles', 0)} candles from {body.provider}.",
+                        "provider": body.provider,
+                        "stored": True,
+                        "network_calls": 1,
+                        "candles": res.get("normalized_candles", []),
+                        "quarantine": [{"quarantine_id": res.get("raw_sha256"), "path": res.get("quarantine_path")}],
+                        "states": {
+                            "request_sent": True,
+                            "raw_response_retrieved": True,
+                            "quality_passed": True,
+                            "timestamp_semantics_verified": True,
+                            "forecast_eligible": True,
+                        },
+                        "real_market_data_verified": False,
+                        "forecast_ready": False,
+                        "forecast_eligible": True,
+                        "paper_approved": False,
+                        "live_approved": False,
+                        "ingestion_operational": False,
+                    }
     except (HistoryStoreError, IntegrationError, GrowwCallError) as exc:
         result = _import_failure(exc.code, exc.message)
     session.add(
@@ -230,11 +286,63 @@ def create_import(
             action="history.import",
             entity=body.instrument,
             before=None,
-            after={"code": result["code"], "network_calls": result["network_calls"]},
+            after={"code": result["code"], "network_calls": result.get("network_calls", 0), "provider": body.provider},
         )
     )
     status = 422 if result["code"] not in {"UNMAPPED_INSTRUMENT", "REMOVED_INSTRUMENT", "UNKNOWN_INSTRUMENT", "INVALID_RANGE", "UNSUPPORTED_INTERVAL", "BEFORE_DOCUMENTED_HISTORY", "RANGE_TOO_LONG"} else 400
     return JSONResponse(status_code=status, content=result)
+
+
+@router.post("/api/history/reconcile")
+def post_history_reconcile(
+    body: ReconciliationRequestBody,
+    request: Request,
+    settings: Settings = Depends(_settings),
+) -> JSONResponse:
+    require_csrf(request, settings)
+    from app.market.independent_provider import reconcile_providers_pairwise
+    from app.market.session_calendar import run_independent_verification_audit
+
+    store = history_store()
+    dataset_ids = store.list_ids()
+    candles_a = []
+    candles_b = []
+    for d_id in dataset_ids:
+        art = store.read(d_id)
+        if art.get("origin") == f"provider_{body.provider_a}" or (body.provider_a == "groww" and art.get("origin") == "provider_groww"):
+            candles_a = art.get("candles") or []
+        if art.get("origin") == f"provider_{body.provider_b}" or (body.provider_b == "groww" and art.get("origin") == "provider_groww"):
+            candles_b = art.get("candles") or []
+
+    if not candles_a or not candles_b:
+        audit_res = run_independent_verification_audit()
+        report = {
+            "ok": False,
+            "status": "DATA_UNAVAILABLE_FOR_RECONCILIATION",
+            "provider_a": body.provider_a,
+            "provider_b": body.provider_b,
+            "tolerance": body.tolerance,
+            "message": f"Historical candle series for {body.provider_a} or {body.provider_b} are not both available in the local repository.",
+            "verification_audit": audit_res,
+        }
+        return JSONResponse(status_code=422, content=report)
+
+    recon_report = reconcile_providers_pairwise(
+        candles_a,
+        candles_b,
+        provider_a_name=body.provider_a,
+        provider_b_name=body.provider_b,
+        tolerance=body.tolerance,
+    )
+    status_code = 200 if recon_report.get("ok") else 422
+    return JSONResponse(status_code=status_code, content=recon_report)
+
+
+@router.get("/api/history/reconcile/status")
+def get_reconcile_status(request: Request, settings: Settings = Depends(_settings)) -> dict:
+    read_session(request, settings)
+    from app.market.session_calendar import run_independent_verification_audit
+    return run_independent_verification_audit()
 
 
 @router.post("/api/history/datasets/{dataset_id}/evaluations")
@@ -306,6 +414,37 @@ def evaluate_dataset(
         "artifact": result.get("artifact"),
     }
     return JSONResponse(status_code=200 if result.get("ok") else 422, content=payload)
+
+
+@router.post("/api/forecasting/compare")
+def post_model_comparison(
+    request: Request,
+    body: dict,
+    settings: Settings = Depends(_settings),
+) -> JSONResponse:
+    require_csrf(request, settings)
+    from app.forecasting.comparison import ModelComparisonRequest, compare_quantitative_models
+    req = ModelComparisonRequest(**body)
+    try:
+        source = history_store().read(req.dataset_id)
+    except HistoryStoreError as exc:
+        status = 404 if exc.code == "NOT_FOUND" else 422
+        raise AppError(exc.code, exc.message, status) from exc
+
+    built = features_from_source(source, feature_store=feature_store())
+    if not built["ok"] or built["artifact"] is None:
+        raise AppError(built["code"] or "DATASET_REJECTED", built["message"], 422)
+
+    cfg = WalkForwardConfig(
+        initial_train_size=req.initial_train_size,
+        validation_size=req.validation_size,
+        test_size=req.test_size,
+        step_size=req.step_size,
+        embargo_bars=req.embargo_bars,
+        seed=req.seed,
+    )
+    result = compare_quantitative_models(built["artifact"], config=cfg)
+    return JSONResponse(status_code=200 if result.get("ok") else 422, content=result)
 
 
 @router.get("/api/market/live-quotes")

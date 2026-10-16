@@ -13,6 +13,7 @@ export default function HistoryPage() {
   const [error, setError] = useState("");
   const [report, setReport] = useState(null);
   const [datasets, setDatasets] = useState(null);
+  const [provider, setProvider] = useState("groww");
   const [instrument, setInstrument] = useState("NIFTY");
   const [interval, setInterval] = useState("M15");
   const [start, setStart] = useState("2026-10-13");
@@ -20,6 +21,11 @@ export default function HistoryPage() {
   const [result, setResult] = useState(null);
   const [quarantine, setQuarantine] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [reconProviderA, setReconProviderA] = useState("groww");
+  const [reconProviderB, setReconProviderB] = useState("upstox");
+  const [reconTolerance, setReconTolerance] = useState(2.0);
+  const [reconResult, setReconResult] = useState(null);
+  const [reconBusy, setReconBusy] = useState(false);
 
   async function load() {
     const [capabilityResponse, datasetResponse, quarantineResponse] = await Promise.all([
@@ -51,6 +57,7 @@ export default function HistoryPage() {
         method: "POST",
         headers: { "content-type": "application/json", "x-csrf-token": csrf() },
         body: JSON.stringify({
+          provider,
           instrument,
           interval,
           start: `${start}T09:15:00+05:30`,
@@ -65,6 +72,31 @@ export default function HistoryPage() {
       await load();
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function submitReconciliation(event) {
+    event.preventDefault();
+    setReconBusy(true);
+    setReconResult(null);
+    try {
+      const response = await fetch("/api/history/reconcile", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-csrf-token": csrf() },
+        body: JSON.stringify({
+          provider_a: reconProviderA,
+          provider_b: reconProviderB,
+          instrument,
+          interval,
+          tolerance: Number(reconTolerance),
+        }),
+      });
+      const body = await response.json();
+      setReconResult(body);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setReconBusy(false);
     }
   }
 
@@ -156,6 +188,15 @@ export default function HistoryPage() {
         <form onSubmit={submitImport}>
           <h2>Request a range</h2>
           <label>
+            Market data provider
+            <select value={provider} onChange={(event) => setProvider(event.target.value)}>
+              <option value="groww">Groww (Saved token)</option>
+              <option value="kite">Zerodha Kite Connect</option>
+              <option value="upstox">Upstox API v2</option>
+              <option value="angelone">Angel One SmartAPI</option>
+            </select>
+          </label>
+          <label>
             Instrument
             <select value={instrument} onChange={(event) => setInstrument(event.target.value)}>
               <option value="NIFTY">NIFTY</option>
@@ -177,7 +218,7 @@ export default function HistoryPage() {
               <option value="M15">15 minutes</option>
             </select>
           </label>
-          <p className="note">The request uses the saved Groww token. The clock sent to Groww is the selected date from 09:15 to 15:30 with the offset removed. That does not establish the provider timezone.</p>
+          <p className="note">The request uses credentials saved for the selected provider. Raw payloads are quarantined with SHA-256 integrity hashes.</p>
           <button className="primary" type="submit" disabled={busy}>{busy ? "Retrieving…" : "Retrieve historical candles"}</button>
         </form>
       ) : null}
@@ -252,6 +293,54 @@ export default function HistoryPage() {
           ) : (
             <p>No historical dataset is stored. Evaluation is unavailable until an eligible dataset exists.</p>
           )}
+        </section>
+      ) : null}
+      {ready ? (
+        <section className="reconciliation-panel" style={{ marginTop: "24px" }}>
+          <h2>Cross-Provider Historical Reconciliation</h2>
+          <p className="note">
+            Compare candle series between independent providers with configurable tolerances to detect duplicate, missing, or divergent bars.
+          </p>
+          <form onSubmit={submitReconciliation} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "12px", alignItems: "end" }}>
+            <label>
+              Provider A (Reference)
+              <select value={reconProviderA} onChange={(e) => setReconProviderA(e.target.value)}>
+                <option value="groww">Groww (Quarantine)</option>
+                <option value="upstox">Upstox API</option>
+                <option value="kite">Zerodha Kite Connect</option>
+                <option value="angelone">Angel One SmartAPI</option>
+              </select>
+            </label>
+            <label>
+              Provider B (Comparison)
+              <select value={reconProviderB} onChange={(e) => setReconProviderB(e.target.value)}>
+                <option value="upstox">Upstox API</option>
+                <option value="kite">Zerodha Kite Connect</option>
+                <option value="angelone">Angel One SmartAPI</option>
+                <option value="groww">Groww (Quarantine)</option>
+              </select>
+            </label>
+            <label>
+              Max Delta Tolerance (points)
+              <input type="number" step="0.1" value={reconTolerance} onChange={(e) => setReconTolerance(e.target.value)} />
+            </label>
+            <button className="primary" type="submit" disabled={reconBusy}>{reconBusy ? "Reconciling…" : "Run Pairwise Reconciliation"}</button>
+          </form>
+
+          {reconResult ? (
+            <div style={{ marginTop: "16px", background: "rgba(0,0,0,0.2)", padding: "16px", borderRadius: "8px" }}>
+              <h3>Reconciliation Result: <span className={`pill ${reconResult.ok ? "ok" : "wait"}`}>{reconResult.status}</span></h3>
+              <p>{reconResult.message || `Compared ${reconResult.provider_a} vs ${reconResult.provider_b}`}</p>
+              <div className="fact-grid" style={{ marginTop: "12px" }}>
+                <div className="fact"><span>Common Candles</span><b>{reconResult.common_candles_count ?? "—"}</b></div>
+                <div className="fact"><span>Matched Candles</span><b>{reconResult.matched_candles_count ?? "—"}</b></div>
+                <div className="fact"><span>Mismatches</span><b>{reconResult.mismatches_count ?? 0}</b></div>
+                <div className="fact"><span>Max OHLC Delta</span><b>{reconResult.max_delta ?? "—"} pts</b></div>
+                <div className="fact"><span>Missing in B</span><b>{reconResult.missing_in_b_count ?? 0}</b></div>
+                <div className="fact"><span>Extra in B</span><b>{reconResult.extra_in_b_count ?? 0}</b></div>
+              </div>
+            </div>
+          ) : null}
         </section>
       ) : null}
       {error ? <p className="error">{error}</p> : null}

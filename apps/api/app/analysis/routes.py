@@ -110,3 +110,59 @@ def create_analysis(
     )
     status = 200 if report.get("status") != "FAILED" else 422
     return JSONResponse(status_code=status, content=report)
+
+
+@router.get("/api/analysis/agents/config")
+def get_agents_config(request: Request, settings: Settings = Depends(_settings)) -> dict:
+    from app.auth import read_session
+    from app.analysis.agent_config import load_agent_system_config
+    read_session(request, settings)
+    return load_agent_system_config().model_dump()
+
+
+@router.put("/api/analysis/agents/config")
+def put_agents_config(
+    request: Request,
+    body: dict,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    from app.analysis.agent_config import MultiAgentSystemConfig, save_agent_system_config
+    config = MultiAgentSystemConfig(**body)
+    saved = save_agent_system_config(config)
+    session.add(
+        AuditEvent(
+            actor=principal.get("sub", "operator"),
+            action="agents.config.update",
+            entity="multi_agent_system",
+            before=None,
+            after={"version": saved.version, "agent_count": len(saved.agents)},
+        )
+    )
+    return saved.model_dump()
+
+
+@router.post("/api/analysis/agents/reset")
+def post_agents_reset(
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    from app.analysis.agent_config import DEFAULT_AGENTS_CONFIG, MultiAgentSystemConfig, SingleAgentConfig, save_agent_system_config
+    agents = {
+        role: SingleAgentConfig(**cfg) for role, cfg in DEFAULT_AGENTS_CONFIG.items()
+    }
+    cfg = MultiAgentSystemConfig(version="v6.18.0", agents=agents)
+    saved = save_agent_system_config(cfg)
+    session.add(
+        AuditEvent(
+            actor=principal.get("sub", "operator"),
+            action="agents.config.reset",
+            entity="multi_agent_system",
+            before=None,
+            after={"version": saved.version},
+        )
+    )
+    return saved.model_dump()

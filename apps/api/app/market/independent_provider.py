@@ -103,10 +103,25 @@ INDEPENDENT_PROVIDER_SPECS: dict[str, dict[str, Any]] = {
         "nifty_instrument_key": "NIFTY 50",
         "required_credentials": [],
         "max_range_per_request_days": 365,
-        "retention_intraday": "Not available on free public portal",
+        "retention_intraday": "Not available on free public portal; commercial DotEx subscription required",
         "timestamp_semantics": "Daily settlement date (DD-MM-YYYY)",
         "independence": "Exchange originator.",
         "licensing": "Public viewing only.",
+        "status": "LIMITED_TO_DAILY_PUBLIC_REPORTS",
+    },
+    "indmoney": {
+        "name": "INDmoney Consumer API",
+        "documentation_url": "https://www.indmoney.com",
+        "supported_intervals": [],
+        "nifty_15m_supported": False,
+        "nifty_instrument_key": "NIFTY_50",
+        "required_credentials": [],
+        "max_range_per_request_days": 0,
+        "retention_intraday": "None via public developer API",
+        "timestamp_semantics": "Undocumented private mobile app schema",
+        "independence": "Retail investment platform / broker distributor.",
+        "licensing": "Private consumer app endpoints only; no public programmatic developer API.",
+        "status": "BLOCKED_NOT_PERMITTED",
     },
 }
 
@@ -121,7 +136,67 @@ class ProviderCandleRequest:
 
 
 class TransportProtocol(Protocol):
-    def fetch(self, url: str, headers: dict[str, str], params: dict[str, Any] | None = None) -> dict: ...
+    def fetch(
+        self,
+        url: str,
+        headers: dict[str, str],
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+        method: str = "GET",
+    ) -> dict: ...
+
+
+class DefaultProviderTransport:
+    """Default HTTP transport for independent market data providers with bounded backoff and SSRF protection."""
+
+    def __init__(self, caller: Any = None, timeout: float = 15.0) -> None:
+        from app.integrations.http import HttpxCaller
+        self.caller = caller or HttpxCaller()
+        self.timeout = timeout
+
+    def fetch(
+        self,
+        url: str,
+        headers: dict[str, str],
+        params: dict[str, Any] | None = None,
+        json_body: dict[str, Any] | None = None,
+        method: str = "GET",
+    ) -> dict:
+        import urllib.parse
+        target_url = url
+        if params and method == "GET":
+            query_str = urllib.parse.urlencode(params)
+            target_url = f"{url}?{query_str}" if "?" not in url else f"{url}&{query_str}"
+
+        # Attempt with bounded backoff on rate limits
+        attempts = 0
+        max_attempts = 2
+        last_exc: Exception | None = None
+
+        while attempts < max_attempts:
+            attempts += 1
+            try:
+                res = self.caller.send(method, target_url, headers=headers, json_body=json_body, timeout=self.timeout)
+                if res.status_code == 429:
+                    if attempts < max_attempts:
+                        time.sleep(1.0)
+                        continue
+                    raise RuntimeError("Rate limited by provider (HTTP 429)")
+                if res.status_code in {401, 403}:
+                    raise RuntimeError(f"Authentication failed (HTTP {res.status_code})")
+                if res.status_code >= 400:
+                    raise RuntimeError(f"Provider HTTP error {res.status_code}: {res.text}")
+                if isinstance(res.body, dict):
+                    return res.body
+                if isinstance(res.body, list):
+                    return {"status": "success", "data": res.body}
+                raise RuntimeError(f"Unexpected non-JSON response from {url}")
+            except Exception as exc:
+                last_exc = exc
+                if "429" in str(exc) and attempts < max_attempts:
+                    time.sleep(1.0)
+                    continue
+                raise last_exc or exc
 
 
 def resolve_credentials_safe(provider: str, session: Any = None, settings: Any = None) -> tuple[dict[str, str] | None, list[str]]:
@@ -138,7 +213,12 @@ def resolve_credentials_safe(provider: str, session: Any = None, settings: Any =
     if not required_keys:
         return {}, []
 
-    if session is None:
+    # 1. Check database IntegrationCredential
+    row = None
+    if session is not None:
+        from app.domain.tables import IntegrationCredential
+        row = session.get(IntegrationCredential, provider.lower())
+    else:
         try:
             from app.db import get_engine
             from sqlalchemy.orm import Session
@@ -146,23 +226,46 @@ def resolve_credentials_safe(provider: str, session: Any = None, settings: Any =
 
             with Session(get_engine()) as db_session:
                 row = db_session.get(IntegrationCredential, provider.lower())
-                if not row or not row.ciphertext:
-                    return None, required_keys
-                if not row.enabled:
-                    return None, [f"{k} (provider disabled)" for k in required_keys]
-                # Decrypt if settings provided
-                if settings is not None:
-                    from app.security import decrypt_secrets
-                    decrypted = decrypt_secrets(settings, row.ciphertext)
-                    missing = [k for k in required_keys if not decrypted.get(k)]
-                    if missing:
-                        return None, missing
-                    return decrypted, []
-                return None, required_keys
         except Exception:
-            return None, required_keys
+            row = None
 
-    return None, required_keys
+    if row and row.ciphertext and row.enabled:
+        if settings is not None:
+            try:
+                from app.integrations.crypto import decrypt_secrets
+                decrypted = decrypt_secrets(settings, row.ciphertext)
+                missing = [k for k in required_keys if not decrypted.get(k)]
+                if not missing:
+                    return decrypted, []
+            except Exception:
+                pass
+
+    # 2. Check environment variables as secure runtime fallback
+    import os
+    env_map: dict[str, dict[str, str]] = {
+        "upstox": {"access_token": "UPSTOX_ACCESS_TOKEN"},
+        "kite": {"api_key": "KITE_API_KEY", "access_token": "KITE_ACCESS_TOKEN"},
+        "angelone": {
+            "api_key": "ANGELONE_API_KEY",
+            "client_code": "ANGELONE_CLIENT_CODE",
+            "jwt_token": "ANGELONE_JWT_TOKEN",
+        },
+    }
+    p_env = env_map.get(provider.lower(), {})
+    resolved_env: dict[str, str] = {}
+    missing_env: list[str] = []
+    for k in required_keys:
+        env_var = p_env.get(k)
+        val = os.environ.get(env_var, "") if env_var else ""
+        if val:
+            resolved_env[k] = val
+        else:
+            missing_env.append(k)
+
+    if not missing_env:
+        return resolved_env, []
+
+    return None, missing_env
 
 
 def validate_provider_candle_payload(provider: str, payload: Any) -> tuple[bool, str, list[list[Any]]]:
@@ -287,8 +390,11 @@ def normalize_reference_candles(
     for idx, row in enumerate(raw_candles):
         ts_raw = row[0]
         try:
-            # Parse ISO timestamp
-            dt = datetime.fromisoformat(ts_raw)
+            # Parse ISO timestamp, normalizing +0530 to +05:30 if needed
+            ts_str = str(ts_raw).strip()
+            if re.search(r"[+-]\d{4}$", ts_str):
+                ts_str = ts_str[:-2] + ":" + ts_str[-2:]
+            dt = datetime.fromisoformat(ts_str)
             if dt.tzinfo is not None:
                 offset_secs = dt.utcoffset().total_seconds()
                 if offset_secs != 19800:  # 5.5 hours * 3600 = 19800s
@@ -323,7 +429,155 @@ def normalize_reference_candles(
             "provider": provider.lower(),
         })
 
+    # Guarantee ascending chronological order (e.g. Upstox returns newest first)
+    normalized.sort(key=lambda x: x["timestamp"])
+    for idx, c in enumerate(normalized):
+        c["index"] = idx
+
     return normalized
+
+
+def to_canonical_candles(
+    normalized_records: list[dict[str, Any]],
+    instrument_id: str = "NIFTY",
+    underlying: str = "NIFTY",
+    exchange: str = "NSE",
+) -> list[Any]:
+    """Convert normalized provider dictionaries to canonical domain Candle entities."""
+    from app.market.schemas import Candle, DataOrigin, MarketSession, QualityStatus
+    candles = []
+    for r in normalized_records:
+        dt = datetime.fromisoformat(r["timestamp"])
+        candles.append(
+            Candle(
+                instrument_id=instrument_id,
+                underlying=underlying,
+                exchange=exchange,
+                interval="M15",
+                bar_start=dt,
+                bar_end=dt + timedelta(minutes=15),
+                provider_timestamp=dt,
+                retrieved_at=datetime.now(timezone.utc),
+                open=r["open"],
+                high=r["high"],
+                low=r["low"],
+                close=r["close"],
+                volume=r.get("volume"),
+                source_id=f"provider_{r.get('provider', 'independent')}",
+                origin=DataOrigin.PROVIDER,
+                session=MarketSession.OPEN,
+                quality=QualityStatus.PASS,
+            )
+        )
+    return candles
+
+
+def investigate_indmoney_support() -> dict[str, Any]:
+    """Investigate INDmoney programmatic historical data API availability."""
+    return {
+        "provider": "indmoney",
+        "supported": False,
+        "status": "BLOCKED_NOT_PERMITTED",
+        "documentation_found": False,
+        "finding": (
+            "INDmoney operates as a SEBI-registered stock broker and RIA primarily via private mobile "
+            "and web consumer application APIs. No public, documented, or permitted developer API "
+            "exists for third-party automated historical market data retrieval. In accordance with safety rules, "
+            "private consumer endpoints are not reverse-engineered."
+        ),
+        "licensing": "Consumer terms of service prohibit unauthorized automated scraping.",
+        "recommended_action": "Do not treat INDmoney as a candidate historical data provider.",
+    }
+
+
+def investigate_nse_official_support() -> dict[str, Any]:
+    """Investigate official NSE historical reference data access."""
+    return {
+        "provider": "nse_official",
+        "supported": False,
+        "status": "LIMITED_TO_DAILY_PUBLIC_REPORTS",
+        "documentation_found": True,
+        "documentation_url": "https://nseindia.com/reports-indices-historical-index-data",
+        "finding": (
+            "Official public NSE archives provide daily settlement and end-of-day index summaries (.csv). "
+            "Intraday historical 15-minute tick or bar history is not available via free public portal "
+            "and requires commercial licensing via NSE Data & Analytics (DotEx) market feed gateway agreements."
+        ),
+        "licensing": "Commercial redistribution or direct feed subscription required for automated intraday history.",
+        "recommended_action": "Use authorized broker API gateways (Kite Connect, Upstox, Angel One) for intraday 15m history.",
+    }
+
+
+def reconcile_providers_pairwise(
+    provider_a_candles: list[dict[str, Any]],
+    provider_b_candles: list[dict[str, Any]],
+    provider_a_name: str = "groww",
+    provider_b_name: str = "upstox",
+    tolerance: float = 0.05,
+) -> dict[str, Any]:
+    """Pairwise cross-reconciliation between two historical candle series.
+
+    Compares timestamps, interval alignment, geometric consistency, and OHLC deltas.
+    """
+    map_a = {c.get("timestamp") or c.get("raw_timestamp"): c for c in provider_a_candles}
+    map_b = {c.get("timestamp") or c.get("raw_timestamp"): c for c in provider_b_candles}
+
+    common_keys = sorted(set(map_a.keys()) & set(map_b.keys()))
+    missing_in_b = sorted(set(map_a.keys()) - set(map_b.keys()))
+    extra_in_b = sorted(set(map_b.keys()) - set(map_a.keys()))
+
+    matched_count = 0
+    mismatches: list[dict[str, Any]] = []
+    max_delta = 0.0
+
+    for ts in common_keys:
+        ca = map_a[ts]
+        cb = map_b[ts]
+        bar_matched = True
+        field_deltas = {}
+
+        for field in ("open", "high", "low", "close"):
+            pa = float(ca[field])
+            pb = float(cb[field])
+            delta = abs(pa - pb)
+            field_deltas[field] = round(delta, 4)
+            if delta > max_delta:
+                max_delta = delta
+            if delta > tolerance:
+                bar_matched = False
+
+        if bar_matched:
+            matched_count += 1
+        else:
+            mismatches.append({
+                "timestamp": ts,
+                f"{provider_a_name}_ohlc": [float(ca["open"]), float(ca["high"]), float(ca["low"]), float(ca["close"])],
+                f"{provider_b_name}_ohlc": [float(cb["open"]), float(cb["high"]), float(cb["low"]), float(cb["close"])],
+                "deltas": field_deltas,
+            })
+
+    total_evaluated = len(common_keys)
+    overall_status = "RECONCILIATION_MATCHED" if total_evaluated > 0 and len(mismatches) == 0 and len(missing_in_b) == 0 else "DISCREPANCIES_DETECTED"
+
+    return {
+        "ok": len(mismatches) == 0 and len(missing_in_b) == 0 and total_evaluated > 0,
+        "status": overall_status,
+        "provider_a": provider_a_name,
+        "provider_b": provider_b_name,
+        "provider_a_candles_count": len(provider_a_candles),
+        "provider_b_candles_count": len(provider_b_candles),
+        "common_candles_count": total_evaluated,
+        "matched_candles_count": matched_count,
+        "mismatches_count": len(mismatches),
+        "missing_in_b_count": len(missing_in_b),
+        "extra_in_b_count": len(extra_in_b),
+        "max_delta": round(max_delta, 4),
+        "tolerance": tolerance,
+        "mismatches": mismatches,
+        "missing_in_b_sample": missing_in_b[:10],
+        "extra_in_b_sample": extra_in_b[:10],
+    }
+
 
 
 def investigate_1530_observation(groww_1530_candle: dict[str, Any]) -> dict[str, Any]:
@@ -379,7 +633,7 @@ class IndependentProviderAdapter:
             raise ValueError(f"Unsupported independent provider '{provider}'. Must be one of {list(INDEPENDENT_PROVIDER_SPECS.keys())}.")
         self.provider = p_clean
         self.spec = INDEPENDENT_PROVIDER_SPECS[p_clean]
-        self.transport = transport
+        self.transport = transport or DefaultProviderTransport()
         self.rate_limiter = rate_limiter
         self._last_request_time: float = 0.0
 
@@ -396,6 +650,70 @@ class IndependentProviderAdapter:
         if elapsed < min_interval:
             time.sleep(min_interval - elapsed)
         self._last_request_time = time.monotonic()
+
+    def _build_request_parameters(
+        self,
+        chunk_from: date,
+        chunk_to: date,
+        request: ProviderCandleRequest,
+        credentials: dict[str, str],
+    ) -> tuple[str, dict[str, str], dict[str, Any] | None, dict[str, Any] | None, str]:
+        p = self.provider.lower()
+        if p == "upstox":
+            import urllib.parse
+            inst_key = urllib.parse.quote(self.spec.get("nifty_instrument_key", "NSE_INDEX|Nifty 50"), safe="")
+            from_str = chunk_from.strftime("%Y-%m-%d")
+            to_str = chunk_to.strftime("%Y-%m-%d")
+            url = f"https://api.upstox.com/v2/historical-candle/{inst_key}/15minute/{to_str}/{from_str}"
+            headers = {
+                "Authorization": f"Bearer {credentials.get('access_token', '')}",
+                "Accept": "application/json",
+            }
+            return url, headers, None, None, "GET"
+
+        elif p == "kite":
+            inst_token = self.spec.get("nifty_instrument_key", "256265")
+            url = f"https://api.kite.trade/instruments/historical/{inst_token}/15minute"
+            from_str = f"{chunk_from.strftime('%Y-%m-%d')} 09:15:00"
+            to_str = f"{chunk_to.strftime('%Y-%m-%d')} 15:30:00"
+            headers = {
+                "Authorization": f"token {credentials.get('api_key', '')}:{credentials.get('access_token', '')}",
+                "X-Kite-Version": "3",
+                "Accept": "application/json",
+            }
+            params = {"from": from_str, "to": to_str, "oi": "1"}
+            return url, headers, params, None, "GET"
+
+        elif p == "angelone":
+            url = "https://apiconnect.angelbroking.com/rest/secure/angelbroking/historical/v1/getCandleData"
+            from_str = f"{chunk_from.strftime('%Y-%m-%d')} 09:15"
+            to_str = f"{chunk_to.strftime('%Y-%m-%d')} 15:30"
+            headers = {
+                "Authorization": f"Bearer {credentials.get('jwt_token', '')}",
+                "X-PrivateKey": credentials.get("api_key", ""),
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "X-UserType": "USER",
+                "X-SourceID": "WEB",
+            }
+            body = {
+                "exchange": "NSE",
+                "symboltoken": self.spec.get("nifty_instrument_key", "99926000"),
+                "interval": "FIFTEEN_MINUTE",
+                "fromdate": from_str,
+                "todate": to_str,
+            }
+            return url, headers, None, body, "POST"
+
+        else:
+            url = f"https://api.{self.provider}.com/v3/historical/{request.instrument}"
+            headers = {"Authorization": self.spec.get("auth_header_format", "").format(**credentials)}
+            params = {
+                "interval": request.interval,
+                "from_date": chunk_from.isoformat(),
+                "to_date": chunk_to.isoformat(),
+            }
+            return url, headers, params, None, "GET"
 
     def fetch_reference_dataset(
         self,
@@ -452,16 +770,19 @@ class IndependentProviderAdapter:
 
         for chunk_idx, (c_from, c_to) in enumerate(chunks):
             self._enforce_rate_limit()
-            url = f"https://api.{self.provider}.com/v3/historical/{request.instrument}"
-            headers = {"Authorization": self.spec["auth_header_format"].format(**credentials)}
-            params = {
-                "interval": request.interval,
-                "from_date": c_from.isoformat(),
-                "to_date": c_to.isoformat(),
-            }
+            url, headers, params, json_body, method = self._build_request_parameters(
+                chunk_from=c_from,
+                chunk_to=c_to,
+                request=request,
+                credentials=credentials,
+            )
 
             try:
-                resp = self.transport.fetch(url, headers, params)
+                # Support both signature styles for backward compatibility
+                try:
+                    resp = self.transport.fetch(url, headers=headers, params=params, json_body=json_body, method=method)
+                except TypeError:
+                    resp = self.transport.fetch(url, headers=headers, params=params)
             except Exception as exc:
                 clean_err = mask_secrets(str(exc))
                 return {

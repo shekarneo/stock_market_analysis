@@ -20,13 +20,23 @@ from app.integrations.service import (
     IntegrationError,
     clear_provider,
     read_status,
+    save_angelone,
+    save_gemini,
     save_groww,
+    save_kite,
     save_openai,
+    save_upstox,
+    set_gemini_profile,
     set_groww_enabled,
     set_openai_enabled,
     set_openai_profile,
+    set_provider_enabled,
+    run_angelone_test,
+    run_gemini_test,
     run_groww_test,
+    run_kite_test,
     run_openai_test,
+    run_upstox_test,
 )
 from app.market.history import HistoryStoreError, history_store
 from app.market.minute_diagnostic import minute_query, run_minute_diagnostic
@@ -59,6 +69,45 @@ class OpenAIBody(BaseModel):
     model: str
     label: str = ""
     enabled: bool = False
+
+
+class UpstoxBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    access_token: str
+    label: str = ""
+    enabled: bool = False
+
+
+class KiteBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    api_key: str
+    access_token: str
+    label: str = ""
+    enabled: bool = False
+
+
+class AngelOneBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    api_key: str
+    client_code: str
+    jwt_token: str
+    label: str = ""
+    enabled: bool = False
+
+
+class GeminiBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    api_key: str
+    model: str = "gemini-1.5-pro"
+    label: str = ""
+    enabled: bool = False
+
+
+class GeminiProfileBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model: str
+    label: str = ""
+    confirm: bool = False
 
 
 class EnabledBody(BaseModel):
@@ -403,6 +452,291 @@ def post_openai_test(
     except (IntegrationError, SecretBoxError) as exc:
         _fail(exc)
     return _test_response(status)
+
+
+# ----------------------------------------------------------------------
+# UPSTOX ROUTES
+# ----------------------------------------------------------------------
+@router.put("/api/integrations/upstox")
+def put_upstox(
+    body: UpstoxBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    try:
+        status = save_upstox(session, settings, body.model_dump())
+    except (IntegrationError, SecretBoxError) as exc:
+        _fail(exc)
+    _audit(session, principal.get("sub", "operator"), "integrations.upstox.save", "upstox", {"configured": True})
+    return status
+
+
+@router.post("/api/integrations/upstox/clear")
+def post_upstox_clear(
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    status = clear_provider(session, "upstox")
+    _audit(session, principal.get("sub", "operator"), "integrations.upstox.clear", "upstox", {"configured": False})
+    return status
+
+
+@router.post("/api/integrations/upstox/enabled")
+def post_upstox_enabled(
+    body: EnabledBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    if body.confirm is not True:
+        raise AppError("CONFIRMATION_REQUIRED", "Changing Upstox enablement needs an explicit confirmation.", 422)
+    try:
+        status = set_provider_enabled(session, "upstox", body.enabled)
+    except IntegrationError as exc:
+        _fail(exc)
+    _audit(session, principal.get("sub", "operator"), "integrations.upstox.enabled", "upstox", {"enabled": body.enabled})
+    return status
+
+
+@router.post("/api/integrations/upstox/test")
+def post_upstox_test(
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    require_csrf(request, settings)
+    try:
+        status = run_upstox_test(session, settings)
+    except (IntegrationError, SecretBoxError) as exc:
+        _fail(exc)
+    return _test_response(status)
+
+
+# ----------------------------------------------------------------------
+# KITE CONNECT ROUTES
+# ----------------------------------------------------------------------
+@router.put("/api/integrations/kite")
+def put_kite(
+    body: KiteBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    try:
+        status = save_kite(session, settings, body.model_dump())
+    except (IntegrationError, SecretBoxError) as exc:
+        _fail(exc)
+    _audit(session, principal.get("sub", "operator"), "integrations.kite.save", "kite", {"configured": True})
+    return status
+
+
+@router.post("/api/integrations/kite/clear")
+def post_kite_clear(
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    status = clear_provider(session, "kite")
+    _audit(session, principal.get("sub", "operator"), "integrations.kite.clear", "kite", {"configured": False})
+    return status
+
+
+@router.post("/api/integrations/kite/enabled")
+def post_kite_enabled(
+    body: EnabledBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    if body.confirm is not True:
+        raise AppError("CONFIRMATION_REQUIRED", "Changing Kite enablement needs an explicit confirmation.", 422)
+    try:
+        status = set_provider_enabled(session, "kite", body.enabled)
+    except IntegrationError as exc:
+        _fail(exc)
+    _audit(session, principal.get("sub", "operator"), "integrations.kite.enabled", "kite", {"enabled": body.enabled})
+    return status
+
+
+@router.post("/api/integrations/kite/test")
+def post_kite_test(
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    require_csrf(request, settings)
+    try:
+        status = run_kite_test(session, settings)
+    except (IntegrationError, SecretBoxError) as exc:
+        _fail(exc)
+    return _test_response(status)
+
+
+# ----------------------------------------------------------------------
+# ANGEL ONE SMARTAPI ROUTES
+# ----------------------------------------------------------------------
+@router.put("/api/integrations/angelone")
+def put_angelone(
+    body: AngelOneBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    try:
+        status = save_angelone(session, settings, body.model_dump())
+    except (IntegrationError, SecretBoxError) as exc:
+        _fail(exc)
+    _audit(session, principal.get("sub", "operator"), "integrations.angelone.save", "angelone", {"configured": True})
+    return status
+
+
+@router.post("/api/integrations/angelone/clear")
+def post_angelone_clear(
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    status = clear_provider(session, "angelone")
+    _audit(session, principal.get("sub", "operator"), "integrations.angelone.clear", "angelone", {"configured": False})
+    return status
+
+
+@router.post("/api/integrations/angelone/enabled")
+def post_angelone_enabled(
+    body: EnabledBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    if body.confirm is not True:
+        raise AppError("CONFIRMATION_REQUIRED", "Changing Angel One enablement needs an explicit confirmation.", 422)
+    try:
+        status = set_provider_enabled(session, "angelone", body.enabled)
+    except IntegrationError as exc:
+        _fail(exc)
+    _audit(session, principal.get("sub", "operator"), "integrations.angelone.enabled", "angelone", {"enabled": body.enabled})
+    return status
+
+
+@router.post("/api/integrations/angelone/test")
+def post_angelone_test(
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    require_csrf(request, settings)
+    try:
+        status = run_angelone_test(session, settings)
+    except (IntegrationError, SecretBoxError) as exc:
+        _fail(exc)
+    return _test_response(status)
+
+
+# ----------------------------------------------------------------------
+# GOOGLE GEMINI ROUTES
+# ----------------------------------------------------------------------
+@router.put("/api/integrations/gemini")
+def put_gemini(
+    body: GeminiBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    try:
+        status = save_gemini(session, settings, body.model_dump())
+    except (IntegrationError, SecretBoxError) as exc:
+        _fail(exc)
+    _audit(session, principal.get("sub", "operator"), "integrations.gemini.save", "gemini", {"configured": True, "model": body.model})
+    return status
+
+
+@router.post("/api/integrations/gemini/clear")
+def post_gemini_clear(
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    status = clear_provider(session, "gemini")
+    _audit(session, principal.get("sub", "operator"), "integrations.gemini.clear", "gemini", {"configured": False})
+    return status
+
+
+@router.post("/api/integrations/gemini/enabled")
+def post_gemini_enabled(
+    body: EnabledBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    if body.confirm is not True:
+        raise AppError("CONFIRMATION_REQUIRED", "Changing Gemini enablement needs an explicit confirmation.", 422)
+    try:
+        status = set_provider_enabled(session, "gemini", body.enabled)
+    except IntegrationError as exc:
+        _fail(exc)
+    _audit(session, principal.get("sub", "operator"), "integrations.gemini.enabled", "gemini", {"enabled": body.enabled})
+    return status
+
+
+@router.post("/api/integrations/gemini/profile")
+def post_gemini_profile(
+    body: GeminiProfileBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    try:
+        status = set_gemini_profile(session, body.model, body.label, confirm=body.confirm)
+    except IntegrationError as exc:
+        _fail(exc)
+    _audit(session, principal.get("sub", "operator"), "integrations.gemini.profile", "gemini", {"model": body.model, "confirm": True})
+    return status
+
+
+@router.post("/api/integrations/gemini/test")
+def post_gemini_test(
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    require_csrf(request, settings)
+    try:
+        status = run_gemini_test(session, settings)
+    except (IntegrationError, SecretBoxError) as exc:
+        _fail(exc)
+    return _test_response(status)
+
+
+# ----------------------------------------------------------------------
+# INDMONEY & NSE OFFICIAL STATUS
+# ----------------------------------------------------------------------
+@router.get("/api/integrations/indmoney")
+def get_indmoney_status(request: Request, settings: Settings = Depends(_settings)) -> dict:
+    read_session(request, settings)
+    from app.market.independent_provider import investigate_indmoney_support
+    return investigate_indmoney_support()
+
+
+@router.get("/api/integrations/nse")
+def get_nse_status(request: Request, settings: Settings = Depends(_settings)) -> dict:
+    read_session(request, settings)
+    from app.market.independent_provider import investigate_nse_official_support
+    return investigate_nse_official_support()
 
 
 def _test_response(status: dict) -> JSONResponse:

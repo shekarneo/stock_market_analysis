@@ -35,6 +35,7 @@ function when(value) {
 }
 
 const MODELS = ["gpt-4.1-mini", "gpt-6-luna", "gpt-6.1-sol"];
+const GEMINI_MODELS = ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.0-flash"];
 const DEFAULT_START = "2026-10-13T09:15";
 const DEFAULT_END = "2026-10-13T09:45";
 const METHODS = {
@@ -71,6 +72,38 @@ function OpenAIMark() {
   );
 }
 
+function KiteMark() {
+  return (
+    <span className="mark kite" aria-hidden="true" style={{ background: "#ff5722", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: "6px", width: "24px", height: "24px", fontWeight: "bold", fontSize: "14px" }}>
+      K
+    </span>
+  );
+}
+
+function UpstoxMark() {
+  return (
+    <span className="mark upstox" aria-hidden="true" style={{ background: "#4a148c", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: "6px", width: "24px", height: "24px", fontWeight: "bold", fontSize: "14px" }}>
+      U
+    </span>
+  );
+}
+
+function AngelOneMark() {
+  return (
+    <span className="mark angelone" aria-hidden="true" style={{ background: "#0288d1", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: "6px", width: "24px", height: "24px", fontWeight: "bold", fontSize: "14px" }}>
+      A
+    </span>
+  );
+}
+
+function GeminiMark() {
+  return (
+    <span className="mark gemini" aria-hidden="true" style={{ background: "#1a73e8", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", borderRadius: "6px", width: "24px", height: "24px", fontWeight: "bold", fontSize: "14px" }}>
+      G
+    </span>
+  );
+}
+
 export default function IntegrationsPage() {
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState(null);
@@ -81,6 +114,14 @@ export default function IntegrationsPage() {
   const [panel, setPanel] = useState(null);
   const [growwDraft, setGrowwDraft] = useState(null);
   const [openaiDraft, setOpenaiDraft] = useState(null);
+  const [upstoxDraft, setUpstoxDraft] = useState(null);
+  const [kiteDraft, setKiteDraft] = useState(null);
+  const [angeloneDraft, setAngeloneDraft] = useState(null);
+  const [geminiDraft, setGeminiDraft] = useState(null);
+  const [agentsConfig, setAgentsConfig] = useState(null);
+  const [agentsBusy, setAgentsBusy] = useState(false);
+  const [compResult, setCompResult] = useState(null);
+  const [compBusy, setCompBusy] = useState(false);
   const [confirmEnable, setConfirmEnable] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [diagStart, setDiagStart] = useState(DEFAULT_START);
@@ -98,6 +139,12 @@ export default function IntegrationsPage() {
     const body = await response.json();
     setStatus(body);
     setReady(true);
+    fetch("/api/analysis/agents/config")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((cfg) => {
+        if (cfg) setAgentsConfig(cfg);
+      })
+      .catch(() => {});
   }
 
   useEffect(() => {
@@ -116,7 +163,7 @@ export default function IntegrationsPage() {
         body: payload === undefined ? undefined : JSON.stringify(payload),
       });
       const body = await response.json();
-      if (body.groww || body.openai) setStatus(body);
+      if (body.groww || body.openai || body.gemini || body.upstox || body.kite || body.angelone) setStatus(body);
       if (!response.ok) {
         const origin = body.error_origin === "provider" ? "Provider" : "Local check";
         setError(`${origin}: ${body.result?.message || body.message || "The request failed"}`);
@@ -159,6 +206,58 @@ export default function IntegrationsPage() {
     });
     setConfirmEnable(false);
     setPanel("openai");
+  }
+
+  function openUpstox() {
+    const upstox = status?.upstox;
+    if (!upstox) return;
+    setUpstoxDraft({
+      enabled: upstox.enabled === true,
+      accessToken: "",
+      label: upstox.label || "",
+    });
+    setConfirmEnable(false);
+    setPanel("upstox");
+  }
+
+  function openKite() {
+    const kite = status?.kite;
+    if (!kite) return;
+    setKiteDraft({
+      enabled: kite.enabled === true,
+      apiKey: "",
+      accessToken: "",
+      label: kite.label || "",
+    });
+    setConfirmEnable(false);
+    setPanel("kite");
+  }
+
+  function openAngelOne() {
+    const angelone = status?.angelone;
+    if (!angelone) return;
+    setAngeloneDraft({
+      enabled: angelone.enabled === true,
+      apiKey: "",
+      clientCode: "",
+      jwtToken: "",
+      label: angelone.label || "",
+    });
+    setConfirmEnable(false);
+    setPanel("angelone");
+  }
+
+  function openGemini() {
+    const gemini = status?.gemini;
+    if (!gemini) return;
+    setGeminiDraft({
+      enabled: gemini.enabled === true,
+      apiKey: "",
+      model: gemini.model || "gemini-1.5-pro",
+      label: gemini.label || "",
+    });
+    setConfirmEnable(false);
+    setPanel("gemini");
   }
 
   function closePanel() {
@@ -251,6 +350,175 @@ export default function IntegrationsPage() {
     closePanel();
   }
 
+  async function saveUpstox(event) {
+    event.preventDefault();
+    if (upstoxDraft.accessToken.trim()) {
+      const saved = await send("/api/integrations/upstox", {
+        access_token: upstoxDraft.accessToken,
+        label: upstoxDraft.label,
+        enabled: status.upstox?.enabled === true,
+      });
+      if (!saved) return;
+    }
+    if (upstoxDraft.enabled !== (status.upstox?.enabled === true)) {
+      const saved = await send("/api/integrations/upstox/enabled", {
+        enabled: upstoxDraft.enabled,
+        confirm: true,
+      });
+      if (!saved) return;
+    }
+    closePanel();
+  }
+
+  async function saveKite(event) {
+    event.preventDefault();
+    if (kiteDraft.apiKey.trim() || kiteDraft.accessToken.trim()) {
+      const saved = await send("/api/integrations/kite", {
+        api_key: kiteDraft.apiKey,
+        access_token: kiteDraft.accessToken,
+        label: kiteDraft.label,
+        enabled: status.kite?.enabled === true,
+      });
+      if (!saved) return;
+    }
+    if (kiteDraft.enabled !== (status.kite?.enabled === true)) {
+      const saved = await send("/api/integrations/kite/enabled", {
+        enabled: kiteDraft.enabled,
+        confirm: true,
+      });
+      if (!saved) return;
+    }
+    closePanel();
+  }
+
+  async function saveAngelOne(event) {
+    event.preventDefault();
+    if (angeloneDraft.apiKey.trim() || angeloneDraft.jwtToken.trim() || angeloneDraft.clientCode.trim()) {
+      const saved = await send("/api/integrations/angelone", {
+        api_key: angeloneDraft.apiKey,
+        client_code: angeloneDraft.clientCode,
+        jwt_token: angeloneDraft.jwtToken,
+        label: angeloneDraft.label,
+        enabled: status.angelone?.enabled === true,
+      });
+      if (!saved) return;
+    }
+    if (angeloneDraft.enabled !== (status.angelone?.enabled === true)) {
+      const saved = await send("/api/integrations/angelone/enabled", {
+        enabled: angeloneDraft.enabled,
+        confirm: true,
+      });
+      if (!saved) return;
+    }
+    closePanel();
+  }
+
+  async function saveGemini(event) {
+    event.preventDefault();
+    if (geminiDraft.apiKey.trim()) {
+      const saved = await send("/api/integrations/gemini", {
+        api_key: geminiDraft.apiKey,
+        model: geminiDraft.model,
+        label: geminiDraft.label,
+        enabled: status.gemini?.enabled === true,
+      });
+      if (!saved) return;
+    }
+    if (geminiDraft.model !== (status.gemini?.model || "gemini-1.5-pro")) {
+      const saved = await send("/api/integrations/gemini/profile", {
+        model: geminiDraft.model,
+        label: geminiDraft.label,
+        confirm: true,
+      });
+      if (!saved) return;
+    }
+    if (geminiDraft.enabled !== (status.gemini?.enabled === true)) {
+      const saved = await send("/api/integrations/gemini/enabled", {
+        enabled: geminiDraft.enabled,
+        confirm: true,
+      });
+      if (!saved) return;
+    }
+    closePanel();
+  }
+
+  async function saveAgentConfig(event) {
+    event.preventDefault();
+    setAgentsBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/analysis/agents/config", {
+        method: "PUT",
+        headers: { "content-type": "application/json", "x-csrf-token": csrf() },
+        body: JSON.stringify(agentsConfig),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setError(`Failed to save agent config: ${data.detail || data.message || "Unknown error"}`);
+      } else {
+        setAgentsConfig(data);
+        setNotice("AI Agent configurations saved successfully.");
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setAgentsBusy(false);
+    }
+  }
+
+  async function resetAgentConfig() {
+    setAgentsBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/analysis/agents/reset", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-csrf-token": csrf() },
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setError(`Failed to reset: ${data.detail || data.message}`);
+      } else {
+        setAgentsConfig(data);
+        setNotice("AI Agent configuration reset to defaults.");
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setAgentsBusy(false);
+    }
+  }
+
+  async function runModelComparison() {
+    setCompBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/forecasting/compare", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-csrf-token": csrf() },
+        body: JSON.stringify({
+          symbol: "NIFTY",
+          n_splits: 3,
+          train_size: 50,
+          test_size: 15,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setError(`Model comparison failed: ${data.detail || data.message}`);
+      } else {
+        setCompResult(data);
+        setNotice("Controlled quantitative model comparison completed.");
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setCompBusy(false);
+    }
+  }
+
   async function runDiagnostic(event) {
     event.preventDefault();
     const decision = diagnosticSubmitAllowed({
@@ -282,6 +550,13 @@ export default function IntegrationsPage() {
 
   const groww = status?.groww;
   const openai = status?.openai;
+  const kite = status?.kite;
+  const upstox = status?.upstox;
+  const angelone = status?.angelone;
+  const gemini = status?.gemini;
+  const indmoney = status?.indmoney;
+  const nse_official = status?.nse_official;
+
   const safety = safetySummary(status);
   const span = wallSpanMinutes(diagStart, diagEnd);
   const diagnosticDecision = diagnosticSubmitAllowed({
@@ -319,56 +594,402 @@ export default function IntegrationsPage() {
         <div className="summary-strip" aria-label="Status summary">
           <article><span>Live trading</span><strong>{safety.liveTrading}</strong></article>
           <article><span>Groww</span><strong>{groww ? integrationLabel(groww.enabled) : "Unavailable"}</strong></article>
+          <article><span>Kite</span><strong>{kite ? integrationLabel(kite.enabled) : "Unavailable"}</strong></article>
+          <article><span>Upstox</span><strong>{upstox ? integrationLabel(upstox.enabled) : "Unavailable"}</strong></article>
+          <article><span>Angel One</span><strong>{angelone ? integrationLabel(angelone.enabled) : "Unavailable"}</strong></article>
           <article><span>OpenAI</span><strong>{openai ? integrationLabel(openai.enabled) : "Unavailable"}</strong></article>
-          <article><span>Market data</span><strong>{safety.marketData}</strong></article>
+          <article><span>Gemini</span><strong>{gemini ? integrationLabel(gemini.enabled) : "Unavailable"}</strong></article>
         </div>
       ) : null}
-      {groww && openai ? (
-        <div className="provider-grid">
-          <ProviderCard
-            mark={<GrowwMark />}
-            name="Groww"
-            detail={METHODS[groww.auth_method] || "No method saved"}
-            enabled={groww.enabled}
-            configured={groww.configured}
-            connection={groww.last_test_ok}
-            extraBadge={expiryLabel(groww.token_status?.status)}
-            extraKind={groww.token_status?.status === "VALID" ? "ok" : groww.token_status?.status === "EXPIRED" ? "bad" : "wait"}
-            historyBadge={historicalLabel(groww.permissions?.historical_candles)}
-            historyKind={groww.permissions?.historical_candles === "verified" ? "ok" : groww.permissions?.historical_candles === "not_tested" ? "idle" : "wait"}
-            facts={[
-              ["Last test", `${connectionLabel(groww.last_test_ok)} · ${when(groww.last_test_at)}`],
-              ["Token expiry", groww.token_status?.display_ist || "Not available"],
-            ]}
-            detailsTitle="Connection details"
-            details={`${groww.connectivity?.endpoint || "No endpoint recorded"}. ${groww.connectivity?.does_not_prove || ""}`}
-            busy={busy}
-            onConfigure={openGroww}
-            onTest={() => send("/api/integrations/groww/test")}
-            onDiagnostics={() => document.getElementById("groww-diagnostics")?.scrollIntoView({ behavior: "smooth", block: "start" })}
-          />
-          <ProviderCard
-            mark={<OpenAIMark />}
-            name="OpenAI"
-            detail={openai.model || "No model selected"}
-            enabled={openai.enabled}
-            configured={openai.configured}
-            connection={openai.last_test_ok}
-            facts={[
-              ["Last test", `${connectionLabel(openai.last_test_ok)} · ${when(openai.last_test_at)}`],
-              ["Model", openai.model || "None"],
-            ]}
-            detailsTitle="Connection details"
-            details={`${openai.connectivity?.endpoint || "No endpoint recorded"}. ${openai.connectivity?.does_not_prove || ""}`}
-            busy={busy}
-            onConfigure={openOpenAI}
-            onTest={() => send("/api/integrations/openai/test")}
-            testDisabled={!openai.enabled}
-          />
-        </div>
+
+      {status ? (
+        <>
+          <h2 style={{ marginTop: "24px", marginBottom: "8px" }}>Market Data & AI Model Providers</h2>
+          <div className="provider-grid">
+            {groww ? (
+              <ProviderCard
+                mark={<GrowwMark />}
+                name="Groww"
+                detail={METHODS[groww.auth_method] || "No method saved"}
+                enabled={groww.enabled}
+                configured={groww.configured}
+                connection={groww.last_test_ok}
+                extraBadge={expiryLabel(groww.token_status?.status)}
+                extraKind={groww.token_status?.status === "VALID" ? "ok" : groww.token_status?.status === "EXPIRED" ? "bad" : "wait"}
+                historyBadge={historicalLabel(groww.permissions?.historical_candles)}
+                historyKind={groww.permissions?.historical_candles === "verified" ? "ok" : groww.permissions?.historical_candles === "not_tested" ? "idle" : "wait"}
+                facts={[
+                  ["Last test", `${connectionLabel(groww.last_test_ok)} · ${when(groww.last_test_at)}`],
+                  ["Token expiry", groww.token_status?.display_ist || "Not available"],
+                ]}
+                detailsTitle="Connection details"
+                details={`${groww.connectivity?.endpoint || "No endpoint recorded"}. ${groww.connectivity?.does_not_prove || ""}`}
+                busy={busy}
+                onConfigure={openGroww}
+                onTest={() => send("/api/integrations/groww/test")}
+                onDiagnostics={() => document.getElementById("groww-diagnostics")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+              />
+            ) : null}
+
+            {kite ? (
+              <ProviderCard
+                mark={<KiteMark />}
+                name="Zerodha Kite Connect"
+                detail="Kite Connect v3 REST API"
+                enabled={kite.enabled}
+                configured={kite.configured}
+                connection={kite.last_test_ok}
+                historyBadge="Historical Candles: /instruments/historical"
+                historyKind={kite.configured ? "ok" : "wait"}
+                facts={[
+                  ["Last test", `${connectionLabel(kite.last_test_ok)} · ${when(kite.last_test_at)}`],
+                  ["Rate Limit", `${kite.rate_limit_per_second || 3} req/s`],
+                ]}
+                detailsTitle="Connection details"
+                details={`${kite.connectivity?.endpoint || "api.kite.trade"}. Credentials are securely encrypted.`}
+                busy={busy}
+                onConfigure={openKite}
+                onTest={() => send("/api/integrations/kite/test")}
+                testDisabled={!kite.enabled}
+              />
+            ) : null}
+
+            {upstox ? (
+              <ProviderCard
+                mark={<UpstoxMark />}
+                name="Upstox API"
+                detail="Upstox v2 API"
+                enabled={upstox.enabled}
+                configured={upstox.configured}
+                connection={upstox.last_test_ok}
+                historyBadge="Historical Candles: /v2/historical-candle"
+                historyKind={upstox.configured ? "ok" : "wait"}
+                facts={[
+                  ["Last test", `${connectionLabel(upstox.last_test_ok)} · ${when(upstox.last_test_at)}`],
+                  ["Rate Limit", `${upstox.rate_limit_per_second || 5} req/s`],
+                ]}
+                detailsTitle="Connection details"
+                details={`${upstox.connectivity?.endpoint || "api.upstox.com/v2"}. Bearer token authenticated.`}
+                busy={busy}
+                onConfigure={openUpstox}
+                onTest={() => send("/api/integrations/upstox/test")}
+                testDisabled={!upstox.enabled}
+              />
+            ) : null}
+
+            {angelone ? (
+              <ProviderCard
+                mark={<AngelOneMark />}
+                name="Angel One SmartAPI"
+                detail="SmartAPI REST"
+                enabled={angelone.enabled}
+                configured={angelone.configured}
+                connection={angelone.last_test_ok}
+                historyBadge="Historical Candles: /getCandleData"
+                historyKind={angelone.configured ? "ok" : "wait"}
+                facts={[
+                  ["Last test", `${connectionLabel(angelone.last_test_ok)} · ${when(angelone.last_test_at)}`],
+                  ["Rate Limit", `${angelone.rate_limit_per_second || 3} req/s`],
+                ]}
+                detailsTitle="Connection details"
+                details={`${angelone.connectivity?.endpoint || "apiconnect.angelone.in"}. JWT & PrivateKey authenticated.`}
+                busy={busy}
+                onConfigure={openAngelOne}
+                onTest={() => send("/api/integrations/angelone/test")}
+                testDisabled={!angelone.enabled}
+              />
+            ) : null}
+
+            {openai ? (
+              <ProviderCard
+                mark={<OpenAIMark />}
+                name="OpenAI"
+                detail={openai.model || "No model selected"}
+                enabled={openai.enabled}
+                configured={openai.configured}
+                connection={openai.last_test_ok}
+                facts={[
+                  ["Last test", `${connectionLabel(openai.last_test_ok)} · ${when(openai.last_test_at)}`],
+                  ["Model", openai.model || "None"],
+                ]}
+                detailsTitle="Connection details"
+                details={`${openai.connectivity?.endpoint || "api.openai.com"}. ${openai.connectivity?.does_not_prove || ""}`}
+                busy={busy}
+                onConfigure={openOpenAI}
+                onTest={() => send("/api/integrations/openai/test")}
+                testDisabled={!openai.enabled}
+              />
+            ) : null}
+
+            {gemini ? (
+              <ProviderCard
+                mark={<GeminiMark />}
+                name="Google Gemini"
+                detail={gemini.model || "gemini-1.5-pro"}
+                enabled={gemini.enabled}
+                configured={gemini.configured}
+                connection={gemini.last_test_ok}
+                facts={[
+                  ["Last test", `${connectionLabel(gemini.last_test_ok)} · ${when(gemini.last_test_at)}`],
+                  ["Model", gemini.model || "gemini-1.5-pro"],
+                ]}
+                detailsTitle="Connection details"
+                details={`${gemini.connectivity?.endpoint || "generativelanguage.googleapis.com"}. Google AI API.`}
+                busy={busy}
+                onConfigure={openGemini}
+                onTest={() => send("/api/integrations/gemini/test")}
+                testDisabled={!gemini.enabled}
+              />
+            ) : null}
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginTop: "16px" }}>
+            <div style={{ background: "var(--card-bg, #1e1e24)", border: "1px solid var(--border-color, #333)", borderRadius: "8px", padding: "16px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <h3 style={{ margin: 0, fontSize: "16px" }}>INDmoney Reference Evaluation</h3>
+                <span className="pill bad">{indmoney?.status || "BLOCKED_NOT_PERMITTED"}</span>
+              </div>
+              <p style={{ fontSize: "13px", color: "var(--text-muted, #aaa)", marginTop: "8px", lineHeight: "1.4" }}>
+                {indmoney?.findings || "INDmoney does not provide an official, documented public API for third-party automated historical market data ingestion. Reverse-engineering mobile/private app endpoints violates ToS."}
+              </p>
+            </div>
+
+            <div style={{ background: "var(--card-bg, #1e1e24)", border: "1px solid var(--border-color, #333)", borderRadius: "8px", padding: "16px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <h3 style={{ margin: 0, fontSize: "16px" }}>NSE Official Reference Evaluation</h3>
+                <span className="pill wait">{nse_official?.status || "LIMITED_TO_DAILY_PUBLIC_REPORTS"}</span>
+              </div>
+              <p style={{ fontSize: "13px", color: "var(--text-muted, #aaa)", marginTop: "8px", lineHeight: "1.4" }}>
+                {nse_official?.findings || "Official public NSE portal data is strictly limited to end-of-day reports (Bhavcopy CSVs). Direct programmatic 15-minute intraday tick/candle access requires commercial licensed data feed agreements (DotEx/NSE Data & Analytics)."}
+              </p>
+            </div>
+          </div>
+        </>
       ) : null}
+
+      {/* INDEPENDENT AI AGENTS CONFIGURATION */}
+      {agentsConfig && agentsConfig.agents ? (
+        <section style={{ marginTop: "32px", background: "var(--card-bg, #1e1e24)", border: "1px solid var(--border-color, #333)", borderRadius: "8px", padding: "20px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: "20px" }}>Independently Configurable AI Agents (LangGraph)</h2>
+              <p style={{ margin: "4px 0 0 0", fontSize: "13px", color: "var(--text-muted, #aaa)" }}>
+                Config Version {agentsConfig.version}. Configure distinct AI model providers and parameters per specialist role.
+              </p>
+            </div>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button type="button" onClick={resetAgentConfig} disabled={agentsBusy} style={{ padding: "6px 14px" }}>
+                Reset to Defaults
+              </button>
+              <button type="button" className="primary" onClick={saveAgentConfig} disabled={agentsBusy} style={{ padding: "6px 14px" }}>
+                Save Agent Settings
+              </button>
+            </div>
+          </div>
+
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid #444", textAlign: "left" }}>
+                  <th style={{ padding: "8px" }}>Agent Role</th>
+                  <th style={{ padding: "8px" }}>Active Provider</th>
+                  <th style={{ padding: "8px" }}>Model ID</th>
+                  <th style={{ padding: "8px" }}>Temperature</th>
+                  <th style={{ padding: "8px" }}>Max Tokens</th>
+                  <th style={{ padding: "8px" }}>Fallback Provider</th>
+                  <th style={{ padding: "8px" }}>Fallback Model</th>
+                  <th style={{ padding: "8px" }}>Enabled</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(agentsConfig.agents).map(([role, cfg]) => (
+                  <tr key={role} style={{ borderBottom: "1px solid #2a2a30" }}>
+                    <td style={{ padding: "8px", fontWeight: "bold" }}>
+                      {role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                    </td>
+                    <td style={{ padding: "8px" }}>
+                      <select
+                        value={cfg.provider}
+                        onChange={(e) => {
+                          const updated = { ...agentsConfig };
+                          updated.agents[role].provider = e.target.value;
+                          setAgentsConfig(updated);
+                        }}
+                        style={{ padding: "4px 6px" }}
+                      >
+                        <option value="openai">OpenAI</option>
+                        <option value="google">Google Gemini</option>
+                      </select>
+                    </td>
+                    <td style={{ padding: "8px" }}>
+                      <input
+                        type="text"
+                        value={cfg.model_id}
+                        onChange={(e) => {
+                          const updated = { ...agentsConfig };
+                          updated.agents[role].model_id = e.target.value;
+                          setAgentsConfig(updated);
+                        }}
+                        style={{ width: "130px", padding: "4px 6px" }}
+                      />
+                    </td>
+                    <td style={{ padding: "8px" }}>
+                      <input
+                        type="number"
+                        step="0.05"
+                        min="0"
+                        max="1"
+                        value={cfg.temperature}
+                        onChange={(e) => {
+                          const updated = { ...agentsConfig };
+                          updated.agents[role].temperature = parseFloat(e.target.value) || 0;
+                          setAgentsConfig(updated);
+                        }}
+                        style={{ width: "60px", padding: "4px 6px" }}
+                      />
+                    </td>
+                    <td style={{ padding: "8px" }}>
+                      <input
+                        type="number"
+                        step="100"
+                        min="256"
+                        max="8192"
+                        value={cfg.max_output_tokens}
+                        onChange={(e) => {
+                          const updated = { ...agentsConfig };
+                          updated.agents[role].max_output_tokens = parseInt(e.target.value, 10) || 1024;
+                          setAgentsConfig(updated);
+                        }}
+                        style={{ width: "70px", padding: "4px 6px" }}
+                      />
+                    </td>
+                    <td style={{ padding: "8px" }}>
+                      <select
+                        value={cfg.fallback_provider || ""}
+                        onChange={(e) => {
+                          const updated = { ...agentsConfig };
+                          updated.agents[role].fallback_provider = e.target.value || null;
+                          setAgentsConfig(updated);
+                        }}
+                        style={{ padding: "4px 6px" }}
+                      >
+                        <option value="">None</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="google">Google Gemini</option>
+                      </select>
+                    </td>
+                    <td style={{ padding: "8px" }}>
+                      <input
+                        type="text"
+                        value={cfg.fallback_model_id || ""}
+                        placeholder="Fallback Model"
+                        onChange={(e) => {
+                          const updated = { ...agentsConfig };
+                          updated.agents[role].fallback_model_id = e.target.value || null;
+                          setAgentsConfig(updated);
+                        }}
+                        style={{ width: "130px", padding: "4px 6px" }}
+                      />
+                    </td>
+                    <td style={{ padding: "8px", textAlign: "center" }}>
+                      <input
+                        type="checkbox"
+                        checked={cfg.enabled}
+                        onChange={(e) => {
+                          const updated = { ...agentsConfig };
+                          updated.agents[role].enabled = e.target.checked;
+                          setAgentsConfig(updated);
+                        }}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
+
+      {/* QUANTITATIVE MODEL STUDIO: CONTROLLED MODEL COMPARISON */}
+      <section style={{ marginTop: "32px", background: "var(--card-bg, #1e1e24)", border: "1px solid var(--border-color, #333)", borderRadius: "8px", padding: "20px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: "20px" }}>Forecast Model Studio: Controlled Model Comparison</h2>
+            <p style={{ margin: "4px 0 0 0", fontSize: "13px", color: "var(--text-muted, #aaa)" }}>
+              Chronological walk-forward evaluation preventing look-ahead leakage. Strict baseline comparisons.
+            </p>
+          </div>
+          <button type="button" className="primary" onClick={runModelComparison} disabled={compBusy} style={{ padding: "8px 16px" }}>
+            {compBusy ? "Evaluating Folds..." : "Run Multi-Model Comparison (NIFTY)"}
+          </button>
+        </div>
+
+        {compResult ? (
+          <div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px", marginBottom: "16px" }}>
+              <div style={{ background: "#25252b", padding: "12px", borderRadius: "6px" }}>
+                <span style={{ fontSize: "12px", color: "#888" }}>Instrument Target</span>
+                <p style={{ margin: "4px 0 0 0", fontWeight: "bold" }}>{compResult.symbol} (Target: {compResult.target})</p>
+              </div>
+              <div style={{ background: "#25252b", padding: "12px", borderRadius: "6px" }}>
+                <span style={{ fontSize: "12px", color: "#888" }}>Chronological Splits</span>
+                <p style={{ margin: "4px 0 0 0", fontWeight: "bold" }}>{compResult.n_splits} Walk-Forward Folds</p>
+              </div>
+              <div style={{ background: "#25252b", padding: "12px", borderRadius: "6px" }}>
+                <span style={{ fontSize: "12px", color: "#888" }}>Lookahead Leakage Guard</span>
+                <p style={{ margin: "4px 0 0 0", fontWeight: "bold", color: compResult.lookahead_leakage_prevented ? "#4caf50" : "#f44336" }}>
+                  {compResult.lookahead_leakage_prevented ? "Verified Enforced" : "Warning"}
+                </p>
+              </div>
+            </div>
+
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid #444", textAlign: "left" }}>
+                  <th style={{ padding: "8px" }}>Model</th>
+                  <th style={{ padding: "8px" }}>Mean Directional Accuracy</th>
+                  <th style={{ padding: "8px" }}>Mean Balanced Accuracy</th>
+                  <th style={{ padding: "8px" }}>Mean Brier Score</th>
+                  <th style={{ padding: "8px" }}>Baseline Comparison</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(compResult.model_evaluations || {}).map(([mName, evalData]) => (
+                  <tr key={mName} style={{ borderBottom: "1px solid #2a2a30" }}>
+                    <td style={{ padding: "8px", fontWeight: "bold" }}>
+                      {mName.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                    </td>
+                    <td style={{ padding: "8px" }}>
+                      {(evalData.mean_directional_accuracy * 100).toFixed(1)}%
+                    </td>
+                    <td style={{ padding: "8px" }}>
+                      {(evalData.mean_balanced_accuracy * 100).toFixed(1)}%
+                    </td>
+                    <td style={{ padding: "8px" }}>
+                      {evalData.mean_brier_score !== null ? evalData.mean_brier_score.toFixed(4) : "—"}
+                    </td>
+                    <td style={{ padding: "8px" }}>
+                      {compResult.baseline_comparisons && compResult.baseline_comparisons[mName] ? (
+                        <span>
+                          vs Majority: {(compResult.baseline_comparisons[mName].accuracy_vs_majority_diff * 100).toFixed(1)}% | vs Last Return: {(compResult.baseline_comparisons[mName].accuracy_vs_last_return_diff * 100).toFixed(1)}%
+                        </span>
+                      ) : "Baseline Anchor"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p style={{ fontSize: "13px", color: "var(--text-muted, #888)", margin: "8px 0" }}>
+            Click &ldquo;Run Multi-Model Comparison&rdquo; to execute an expanding-window chronological walk-forward benchmark across Majority Class, Last Return Sign, and Logistic Regression models.
+          </p>
+        )}
+      </section>
+
+      {/* GROWW DIAGNOSTICS */}
       {groww && ready ? (
-        <section id="groww-diagnostics" className="diagnostics">
+        <section id="groww-diagnostics" className="diagnostics" style={{ marginTop: "32px" }}>
           <div className="section-head">
             <div>
               <h2>Groww historical diagnostics</h2>
@@ -444,6 +1065,8 @@ export default function IntegrationsPage() {
           ) : <p className="note">No previous diagnostic is stored.</p>}
         </section>
       ) : null}
+
+      {/* MODALS */}
       {panel === "groww" && growwDraft ? (
         <div className="modal-backdrop" onClick={closePanel}>
           <form className="modal" role="dialog" aria-labelledby="groww-settings-title" onClick={(event) => event.stopPropagation()} onSubmit={saveGroww}>
@@ -501,6 +1124,140 @@ export default function IntegrationsPage() {
           </form>
         </div>
       ) : null}
+
+      {panel === "upstox" && upstoxDraft ? (
+        <div className="modal-backdrop" onClick={closePanel}>
+          <form className="modal" role="dialog" aria-labelledby="upstox-settings-title" onClick={(event) => event.stopPropagation()} onSubmit={saveUpstox}>
+            <div className="section-head">
+              <h2 id="upstox-settings-title">Configure Upstox API v2</h2>
+              <button type="button" onClick={closePanel}>Close</button>
+            </div>
+            <button type="button" className={`switch ${upstoxDraft.enabled ? "on" : ""}`} onClick={() => setUpstoxDraft({ ...upstoxDraft, enabled: !upstoxDraft.enabled })}>
+              <span>Integration <small>{upstoxDraft.enabled ? "Enabled" : "Disabled"} · live trading stays off</small></span>
+              <span className="knob" aria-hidden="true"><span /></span>
+            </button>
+            <div className="status-line"><span>Access Token</span><b>{secretIndicator(upstox.access_token_configured)}</b></div>
+            <label>
+              Replace Access Token
+              <input type="password" autoComplete="off" value={upstoxDraft.accessToken} placeholder={upstox.access_token_configured ? "Saved · hidden" : "Enter Upstox access token"} onChange={(e) => setUpstoxDraft({ ...upstoxDraft, accessToken: e.target.value })} />
+            </label>
+            <label>
+              Label
+              <input value={upstoxDraft.label} onChange={(e) => setUpstoxDraft({ ...upstoxDraft, label: e.target.value })} />
+            </label>
+            <div className="actions">
+              <button className="primary" type="submit" disabled={Boolean(busy)}>Save changes</button>
+              <button type="button" onClick={() => send("/api/integrations/upstox/test")} disabled={Boolean(busy) || !upstox.enabled}>Test connection</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {panel === "kite" && kiteDraft ? (
+        <div className="modal-backdrop" onClick={closePanel}>
+          <form className="modal" role="dialog" aria-labelledby="kite-settings-title" onClick={(event) => event.stopPropagation()} onSubmit={saveKite}>
+            <div className="section-head">
+              <h2 id="kite-settings-title">Configure Zerodha Kite Connect</h2>
+              <button type="button" onClick={closePanel}>Close</button>
+            </div>
+            <button type="button" className={`switch ${kiteDraft.enabled ? "on" : ""}`} onClick={() => setKiteDraft({ ...kiteDraft, enabled: !kiteDraft.enabled })}>
+              <span>Integration <small>{kiteDraft.enabled ? "Enabled" : "Disabled"} · live trading stays off</small></span>
+              <span className="knob" aria-hidden="true"><span /></span>
+            </button>
+            <div className="status-line"><span>API Key</span><b>{secretIndicator(kite.api_key_configured)}</b></div>
+            <label>
+              Replace API Key
+              <input type="password" autoComplete="off" value={kiteDraft.apiKey} placeholder={kite.api_key_configured ? "Saved · hidden" : "Enter Kite API Key"} onChange={(e) => setKiteDraft({ ...kiteDraft, apiKey: e.target.value })} />
+            </label>
+            <div className="status-line"><span>Access Token</span><b>{secretIndicator(kite.access_token_configured)}</b></div>
+            <label>
+              Replace Access Token
+              <input type="password" autoComplete="off" value={kiteDraft.accessToken} placeholder={kite.access_token_configured ? "Saved · hidden" : "Enter Kite Access Token"} onChange={(e) => setKiteDraft({ ...kiteDraft, accessToken: e.target.value })} />
+            </label>
+            <label>
+              Label
+              <input value={kiteDraft.label} onChange={(e) => setKiteDraft({ ...kiteDraft, label: e.target.value })} />
+            </label>
+            <div className="actions">
+              <button className="primary" type="submit" disabled={Boolean(busy)}>Save changes</button>
+              <button type="button" onClick={() => send("/api/integrations/kite/test")} disabled={Boolean(busy) || !kite.enabled}>Test connection</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {panel === "angelone" && angeloneDraft ? (
+        <div className="modal-backdrop" onClick={closePanel}>
+          <form className="modal" role="dialog" aria-labelledby="angelone-settings-title" onClick={(event) => event.stopPropagation()} onSubmit={saveAngelOne}>
+            <div className="section-head">
+              <h2 id="angelone-settings-title">Configure Angel One SmartAPI</h2>
+              <button type="button" onClick={closePanel}>Close</button>
+            </div>
+            <button type="button" className={`switch ${angeloneDraft.enabled ? "on" : ""}`} onClick={() => setAngeloneDraft({ ...angeloneDraft, enabled: !angeloneDraft.enabled })}>
+              <span>Integration <small>{angeloneDraft.enabled ? "Enabled" : "Disabled"} · live trading stays off</small></span>
+              <span className="knob" aria-hidden="true"><span /></span>
+            </button>
+            <div className="status-line"><span>API Key</span><b>{secretIndicator(angelone.api_key_configured)}</b></div>
+            <label>
+              Replace API Key
+              <input type="password" autoComplete="off" value={angeloneDraft.apiKey} placeholder={angelone.api_key_configured ? "Saved · hidden" : "Enter Angel One API Key"} onChange={(e) => setAngeloneDraft({ ...angeloneDraft, apiKey: e.target.value })} />
+            </label>
+            <div className="status-line"><span>Client Code</span><b>{angelone.client_code ? "Saved" : "Missing"}</b></div>
+            <label>
+              Client Code
+              <input type="text" value={angeloneDraft.clientCode} placeholder={angelone.client_code || "e.g. S123456"} onChange={(e) => setAngeloneDraft({ ...angeloneDraft, clientCode: e.target.value })} />
+            </label>
+            <div className="status-line"><span>JWT Token</span><b>{secretIndicator(angelone.jwt_token_configured)}</b></div>
+            <label>
+              Replace JWT Token
+              <input type="password" autoComplete="off" value={angeloneDraft.jwtToken} placeholder={angelone.jwt_token_configured ? "Saved · hidden" : "Enter JWT Token"} onChange={(e) => setAngeloneDraft({ ...angeloneDraft, jwtToken: e.target.value })} />
+            </label>
+            <label>
+              Label
+              <input value={angeloneDraft.label} onChange={(e) => setAngeloneDraft({ ...angeloneDraft, label: e.target.value })} />
+            </label>
+            <div className="actions">
+              <button className="primary" type="submit" disabled={Boolean(busy)}>Save changes</button>
+              <button type="button" onClick={() => send("/api/integrations/angelone/test")} disabled={Boolean(busy) || !angelone.enabled}>Test connection</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {panel === "gemini" && geminiDraft ? (
+        <div className="modal-backdrop" onClick={closePanel}>
+          <form className="modal" role="dialog" aria-labelledby="gemini-settings-title" onClick={(event) => event.stopPropagation()} onSubmit={saveGemini}>
+            <div className="section-head">
+              <h2 id="gemini-settings-title">Configure Google Gemini</h2>
+              <button type="button" onClick={closePanel}>Close</button>
+            </div>
+            <button type="button" className={`switch ${geminiDraft.enabled ? "on" : ""}`} onClick={() => setGeminiDraft({ ...geminiDraft, enabled: !geminiDraft.enabled })}>
+              <span>Integration <small>{geminiDraft.enabled ? "Enabled" : "Disabled"}</small></span>
+              <span className="knob" aria-hidden="true"><span /></span>
+            </button>
+            <div className="status-line"><span>API key</span><b>{secretIndicator(gemini.api_key_configured)}</b></div>
+            <label>
+              Replace API key
+              <input type="password" autoComplete="off" value={geminiDraft.apiKey} placeholder={gemini.api_key_configured ? "Saved · hidden" : "Enter Gemini API key"} onChange={(e) => setGeminiDraft({ ...geminiDraft, apiKey: e.target.value })} />
+            </label>
+            <label>
+              Model
+              <select value={geminiDraft.model} onChange={(e) => setGeminiDraft({ ...geminiDraft, model: e.target.value })}>
+                {GEMINI_MODELS.map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+            </label>
+            <label>
+              Label
+              <input value={geminiDraft.label} onChange={(e) => setGeminiDraft({ ...geminiDraft, label: e.target.value })} />
+            </label>
+            <div className="actions">
+              <button className="primary" type="submit" disabled={Boolean(busy)}>Save changes</button>
+              <button type="button" onClick={() => send("/api/integrations/gemini/test")} disabled={Boolean(busy) || !gemini.enabled}>Test connection</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
       {panel === "openai" && openaiDraft ? (
         <div className="modal-backdrop" onClick={closePanel}>
           <form className="modal" role="dialog" aria-labelledby="openai-settings-title" onClick={(event) => event.stopPropagation()} onSubmit={saveOpenAI}>

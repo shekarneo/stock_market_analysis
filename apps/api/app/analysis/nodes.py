@@ -358,5 +358,6 @@ def report_node(state: AnalysisState) -> dict:
         "evidence": evidence,
         "quality": dict(state.get("quality") or {}),
         "intelligence": intel,
+        "agent_outputs": dict(state.get("agent_outputs") or {}),
     }
     return {"report": report, "node_status": node_status}

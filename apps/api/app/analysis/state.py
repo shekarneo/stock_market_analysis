@@ -28,3 +28,4 @@ class AnalysisState(TypedDict, total=False):
     conflicts: list[dict]
     inference: dict
     report: dict
+    agent_outputs: dict[str, dict]

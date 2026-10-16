@@ -127,6 +127,8 @@ class AnalysisReport(BaseModel):
     paper_approved: bool = False
     live_approved: bool = False
     real_market_data_verified: bool = False
+    agent_outputs: dict = Field(default_factory=dict)
+    reason_codes: list[str] = Field(default_factory=list)
 
     def model_post_init(self, _context: object) -> None:
         object.__setattr__(self, "forecast_ready", False)
@@ -135,3 +137,24 @@ class AnalysisReport(BaseModel):
         object.__setattr__(self, "real_market_data_verified", False)
         object.__setattr__(self, "confidence", None)
         object.__setattr__(self, "decision", "NO_TRADE")
+
+
+class AgentOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    agent_id: str
+    role: str
+    display_name: str
+    status: Literal["SUCCESS", "PARTIAL", "FAILED", "SKIPPED", "FALLBACK_USED"]
+    provider: str
+    model: str
+    config_version: str = "v6.18.0"
+    findings: list[str] = Field(default_factory=list)
+    directional_bias: Literal["BULLISH", "BEARISH", "NEUTRAL", "MIXED", "UNKNOWN"] = "UNKNOWN"
+    confidence: float | None = None
+    evidence_references: list[str] = Field(default_factory=list)
+    missing_evidence: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+    latency_ms: float = 0.0
+    token_usage: dict[str, int] | None = None
+    timestamp: str | None = None
