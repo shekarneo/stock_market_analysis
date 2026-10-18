@@ -173,6 +173,35 @@ export default function V6Desk({ defaultTab = "trades", hideTickers = false } = 
   const retrievedAtText = formatIST(marketData.retrievedAt || quotesList[0]?.retrieved_at);
   const [feedCategoryFilter, setFeedCategoryFilter] = useState("ALL");
   const [feedIndexFilter, setFeedIndexFilter] = useState("ALL");
+  const [autoRun, setAutoRun] = useState(false);
+  const [autoRunIntervalSec, setAutoRunIntervalSec] = useState(60);
+
+  useEffect(() => {
+    try {
+      const savedAuto = localStorage.getItem("imm_auto_run_analysis");
+      if (savedAuto !== null) setAutoRun(savedAuto === "true");
+      const savedSec = localStorage.getItem("imm_analysis_interval_sec");
+      if (savedSec) {
+        const parsed = parseInt(savedSec, 10);
+        if (!isNaN(parsed) && parsed >= 15) setAutoRunIntervalSec(parsed);
+      }
+    } catch (_) {}
+  }, []);
+
+  function updateAutoRun(nextVal) {
+    setAutoRun(nextVal);
+    try {
+      localStorage.setItem("imm_auto_run_analysis", String(nextVal));
+    } catch (_) {}
+  }
+
+  function updateAutoRunInterval(nextSec) {
+    const val = Number(nextSec) || 60;
+    setAutoRunIntervalSec(val);
+    try {
+      localStorage.setItem("imm_analysis_interval_sec", String(val));
+    } catch (_) {}
+  }
 
   function toggle(name) {
     setSelected((current) => (current.includes(name) ? current.filter((item) => item !== name) : [...current, name]));
@@ -246,6 +275,17 @@ export default function V6Desk({ defaultTab = "trades", hideTickers = false } = 
       setError(err instanceof Error ? err.message : String(err));
     }
   }
+
+  useEffect(() => {
+    if (!autoRun || selected.length === 0) return undefined;
+    const intervalMs = Math.max(15000, (Number(autoRunIntervalSec) || 60) * 1000);
+    const id = setInterval(() => {
+      if (phase !== "loading") {
+        run();
+      }
+    }, intervalMs);
+    return () => clearInterval(id);
+  }, [autoRun, autoRunIntervalSec, selected, commentary, quantFusion, phase]);
 
   async function fetchNews() {
     setNewsPhase("loading");
@@ -947,6 +987,26 @@ export default function V6Desk({ defaultTab = "trades", hideTickers = false } = 
                 <input type="checkbox" checked={commentary} onChange={(event) => setCommentary(event.target.checked)} />
                 <span>Include model commentary</span>
               </label>
+              <label className="check pro-check" style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={autoRun}
+                  onChange={(event) => updateAutoRun(event.target.checked)}
+                />
+                <span>🔄 Auto-run Analysis:</span>
+              </label>
+              <select
+                aria-label="Analysis auto-run interval"
+                value={autoRunIntervalSec}
+                onChange={(event) => updateAutoRunInterval(event.target.value)}
+                style={{ fontSize: "0.8rem", padding: "4px 8px", borderRadius: "6px" }}
+              >
+                <option value={30}>Every 30s</option>
+                <option value={60}>Every 1m (60s)</option>
+                <option value={120}>Every 2m (120s)</option>
+                <option value={300}>Every 5m (300s)</option>
+                <option value={900}>Every 15m (900s)</option>
+              </select>
               <button className="primary pro-run-btn" type="submit" disabled={phase === "loading" || selected.length === 0}>
                 {phase === "loading" ? "Analyzing Pipeline…" : `Run analysis (${selected.length} Selected)`}
               </button>

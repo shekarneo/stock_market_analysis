@@ -215,7 +215,7 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
 - **Command Toolbar & Analysis Launcher**:
   - Quick Presets: `🇮🇳 All Indices (3)`, `🛢️ MCX Commodities (8)`, `🌐 All Markets (15)`, and `Clear`.
   - Granular Instrument Selector Chips: Select individual indices (NIFTY, SENSEX), MCX commodities (Crude Mini, Gold Mini, Silver Mini, NG Mini), and global benchmarks.
-  - Execution Options: `⚡ Combine ML Forecast with Agent Consensus (Quant Fusion)` toggle and `Include model commentary` toggle.
+  - Execution Options: `⚡ Combine ML Forecast with Agent Consensus (Quant Fusion)` toggle, `Include model commentary` toggle, `🔄 Auto-run Analysis` toggle (`imm_auto_run_analysis`), and `Analysis auto-run interval` dropdown (`Every 30s`, `Every 1m (60s)`, `Every 2m (120s)`, `Every 5m (300s)`, `Every 15m (900s)`, persisted in `imm_analysis_interval_sec`).
   - Primary CTA: `Run analysis (X Selected)` button with live execution feedback.
 - **5 Inner Desk Navigation Tabs**:
   1. `🎯 Trade Decisions & Options`: Real spot-based option picks (ATM/OTM/ITM), strike targets, stop losses, and agent consensus.
@@ -304,8 +304,12 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
 - **Risk Threshold Controls**:
   - `Max Lots per Trade`: Limits position size (default: 1 lot; persisted in `imm_max_lots`).
   - `Daily Loss Threshold (₹)`: Hard loss cap (default: ₹5,000; persisted in `imm_daily_loss_limit`); if cumulative daily loss reaches this limit, the Kill Switch trips automatically.
-- **`Auto-Evaluate against live spot price` (Toggle)**:
-  - Automatically re-evaluates all open positions whenever a fresh Groww quote is polled (persisted in `imm_auto_evaluate`).
+- **Accuracy Benchmark & Auto-Refresh Controls Banner**:
+  - `🔄 Run Analysis Now` button: Immediately refreshes Groww live quotes and executes `POST /api/market-analysis` (`include_forecast: true`) to update all instrument decisions, Quant-Agent Fusion scores, and option strike recommendations.
+  - `Auto-run Analysis` checkbox & interval dropdown (`Every 30s`, `Every 1m (60s)`, `Every 2m (120s)`, `Every 5m (300s)`, `Every 15m (900s)`): Automatically re-runs the full multi-agent and ML forecast analysis on the selected schedule so `/live` continuously updates with the latest decisions (persisted in `imm_auto_run_analysis` and `imm_analysis_interval_sec`).
+  - `⚡ Evaluate Outcomes Now` button: Immediately evaluates all open Watchlist positions against live exchange spot prices.
+  - `Auto-evaluate` checkbox & interval dropdown (`Every 15s`, `Every 30s`, `Every 45s`, `Every 1m (60s)`, `Every 2m (120s)`): Automatically re-evaluates open positions against live spot quotes at the selected interval (persisted in `imm_auto_evaluate` and `imm_eval_interval_sec`).
+  - `Updated: <timestamp>` indicator: Displays the exact IST timestamp of the most recent analysis cycle.
 - **`🔄 Fetch Groww Live Data & Refresh Signals` Button**:
   - Pulls live spot prices and recalculates signals across all instruments.
 

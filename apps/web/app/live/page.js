@@ -130,10 +130,15 @@ export default function LiveTradingPage() {
 
   const [analysisData, setAnalysisData] = useState(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [lastAnalysisAt, setLastAnalysisAt] = useState(null);
+  const [autoRunAnalysis, setAutoRunAnalysis] = useState(true);
+  const [analysisIntervalSec, setAnalysisIntervalSec] = useState(60);
   const [watchlistData, setWatchlistData] = useState(null);
   const [evaluating, setEvaluating] = useState(false);
   const [autoEvaluate, setAutoEvaluate] = useState(true);
+  const [evalIntervalSec, setEvalIntervalSec] = useState(45);
   const evalTimer = useRef(null);
+  const analysisTimer = useRef(null);
   const prevRetrievedAt = useRef(null);
 
   const [isHydrated, setIsHydrated] = useState(false);
@@ -169,6 +174,20 @@ export default function LiveTradingPage() {
       if (savedAutoEval !== null) {
         setAutoEvaluate(savedAutoEval === "true");
       }
+      const savedEvalSec = localStorage.getItem("imm_eval_interval_sec");
+      if (savedEvalSec) {
+        const parsedEval = parseInt(savedEvalSec, 10);
+        if (!isNaN(parsedEval) && parsedEval >= 15) setEvalIntervalSec(parsedEval);
+      }
+      const savedAutoAnalysis = localStorage.getItem("imm_auto_run_analysis");
+      if (savedAutoAnalysis !== null) {
+        setAutoRunAnalysis(savedAutoAnalysis === "true");
+      }
+      const savedAnalysisSec = localStorage.getItem("imm_analysis_interval_sec");
+      if (savedAnalysisSec) {
+        const parsedAnalysis = parseInt(savedAnalysisSec, 10);
+        if (!isNaN(parsedAnalysis) && parsedAnalysis >= 15) setAnalysisIntervalSec(parsedAnalysis);
+      }
       const savedLots = localStorage.getItem("imm_max_lots");
       if (savedLots) {
         const parsed = parseInt(savedLots, 10);
@@ -201,13 +220,16 @@ export default function LiveTradingPage() {
       localStorage.setItem("imm_execution_mode", executionMode);
       localStorage.setItem("imm_auto_add_watchlist", String(autoAddToWatchlist));
       localStorage.setItem("imm_auto_evaluate", String(autoEvaluate));
+      localStorage.setItem("imm_eval_interval_sec", String(evalIntervalSec));
+      localStorage.setItem("imm_auto_run_analysis", String(autoRunAnalysis));
+      localStorage.setItem("imm_analysis_interval_sec", String(analysisIntervalSec));
       localStorage.setItem("imm_max_lots", String(maxLots));
       localStorage.setItem("imm_daily_loss_limit", String(dailyLossLimit));
       localStorage.setItem("imm_live_simulated_orders", JSON.stringify(orders));
     } catch {
       // Ignore storage errors
     }
-  }, [autoTradingEnabled, executionMode, autoAddToWatchlist, autoEvaluate, maxLots, dailyLossLimit, orders, isHydrated]);
+  }, [autoTradingEnabled, executionMode, autoAddToWatchlist, autoEvaluate, evalIntervalSec, autoRunAnalysis, analysisIntervalSec, maxLots, dailyLossLimit, orders, isHydrated]);
 
   // Load Watchlist and Accuracy
   const loadWatchlist = useCallback(async () => {
@@ -273,11 +295,13 @@ export default function LiveTradingPage() {
           include_news: true,
           include_macro: true,
           include_derivatives: true,
+          include_forecast: true,
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         setAnalysisData(data);
+        setLastAnalysisAt(new Date().toISOString());
       }
     } catch {
       // Ignore
@@ -326,17 +350,31 @@ export default function LiveTradingPage() {
     }
   }, [retrievedAt, loadWatchlist]);
 
-  // Recurring auto-evaluation of accuracy every 45 seconds
+  // Recurring auto-run of full market analysis & strike decisions at configurable interval
+  useEffect(() => {
+    if (!autoRunAnalysis) {
+      clearInterval(analysisTimer.current);
+      return undefined;
+    }
+    const intervalMs = Math.max(15000, (Number(analysisIntervalSec) || 60) * 1000);
+    analysisTimer.current = setInterval(() => {
+      fetchAnalysis();
+    }, intervalMs);
+    return () => clearInterval(analysisTimer.current);
+  }, [autoRunAnalysis, analysisIntervalSec, fetchAnalysis]);
+
+  // Recurring auto-evaluation of accuracy at configurable interval
   useEffect(() => {
     if (!autoEvaluate) {
       clearInterval(evalTimer.current);
       return undefined;
     }
+    const intervalMs = Math.max(15000, (Number(evalIntervalSec) || 45) * 1000);
     evalTimer.current = setInterval(() => {
       evaluateAccuracy();
-    }, 45000);
+    }, intervalMs);
     return () => clearInterval(evalTimer.current);
-  }, [autoEvaluate, evaluateAccuracy]);
+  }, [autoEvaluate, evalIntervalSec, evaluateAccuracy]);
 
   const getSpot = useCallback((inst) => {
     if (spots && spots[inst] != null) return spots[inst];
@@ -690,7 +728,45 @@ export default function LiveTradingPage() {
               Virtual paper testing mode. No actual broker funds are at risk. Every bot suggestion is automatically logged to the Watchlist and evaluated against live exchange ticks to measure hit-rate accuracy.
             </span>
           </div>
-          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={fetchAnalysis}
+              disabled={analysisLoading}
+              style={{
+                background: "#2563eb",
+                color: "#ffffff",
+                border: "none",
+                padding: "6px 12px",
+                borderRadius: "6px",
+                fontSize: "0.8rem",
+                fontWeight: 600,
+                cursor: analysisLoading ? "not-allowed" : "pointer",
+              }}
+            >
+              {analysisLoading ? "Running Analysis…" : "🔄 Run Analysis Now"}
+            </button>
+            <label style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "0.78rem", color: "#a7f3d0", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={autoRunAnalysis}
+                onChange={(e) => setAutoRunAnalysis(e.target.checked)}
+              />
+              Auto-run Analysis:
+            </label>
+            <select
+              aria-label="Auto-run analysis interval"
+              value={analysisIntervalSec}
+              onChange={(e) => setAnalysisIntervalSec(Number(e.target.value) || 60)}
+              style={{ fontSize: "0.78rem", padding: "3px 6px", borderRadius: "4px", background: "#0f172a", color: "#f8fafc", border: "1px solid rgba(16, 185, 129, 0.4)" }}
+            >
+              <option value={30}>Every 30s</option>
+              <option value={60}>Every 1m (60s)</option>
+              <option value={120}>Every 2m (120s)</option>
+              <option value={300}>Every 5m (300s)</option>
+              <option value={900}>Every 15m (900s)</option>
+            </select>
+
             <button
               type="button"
               onClick={evaluateAccuracy}
@@ -708,14 +784,31 @@ export default function LiveTradingPage() {
             >
               {evaluating ? "Evaluating…" : "⚡ Evaluate Outcomes Now"}
             </button>
-            <label style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "0.78rem", color: "#166534", cursor: "pointer" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "0.78rem", color: "#a7f3d0", cursor: "pointer" }}>
               <input
                 type="checkbox"
                 checked={autoEvaluate}
                 onChange={(e) => setAutoEvaluate(e.target.checked)}
               />
-              Auto-evaluate (45s)
+              Auto-evaluate:
             </label>
+            <select
+              aria-label="Auto-evaluate interval"
+              value={evalIntervalSec}
+              onChange={(e) => setEvalIntervalSec(Number(e.target.value) || 45)}
+              style={{ fontSize: "0.78rem", padding: "3px 6px", borderRadius: "4px", background: "#0f172a", color: "#f8fafc", border: "1px solid rgba(16, 185, 129, 0.4)" }}
+            >
+              <option value={15}>Every 15s</option>
+              <option value={30}>Every 30s</option>
+              <option value={45}>Every 45s</option>
+              <option value={60}>Every 1m (60s)</option>
+              <option value={120}>Every 2m (120s)</option>
+            </select>
+            {lastAnalysisAt ? (
+              <span style={{ fontSize: "0.73rem", color: "#a7f3d0" }}>
+                Updated: {formatIST(lastAnalysisAt)}
+              </span>
+            ) : null}
           </div>
         </div>
 
