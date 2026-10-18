@@ -163,12 +163,27 @@ def test_train_benchmark_endpoint_missing_dataset(client: TestClient):
 
     res = client.post(
         "/api/forecasting/train-benchmark",
-        json={"instrument": "CRUDEOILMINI", "model_type": "lightgbm", "strategy_mode": "regime_gated"},
+        json={"instrument": "GOLDMINI", "model_type": "lightgbm", "strategy_mode": "regime_gated"},
     )
     assert res.status_code == 400
     body = res.json()
     assert body["code"] == "DATASET_NOT_FOUND"
-    assert "Crude Oil" in body["message"] or "CRUDEOILMINI" in body["message"]
+
+
+def test_train_benchmark_endpoint_crudeoilmini(client: TestClient):
+    from tests.conftest import login
+    login(client)
+
+    res = client.post(
+        "/api/forecasting/train-benchmark",
+        json={"instrument": "CRUDEOILMINI", "model_type": "lightgbm", "strategy_mode": "deadband"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["instrument"] == "CRUDEOILMINI"
+    assert body["num_folds"] == 19
+
 
 
 def test_train_benchmark_endpoint_sensex(client: TestClient):

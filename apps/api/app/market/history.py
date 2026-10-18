@@ -49,6 +49,12 @@ DOCUMENTED_SYMBOLS = {
         "groww_symbol": "BSE-SENSEX",
         "evidence": "Groww backtesting page lists BSE-SENSEX as an index symbol example.",
     },
+    "CRUDEOILMINI": {
+        "exchange": "MCX",
+        "segment": "COMMODITY",
+        "groww_symbol": "MCX-CRUDEOILM",
+        "evidence": "MCX Commodity Future for Crude Oil Mini.",
+    },
 }
 
 BLOCK_CODE = "CANDLE_BOUNDARY_UNVERIFIED"

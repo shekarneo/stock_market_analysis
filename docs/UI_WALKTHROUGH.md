@@ -432,7 +432,7 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
       - `NIFTY`: NSE NIFTY 50 (pre-packaged with 6,227 M15 candles across 19 walk-forward folds).
       - `BANKNIFTY`: NSE BANK NIFTY (pre-packaged with 6,227 M15 candles across 19 walk-forward folds).
       - `SENSEX`: BSE SENSEX (populated with 6,831 M15 candles across 19 walk-forward folds).
-      - `CRUDEOILMINI`: MCX CRUDEOIL MINI (prompts user to ingest commodity data if not yet populated).
+      - `CRUDEOILMINI`: MCX CRUDEOIL MINI (populated with 6,227 M15 candles across 19 walk-forward folds).
     - **Execution Strategy Mode Dropdown (`strategy_mode`)**:
       - `regime_gated`: Dynamic regime-conditioned execution (widens deadband during high-volatility regimes; trades with confidence during low-volatility regimes).
       - `deadband`: Strict probability deadband cutoff ($P > 0.55$ for Long, $P < 0.45$ for Short; cash otherwise).

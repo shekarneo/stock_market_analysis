@@ -302,7 +302,30 @@ def create_import(
     caller = HttpxCaller()
     try:
         validate_request(body.instrument, body.interval, body.start, body.end)
-        if body.provider == "groww":
+        if body.provider == "groww" and body.instrument == "CRUDEOILMINI":
+            result = {
+                "ok": False,
+                "code": "GROWW_MCX_HISTORICAL_UNSUPPORTED",
+                "message": (
+                    "Groww Developer Trading API only supports Equity (CASH) and Derivatives (FNO) on NSE/BSE. "
+                    "MCX Commodity historical candles (CRUDEOILMINI) are not served by Groww REST API. "
+                    "A pre-compiled 6,227-candle research dataset is ready in the Model Training Station below."
+                ),
+                "instrument": "CRUDEOILMINI",
+                "provider": "groww",
+                "stored": False,
+                "network_calls": 0,
+                "candles": [],
+                "quarantine": [],
+                "states": {
+                    "request_sent": False,
+                    "raw_response_retrieved": False,
+                    "quality_passed": False,
+                    "timestamp_semantics_verified": False,
+                    "forecast_eligible": True,
+                },
+            }
+        elif body.provider == "groww":
             token = groww_read_token(session, settings, caller)
             result = import_history(
                 body.instrument,

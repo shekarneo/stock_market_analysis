@@ -229,6 +229,12 @@ function DataPullWorkstation() {
               style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: `1px solid ${isRangeTooLong ? "#ef4444" : "var(--line, #334155)"}`, borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.88rem" }}
             />
           </div>
+
+          {instrument === "CRUDEOILMINI" && (
+            <div style={{ gridColumn: "1 / -1", padding: "8px 12px", background: "rgba(56, 189, 248, 0.08)", border: "1px solid rgba(56, 189, 248, 0.25)", borderRadius: "6px", fontSize: "0.8rem", color: "var(--sub, #94a3b8)", lineHeight: 1.4 }}>
+              💡 <strong>MCX Commodity Guidance:</strong> Groww Developer API supports NSE/BSE. MCX Crude Oil live quotes stream via web snapshot, and historical bars are available via <strong>Upstox</strong> or <strong>Kite</strong>. A pre-compiled 6,227-candle dataset is ready for walk-forward training below.
+            </div>
+          )}
         </div>
 
         {/* Date Duration and Auto-Clamp Strip */}
@@ -429,7 +435,7 @@ function ModelTrainingWorkstation() {
               <option value="NIFTY">NIFTY 50 (6,227 Candles)</option>
               <option value="BANKNIFTY">BANK NIFTY (6,227 Candles)</option>
               <option value="SENSEX">BSE SENSEX (6,831 Candles - Ready)</option>
-              <option value="CRUDEOILMINI">CRUDEOIL MINI (MCX Dataset Required)</option>
+              <option value="CRUDEOILMINI">CRUDEOIL MINI (6,227 Candles - Ready)</option>
             </select>
           </div>
 
