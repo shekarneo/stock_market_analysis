@@ -79,6 +79,10 @@ const MarketDataContext = createContext({
   commodities: [],
   globalIndices: [],
   sectoralIndices: [],
+  selectedModel: "champion",
+  setSelectedModel: () => {},
+  selectedStrategyMode: "regime_gated",
+  setSelectedStrategyMode: () => {},
   retrievedAt: null,
   pollConfig: { enabled: true, interval_seconds: 15, status: "RUNNING" },
   isRefreshing: false,
@@ -89,6 +93,28 @@ const MarketDataContext = createContext({
 
 export function MarketDataProvider({ children }) {
   const [selectedInstrument, setSelectedInstrument] = useState("NIFTY");
+  const [selectedModel, setSelectedModelState] = useState("champion");
+  const [selectedStrategyMode, setSelectedStrategyModeState] = useState("regime_gated");
+
+  useEffect(() => {
+    try {
+      const savedM = localStorage.getItem("imm_selected_model");
+      if (savedM) setSelectedModelState(savedM);
+      const savedMode = localStorage.getItem("imm_selected_strategy_mode");
+      if (savedMode) setSelectedStrategyModeState(savedMode);
+    } catch (_) {}
+  }, []);
+
+  const setSelectedModel = useCallback((m) => {
+    setSelectedModelState(m);
+    try { localStorage.setItem("imm_selected_model", m); } catch (_) {}
+  }, []);
+
+  const setSelectedStrategyMode = useCallback((mode) => {
+    setSelectedStrategyModeState(mode);
+    try { localStorage.setItem("imm_selected_strategy_mode", mode); } catch (_) {}
+  }, []);
+
   const [instrumentsCatalog, setInstrumentsCatalog] = useState(Object.values(INSTRUMENT_CONFIGS));
   const [data, setData] = useState(null);
   const [pollConfig, setPollConfig] = useState({ enabled: true, interval_seconds: 15, status: "RUNNING" });
@@ -265,6 +291,10 @@ export function MarketDataProvider({ children }) {
   const value = {
     selectedInstrument,
     setSelectedInstrument,
+    selectedModel,
+    setSelectedModel,
+    selectedStrategyMode,
+    setSelectedStrategyMode,
     instrumentConfig: currentConfig,
     supportedInstruments: instrumentsCatalog,
     spots,

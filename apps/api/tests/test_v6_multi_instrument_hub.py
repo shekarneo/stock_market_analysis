@@ -342,5 +342,14 @@ def test_live_trend_chart_endpoint(client: TestClient):
     assert "upper_bound" in body["projected_path"][0]
     assert "lower_bound" in body["projected_path"][0]
 
+    # Test explicit model selection on live trend chart
+    res_model = client.get("/api/forecasting/live-trend-chart?instrument=NIFTY&bars=25&model=xgboost&strategy_mode=regime_gated")
+    assert res_model.status_code == 200
+    body_model = res_model.json()
+    assert body_model["ok"] is True
+    assert body_model["model_name"] == "xgboost"
+    assert body_model["strategy_mode"] == "regime_gated"
+    assert len(body_model["projected_path"]) == 4
+
 
 

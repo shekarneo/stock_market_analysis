@@ -8,6 +8,7 @@ import InstrumentForecastCard from "../components/InstrumentForecastCard";
 import PredictedTrendChart from "../components/PredictedTrendChart";
 import { flagLabel } from "../research/status.mjs";
 import { observationClass, valueText } from "../research/present.mjs";
+import { useMarketData } from "../components/MarketDataContext";
 
 function pct(val) {
   if (val == null) return "—";
@@ -388,6 +389,17 @@ function ModelTrainingWorkstation() {
   const [suiteError, setSuiteError] = useState("");
   const [leaderboardFilter, setLeaderboardFilter] = useState("ALL");
 
+  const { selectedModel, setSelectedModel, selectedStrategyMode, setSelectedStrategyMode, setSelectedInstrument } = useMarketData();
+  const [activeNotification, setActiveNotification] = useState("");
+
+  const handleSetActiveModel = (m, mode, inst) => {
+    setSelectedModel(m);
+    if (mode) setSelectedStrategyMode(mode);
+    if (inst) setSelectedInstrument(inst);
+    setActiveNotification(`✓ ${m.toUpperCase()} (${mode || "regime_gated"}) is now set as the active model for ${inst || "NIFTY"}! Live trend graph and analysis desks are using this configuration.`);
+    setTimeout(() => setActiveNotification(""), 6000);
+  };
+
   const SOTA_MODELS_CATALOG = [
     { id: "lightgbm", name: "LightGBM GBDT (Leaf-Wise SOTA - M37)", tag: "GBDT SOTA" },
     { id: "xgboost", name: "XGBoost Classifier (Regularized Boosting SOTA)", tag: "BOOSTING SOTA" },
@@ -559,6 +571,25 @@ function ModelTrainingWorkstation() {
         </div>
       </div>
 
+      {/* Active Model for Analysis Indicator */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", padding: "8px 12px", background: "rgba(59, 130, 246, 0.08)", border: "1px solid rgba(59, 130, 246, 0.25)", borderRadius: "8px", marginBottom: "16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <span style={{ fontSize: "0.8rem", color: "var(--sub)" }}>Current Model for Analysis:</span>
+          <span className="pill ok" style={{ fontSize: "0.75rem", fontWeight: 700, padding: "2px 8px" }}>
+            {selectedModel ? selectedModel.toUpperCase() : "CHAMPION"} ({selectedStrategyMode || "regime_gated"})
+          </span>
+        </div>
+        <a href="#trend-chart-heading" style={{ fontSize: "0.78rem", color: "#38bdf8", textDecoration: "none", fontWeight: 600 }}>
+          📈 View in Live Graph ↑
+        </a>
+      </div>
+
+      {activeNotification ? (
+        <div style={{ padding: "8px 12px", background: "rgba(16, 185, 129, 0.15)", border: "1px solid #10b981", borderRadius: "8px", color: "#34d399", fontSize: "0.82rem", marginBottom: "14px" }}>
+          {activeNotification}
+        </div>
+      ) : null}
+
       {tab === "individual" ? (
         /* INDIVIDUAL MODEL WORKSTATION */
         <div>
@@ -710,6 +741,16 @@ function ModelTrainingWorkstation() {
                   </table>
                 </div>
               ) : null}
+              <div style={{ marginTop: "14px", display: "flex", justifyContent: "flex-end" }}>
+                <button
+                  type="button"
+                  className="btn primary"
+                  style={{ fontSize: "0.82rem", padding: "8px 16px" }}
+                  onClick={() => handleSetActiveModel(result.model_name, result.strategy_mode, instrument)}
+                >
+                  ⚡ Set {result.model_name.toUpperCase()} ({result.strategy_mode}) as Active Analysis Model
+                </button>
+              </div>
             </div>
           ) : null}
         </div>
@@ -1032,6 +1073,7 @@ function ModelTrainingWorkstation() {
                       <th>Brier Skill Score</th>
                       <th>Max Drawdown</th>
                       <th>Status</th>
+                      <th style={{ textAlign: "center" }}>Action</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1040,6 +1082,7 @@ function ModelTrainingWorkstation() {
                       .map((row) => {
                         const isChampion = row.rank === 1;
                         const isTop3 = row.rank <= 3;
+                        const isActive = selectedModel === row.model_name && selectedStrategyMode === row.strategy_mode;
                         return (
                           <tr
                             key={`${row.instrument}-${row.model_name}-${row.strategy_mode}`}
@@ -1069,6 +1112,20 @@ function ModelTrainingWorkstation() {
                                 <span className="pill ok" style={{ fontSize: "0.65rem", padding: "1px 6px" }}>ALPHA+</span>
                               ) : (
                                 <span className="pill warn" style={{ fontSize: "0.65rem", padding: "1px 6px" }}>NEGATIVE</span>
+                              )}
+                            </td>
+                            <td style={{ textAlign: "center" }}>
+                              {isActive ? (
+                                <span className="pill ok" style={{ fontSize: "0.68rem", padding: "2px 8px" }}>✓ Active in Analysis</span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="btn secondary"
+                                  style={{ fontSize: "0.7rem", padding: "3px 8px", borderRadius: "4px" }}
+                                  onClick={() => handleSetActiveModel(row.model_name, row.strategy_mode, row.instrument)}
+                                >
+                                  ⚡ Set for Analysis
+                                </button>
                               )}
                             </td>
                           </tr>

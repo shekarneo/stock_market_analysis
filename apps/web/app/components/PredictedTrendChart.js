@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useMarketData } from "./MarketDataContext";
 
 export default function PredictedTrendChart() {
-  const { selectedInstrument, selectInstrument, spots } = useMarketData();
+  const { selectedInstrument, selectInstrument, spots, selectedModel, setSelectedModel, selectedStrategyMode, setSelectedStrategyMode } = useMarketData();
   const [instrument, setInstrument] = useState(selectedInstrument || "NIFTY");
   const [barsCount, setBarsCount] = useState(35);
   const [chartData, setChartData] = useState(null);
@@ -24,7 +24,9 @@ export default function PredictedTrendChart() {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`/api/forecasting/live-trend-chart?instrument=${instrument}&bars=${barsCount}`);
+        const mParam = selectedModel || "champion";
+        const modeParam = selectedStrategyMode || "regime_gated";
+        const res = await fetch(`/api/forecasting/live-trend-chart?instrument=${instrument}&bars=${barsCount}&model=${mParam}&strategy_mode=${modeParam}`);
         if (!res.ok) {
           throw new Error(`Failed to load live trend data for ${instrument} (${res.status})`);
         }
@@ -49,7 +51,7 @@ export default function PredictedTrendChart() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [instrument, barsCount]);
+  }, [instrument, barsCount, selectedModel, selectedStrategyMode]);
 
   const handleInstrumentChange = (inst) => {
     setInstrument(inst);
@@ -182,6 +184,52 @@ export default function PredictedTrendChart() {
             ))}
           </div>
 
+          {/* Model Architecture Selector */}
+          <select
+            value={selectedModel || "champion"}
+            onChange={(e) => setSelectedModel(e.target.value)}
+            title="Choose SOTA Forecasting Model for Analysis"
+            style={{
+              padding: "5px 8px",
+              background: "var(--bg, #0f172a)",
+              border: "1px solid var(--line, #334155)",
+              borderRadius: "6px",
+              color: "var(--ink, #f8fafc)",
+              fontSize: "0.78rem",
+              fontWeight: 600,
+            }}
+          >
+            <option value="champion">🏆 Model: Champion (Ranked #1 Auto)</option>
+            <option value="lightgbm">⚡ LightGBM (GBDT SOTA)</option>
+            <option value="xgboost">🚀 XGBoost (Boosting SOTA)</option>
+            <option value="catboost">🐱 CatBoost (Symmetric Trees)</option>
+            <option value="dlinear">📐 DLinear (Decomposition SOTA)</option>
+            <option value="chronos">⏳ Chronos-2 (Foundation Transformer)</option>
+            <option value="random_forest">🌲 Random Forest (Ensemble SOTA)</option>
+            <option value="mlp">🧠 MLP (Deep Neural Net)</option>
+            <option value="logistic_regression">📊 Logistic Regression (Baseline)</option>
+            <option value="empirical_prior">🎲 Empirical Prior (Majority Baseline)</option>
+          </select>
+
+          {/* Strategy Gating Mode Selector */}
+          <select
+            value={selectedStrategyMode || "regime_gated"}
+            onChange={(e) => setSelectedStrategyMode(e.target.value)}
+            title="Choose Strategy Gating Mode"
+            style={{
+              padding: "5px 8px",
+              background: "var(--bg, #0f172a)",
+              border: "1px solid var(--line, #334155)",
+              borderRadius: "6px",
+              color: "var(--ink, #f8fafc)",
+              fontSize: "0.78rem",
+            }}
+          >
+            <option value="regime_gated">Regime-Gated (Consensus)</option>
+            <option value="deadband">Deadband (48%–52%)</option>
+            <option value="raw">Raw Directional</option>
+          </select>
+
           <select
             value={barsCount}
             onChange={(e) => setBarsCount(Number(e.target.value))}
@@ -238,8 +286,14 @@ export default function PredictedTrendChart() {
             </div>
           )
         ) : (
-          <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", alignItems: "center" }}>
             <span><strong>Asset:</strong> {instrument}</span>
+            <span>
+              <strong>Model:</strong>{" "}
+              <span style={{ color: "#a855f7", fontWeight: 700 }}>
+                {chartData?.model_name ? chartData.model_name.toUpperCase() : (selectedModel || "CHAMPION").toUpperCase()}
+              </span>
+            </span>
             <span>
               <strong>Live Spot:</strong>{" "}
               <span style={{ color: "#38bdf8", fontWeight: 700 }}>
@@ -259,7 +313,10 @@ export default function PredictedTrendChart() {
               <strong>Stop Loss:</strong> ₹{chartData?.stop_loss_spot?.toLocaleString("en-IN") || "---"}
             </span>
             <span>
-              <strong>Expected Move:</strong> ±{chartData?.expected_move_points != null ? `${chartData.expected_move_points} pts` : "---"}
+              <strong>Decision:</strong>{" "}
+              <span className={`pill ${chartData?.decision === "BUY" ? "ok" : chartData?.decision === "SELL" ? "err" : "info"}`} style={{ fontSize: "0.72rem", padding: "1px 6px" }}>
+                {chartData?.decision || "NO TRADE"}
+              </span>
             </span>
           </div>
         )}

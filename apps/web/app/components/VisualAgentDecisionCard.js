@@ -20,7 +20,7 @@ const AGENT_CATALOG = [
 ];
 
 export default function VisualAgentDecisionCard() {
-  const { selectedInstrument, selectInstrument, spots } = useMarketData();
+  const { selectedInstrument, selectInstrument, spots, selectedModel } = useMarketData();
   const [instrument, setInstrument] = useState(selectedInstrument || "NIFTY");
   const [report, setReport] = useState(null);
   const [running, setRunning] = useState(false);
@@ -366,7 +366,7 @@ export default function VisualAgentDecisionCard() {
           </div>
 
           <div style={{ fontSize: "0.68rem", color: "var(--sub, #64748b)" }}>
-            ML Model: LightGBM M37 / Logistic L2 · 19 Folds
+            ML Model: {selectedModel ? selectedModel.toUpperCase() : "CHAMPION"} · 19 Folds Walk-Forward
           </div>
         </div>
       </div>

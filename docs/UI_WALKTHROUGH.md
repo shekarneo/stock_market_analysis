@@ -390,15 +390,26 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
     - **Purpose**: Combines verified historical candlesticks, live market spot price action, and ML forward projected trajectory with dynamic confidence cones ($\pm 1\sigma$ volatility corridors), target spot, and stop-loss levels.
     - **Header Controls & State**:
       - `Instrument Selector Pills`: One-click buttons for `NIFTY 50`, `BANK NIFTY`, `BSE SENSEX`, and `CRUDEOIL MINI`. Automatically synchronizes with global `MarketDataContext`.
-      - `Lookback Window Pills`: Choose historical bar depth (`20 Bars`, `35 Bars`, `50 Bars`).
-      - `Live Market Status Pill`: Green pulsing indicator displaying `🟢 LIVE STREAM ACTIVE` when streaming live Groww quotes, or `🟡 VERIFIED FEED` with last tick timestamp.
-    - **Key Metrics Ribbon**:
-      - `Live Spot Price`: High-visibility bold current underlying market price.
-      - `Predicted Direction & Decision Badge`: Pill indicating `🟢 BULLISH (BUY)`, `🔴 BEARISH (SELL)`, or `🟡 NEUTRAL (STAND ASIDE)`.
-      - `Calibrated Probability`: Model calibrated confidence (e.g. `54.2% P(Up)`).
-      - `Horizon & Model`: Horizon (e.g. `+4 Bars (60m)`) and serving model architecture (`LightGBM M37`).
-      - `Target Spot & Potential Gain`: Target price in INR and points / percentage move.
-      - `Stop Loss & Invalidation Risk`: Protective stop price in INR and risk distance.
+      - `Model Architecture Selector Dropdown`: Select which quantitative model drives the forward projected trend line, target, stop loss, and confidence corridor:
+        - `🏆 Model: Champion (Ranked #1 Auto)`: Automatically adopts the #1 ranked model from walk-forward benchmarking.
+        - `⚡ LightGBM (GBDT SOTA)`: Gradient-boosted decision trees with leaf-wise expansion.
+        - `🚀 XGBoost (Boosting SOTA)`: Regularized gradient boosting with histogram tree method.
+        - `🐱 CatBoost (Symmetric Trees)`: Oblivious decision trees with categorical handling.
+        - `📐 DLinear (Decomposition SOTA)`: Direct linear trend and seasonal decomposition neural network.
+        - `⏳ Chronos-2 (Foundation Transformer)`: Zero-shot time-series transformer foundation model.
+        - `🌲 Random Forest (Ensemble SOTA)`: Bootstrap bagging ensemble of decision trees.
+        - `🧠 MLP (Deep Neural Net)`: Multi-layer perceptron neural network.
+        - `📊 Logistic Regression (Baseline)`: L2-regularized linear benchmark.
+        - `🎲 Empirical Prior (Majority Baseline)`: Constant historical empirical probability.
+      - `Strategy Gating Mode Dropdown`: Switch gating strategy between `Regime-Gated (Consensus)`, `Deadband (48%–52%)`, and `Raw Directional`.
+      - `Lookback Window Dropdown`: Choose historical bar depth (`20 Bars (5h)`, `35 Bars (~1.5d)`, `50 Bars (2d)`).
+      - `Live Market Status Pill`: Green pulsing indicator displaying `🟢 LIVE FEED TICKING` when streaming live Groww quotes, or `VERIFIED HISTORICAL BARS` with verified candle data.
+    - **Key Metrics Ribbon & Status Strip**:
+      - `Active Model Tag`: High-visibility purple tag showing active model architecture (e.g. `LIGHTGBM`, `XGBOOST`, `CHAMPION`).
+      - `Live Spot Price`: Bold current underlying market price.
+      - `Predicted Direction & Decision Badge`: Pill indicating `🟢 BULLISH (BUY)`, `🔴 BEARISH (SELL)`, or `🟡 NEUTRAL (STAND ASIDE / NO TRADE)`.
+      - `Target Spot & Potential Gain`: Target price in INR.
+      - `Stop Loss & Invalidation Risk`: Protective stop price in INR.
     - **Interactive Candlestick & Projection Chart Area**:
       - `Historical OHLC Candlesticks`: Green (`#10b981`) bullish and Red (`#f43f5e`) bearish candles with vertical wicks and rectangular bodies representing historical interval bars.
       - `NOW (Live Spot) Vertical Divider`: Prominent cyan dashed line (`#38bdf8`) separating realized historical data from the future predictive horizon, adorned with a glowing live spot price tag.
@@ -512,7 +523,10 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
       - `🏆 Ranked SOTA Walk-Forward Leaderboard Table`:
         - Ranked by Holdout Net Return after 2.0 bps friction with tie-breakers on accuracy and full walk-forward net return.
         - Medals for top positions: `🥇 #1`, `🥈 #2`, `🥉 #3`, followed by numeric rank `#4`, `#5`, etc.
-        - Columns: `Rank`, `Instrument`, `Model Architecture`, `Strategy Mode`, `Holdout Net Return (2bps)`, `Full Net Return (2bps)`, `Holdout Accuracy`, `Brier Skill Score`, `Max Drawdown`, `Status` (`ALPHA+` in green or `NEGATIVE` in amber).
+        - Columns: `Rank`, `Instrument`, `Model Architecture`, `Strategy Mode`, `Holdout Net Return (2bps)`, `Full Net Return (2bps)`, `Holdout Accuracy`, `Brier Skill Score`, `Max Drawdown`, `Status` (`ALPHA+` in green or `NEGATIVE` in amber), and `Action`.
+        - `⚡ Set for Analysis` Action Button: Promotes any model and strategy mode combination from the leaderboard to serve as the live predictive model across the Overview, Analysis Desk, and Live Trend Graph. When active, displays a `✓ Active in Analysis` pill.
+      - `Active Analysis Model Banner & Indicator`: Prominent banner at the top of the workstation displaying the currently active model architecture (e.g. `LIGHTGBM`, `XGBOOST`, `DLINEAR`) and strategy mode (`Regime-Gated`, `Deadband`, `Raw`), accompanied by a direct jump link to the Live Trend Graph (`📈 View in Live Graph ↑`).
+      - `⚡ Set as Active Model for Analysis Button` (Individual Mode): Located directly below the strategy comparison table in the Individual Model tab, allowing operators to immediately promote any individually evaluated model to active analysis status.
     - **Approved Forecasts Section**: Lists all active models approved for production forecasting.
     - **Registered Models Table**: Lineage, training dataset ID, checksum, and safety flags.
     - **Experiments Section**: Holdout and walk-forward experiment tables.

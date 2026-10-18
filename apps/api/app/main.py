@@ -773,6 +773,8 @@ def get_live_trend_chart(
     request: Request,
     instrument: str = "NIFTY",
     bars: int = 35,
+    model: str = "champion",
+    strategy_mode: str = "regime_gated",
     settings: Settings = Depends(settings_dep),
 ) -> dict:
     """Retrieve historical candle bars combined with live forward projected trend and confidence cone."""
@@ -822,13 +824,48 @@ def get_live_trend_chart(
             current_spot = formatted_candles[-1]["close"]
             is_live = False
 
-        fc = get_instrument_forecast(inst)
-        direction = fc.get("predicted_direction") or "BULLISH"
-        decision = fc.get("decision") or "NO TRADE"
-        calibrated_p = fc.get("calibrated_probability") or 0.53
-        expected_move = fc.get("expected_return_points") or round(current_spot * 0.0035, 1)
+        chosen_model = model.lower().strip()
+        if chosen_model not in {"champion", "auto", "default", ""}:
+            model_key = normalize_model_key(chosen_model)
+            from app.forecasting.m37_lightgbm_htf_research import run_m37_lightgbm_benchmark, M37StrategyMode
+            mode_val = M37StrategyMode.REGIME_GATED
+            if "dead" in strategy_mode.lower():
+                mode_val = M37StrategyMode.DEADBAND
+            elif "raw" in strategy_mode.lower():
+                mode_val = M37StrategyMode.RAW
 
-        target = fc.get("target_spot")
+            report = run_m37_lightgbm_benchmark(
+                candles_15m=all_candles,
+                dataset_id=raw_data.get("dataset_id", inst),
+                models_to_evaluate=[model_key],
+                strategy_modes=[mode_val],
+            )
+            strat = report.strategies[0] if report.strategies else None
+            if strat:
+                calibrated_p = round(strat.holdout_accuracy, 4) if strat.holdout_accuracy else 0.52
+                direction = "BULLISH" if strat.holdout_net_return_2bps >= 0 else "BEARISH"
+                decision = "BUY" if direction == "BULLISH" and calibrated_p > 0.52 else ("SELL" if direction == "BEARISH" and calibrated_p < 0.48 else "NO TRADE")
+                expected_move = round(current_spot * 0.0035, 1)
+                target = round(current_spot + expected_move, 1) if direction == "BULLISH" else round(current_spot - expected_move, 1)
+                stop = round(current_spot - expected_move * 0.7, 1) if direction == "BULLISH" else round(current_spot + expected_move * 0.7, 1)
+            else:
+                fc = get_instrument_forecast(inst)
+                direction = fc.get("predicted_direction") or "BULLISH"
+                decision = fc.get("decision") or "NO TRADE"
+                calibrated_p = fc.get("calibrated_probability") or 0.53
+                expected_move = fc.get("expected_return_points") or round(current_spot * 0.0035, 1)
+                target = fc.get("target_spot")
+                stop = fc.get("stop_loss_spot")
+        else:
+            model_key = "champion"
+            fc = get_instrument_forecast(inst)
+            direction = fc.get("predicted_direction") or "BULLISH"
+            decision = fc.get("decision") or "NO TRADE"
+            calibrated_p = fc.get("calibrated_probability") or 0.53
+            expected_move = fc.get("expected_return_points") or round(current_spot * 0.0035, 1)
+            target = fc.get("target_spot")
+            stop = fc.get("stop_loss_spot")
+
         if target is None:
             if direction == "BULLISH" or decision == "BUY":
                 target = round(current_spot + expected_move, 1)
@@ -837,7 +874,6 @@ def get_live_trend_chart(
             else:
                 target = round(current_spot + expected_move * 0.2, 1)
 
-        stop = fc.get("stop_loss_spot")
         if stop is None:
             if direction == "BULLISH" or decision == "BUY":
                 stop = round(current_spot - expected_move * 0.7, 1)
@@ -870,6 +906,8 @@ def get_live_trend_chart(
         return {
             "ok": True,
             "instrument": inst,
+            "model_name": model_key,
+            "strategy_mode": strategy_mode,
             "current_spot": current_spot,
             "is_live": is_live,
             "decision": decision,
