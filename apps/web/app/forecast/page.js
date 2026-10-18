@@ -32,6 +32,8 @@ export default function ForecastPage() {
       {() => (
         <>
           <InstrumentForecastCard />
+          <DataPullWorkstation />
+          <ModelTrainingWorkstation />
           <ForecastAccuracyHub />
           <Approved />
           <Models />
@@ -39,6 +41,395 @@ export default function ForecastPage() {
         </>
       )}
     </ResearchBoard>
+  );
+}
+
+function DataPullWorkstation() {
+  const [instrument, setInstrument] = useState("NIFTY");
+  const [provider, setProvider] = useState("groww");
+  const [interval, setInterval] = useState("M15");
+  const [start, setStart] = useState("2026-09-18");
+  const [end, setEnd] = useState("2026-10-18");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+
+  const setPreset = (months) => {
+    const e = new Date("2026-10-18");
+    const s = new Date(e);
+    s.setMonth(s.getMonth() - months);
+    setStart(s.toISOString().slice(0, 10));
+    setEnd(e.toISOString().slice(0, 10));
+  };
+
+  const handlePullData = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    setResult(null);
+    try {
+      const res = await fetch("/api/history/imports", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": csrf(),
+        },
+        body: JSON.stringify({
+          provider,
+          instrument,
+          interval,
+          start: `${start}T09:15:00+05:30`,
+          end: `${end}T15:30:00+05:30`,
+        }),
+      });
+      const data = await res.json();
+      setResult(data);
+      if (!res.ok && data.code !== "CANDLE_BOUNDARY_UNVERIFIED" && data.code !== "EMPTY_CANDLES") {
+        setError(data.message || data.code || "Failed to pull candle data.");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section aria-labelledby="pull-data-heading" style={{ background: "var(--card-subtle, #131c31)", border: "1px solid var(--line, #334155)", borderRadius: "12px", padding: "20px", marginBottom: "28px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px", marginBottom: "16px" }}>
+        <div>
+          <h2 id="pull-data-heading" style={{ margin: 0, fontSize: "1.2rem", fontWeight: 700, color: "var(--ink, #f8fafc)" }}>
+            📥 Historical Data Ingestion Workstation
+          </h2>
+          <p style={{ margin: "4px 0 0", fontSize: "0.85rem", color: "var(--sub, #94a3b8)" }}>
+            Pull component historical candle series across NSE, BSE, and MCX with customizable intervals and calendar-aligned date ranges.
+          </p>
+        </div>
+        <span className="pill info"><i />DATA PIPELINE</span>
+      </div>
+
+      <form onSubmit={handlePullData}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: "14px", marginBottom: "14px" }}>
+          <div>
+            <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--sub, #94a3b8)", marginBottom: "4px" }}>
+              Component / Asset
+            </label>
+            <select
+              value={instrument}
+              onChange={(e) => setInstrument(e.target.value)}
+              style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.9rem" }}
+            >
+              <option value="NIFTY">NIFTY 50 (NSE-NIFTY)</option>
+              <option value="BANKNIFTY">BANK NIFTY (NSE-BANKNIFTY)</option>
+              <option value="SENSEX">BSE SENSEX (BSE-SENSEX)</option>
+              <option value="CRUDEOILMINI">CRUDEOIL MINI (MCX-CRUDEOILMINI)</option>
+            </select>
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--sub, #94a3b8)", marginBottom: "4px" }}>
+              Candle Interval
+            </label>
+            <select
+              value={interval}
+              onChange={(e) => setInterval(e.target.value)}
+              style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.9rem" }}
+            >
+              <option value="M1">1 Minute (M1)</option>
+              <option value="M5">5 Minutes (M5)</option>
+              <option value="M15">15 Minutes (M15 - Standard)</option>
+              <option value="H1">1 Hour (H1 Swing)</option>
+              <option value="D1">1 Day (Daily)</option>
+            </select>
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--sub, #94a3b8)", marginBottom: "4px" }}>
+              Provider Feed
+            </label>
+            <select
+              value={provider}
+              onChange={(e) => setProvider(e.target.value)}
+              style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.9rem" }}
+            >
+              <option value="groww">Groww Direct / Snapshot</option>
+              <option value="upstox">Upstox Reference Feed</option>
+              <option value="kite">Zerodha Kite Connect</option>
+              <option value="angelone">AngelOne SmartAPI</option>
+            </select>
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--sub, #94a3b8)", marginBottom: "4px" }}>
+              Start Date
+            </label>
+            <input
+              type="date"
+              value={start}
+              onChange={(e) => setStart(e.target.value)}
+              style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.88rem" }}
+            />
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--sub, #94a3b8)", marginBottom: "4px" }}>
+              End Date
+            </label>
+            <input
+              type="date"
+              value={end}
+              onChange={(e) => setEnd(e.target.value)}
+              style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.88rem" }}
+            />
+          </div>
+        </div>
+
+        {/* Quick Date Range Presets */}
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "16px" }}>
+          <span style={{ fontSize: "0.78rem", color: "var(--muted, #64748b)" }}>Quick Presets:</span>
+          <button type="button" className="btn small secondary" onClick={() => setPreset(1)}>1 Month</button>
+          <button type="button" className="btn small secondary" onClick={() => setPreset(3)}>3 Months</button>
+          <button type="button" className="btn small secondary" onClick={() => setPreset(6)}>6 Months</button>
+          <button type="button" className="btn small secondary" onClick={() => { setStart("2025-10-14"); setEnd("2026-10-16"); }}>1 Year (M23 Baseline)</button>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+          <button type="submit" className="btn primary" disabled={busy} style={{ minWidth: "180px" }}>
+            {busy ? "Fetching & Validating…" : `📥 Pull ${instrument} ${interval} Data`}
+          </button>
+        </div>
+      </form>
+
+      {error ? (
+        <div style={{ marginTop: "14px", padding: "10px 14px", background: "rgba(239, 68, 68, 0.1)", border: "1px solid #ef4444", borderRadius: "6px", color: "#fca5a5", fontSize: "0.85rem" }}>
+          <strong>Error:</strong> {error}
+        </div>
+      ) : null}
+
+      {result ? (
+        <div style={{ marginTop: "14px", padding: "12px 14px", background: result.ok ? "rgba(16, 185, 129, 0.08)" : "rgba(245, 158, 11, 0.1)", border: `1px solid ${result.ok ? "#10b981" : "#f59e0b"}`, borderRadius: "6px", fontSize: "0.85rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+            <strong>{result.ok ? "✓ Ingestion Succeeded" : "⚠ Pipeline Notification"}:</strong>
+            <span className={`pill ${result.ok ? "ok" : "warn"}`}>{result.code || "RESPONSE"}</span>
+          </div>
+          <p style={{ margin: "0 0 4px", color: "var(--ink, #f8fafc)" }}>{result.message || JSON.stringify(result)}</p>
+          {result.candles_stored ? (
+            <p style={{ margin: 0, color: "var(--sub, #94a3b8)" }}>
+              Durable candles stored: <strong>{result.candles_stored}</strong> · Dataset: <code>{result.dataset_id || "registered"}</code>
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function ModelTrainingWorkstation() {
+  const [instrument, setInstrument] = useState("NIFTY");
+  const [model, setModel] = useState("logistic_regression");
+  const [strategyMode, setStrategyMode] = useState("regime_gated");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+
+  const handleTrainBenchmark = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    setResult(null);
+    try {
+      const res = await fetch("/api/forecasting/train-benchmark", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": csrf(),
+        },
+        body: JSON.stringify({
+          instrument,
+          model,
+          strategy_mode: strategyMode,
+          interval: "M15",
+          folds: 19,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setError(data.message || data.code || `Training error (${res.status})`);
+      } else {
+        setResult(data);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section aria-labelledby="training-station-heading" style={{ background: "var(--card-subtle, #131c31)", border: "1px solid var(--line, #334155)", borderRadius: "12px", padding: "20px", marginBottom: "28px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px", marginBottom: "16px" }}>
+        <div>
+          <h2 id="training-station-heading" style={{ margin: 0, fontSize: "1.2rem", fontWeight: 700, color: "var(--ink, #f8fafc)" }}>
+            🧠 Model Selection &amp; Walk-Forward Training Station
+          </h2>
+          <p style={{ margin: "4px 0 0", fontSize: "0.85rem", color: "var(--sub, #94a3b8)" }}>
+            Train and benchmark statistical and machine learning models across 19 expanding folds with exact Indian statutory friction accounting.
+          </p>
+        </div>
+        <span className="pill ok"><i />WALK-FORWARD VERIFIED</span>
+      </div>
+
+      <form onSubmit={handleTrainBenchmark}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "14px", marginBottom: "16px" }}>
+          <div>
+            <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--sub, #94a3b8)", marginBottom: "4px" }}>
+              Target Asset
+            </label>
+            <select
+              value={instrument}
+              onChange={(e) => setInstrument(e.target.value)}
+              style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.9rem" }}
+            >
+              <option value="NIFTY">NIFTY 50 (6,227 Candles)</option>
+              <option value="BANKNIFTY">BANK NIFTY (6,227 Candles)</option>
+              <option value="SENSEX">BSE SENSEX (Independent Dataset Required)</option>
+              <option value="CRUDEOILMINI">CRUDEOIL MINI (MCX Dataset Required)</option>
+            </select>
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--sub, #94a3b8)", marginBottom: "4px" }}>
+              Model Architecture
+            </label>
+            <select
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.9rem" }}
+            >
+              <option value="logistic_regression">Logistic Regression (L2 Newton - M3/M23)</option>
+              <option value="lightgbm">LightGBM GBDT (HTF Resampled - M37)</option>
+              <option value="empirical_prior">Empirical Prior (Majority Baseline - M3)</option>
+            </select>
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--sub, #94a3b8)", marginBottom: "4px" }}>
+              Strategy / Gating Mode
+            </label>
+            <select
+              value={strategyMode}
+              onChange={(e) => setStrategyMode(e.target.value)}
+              style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.9rem" }}
+            >
+              <option value="regime_gated">Regime-Gated Consensus (ATR/ADX Filter)</option>
+              <option value="deadband">Deadband Filter (48%–52% Neutral Zone)</option>
+              <option value="raw">Raw Directional (Unconstrained)</option>
+            </select>
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--sub, #94a3b8)", marginBottom: "4px" }}>
+              Validation Scheme
+            </label>
+            <div style={{ padding: "8px 10px", background: "rgba(255,255,255,0.03)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--sub, #94a3b8)", fontSize: "0.85rem" }}>
+              19 Folds (14 Dev / 5 Holdout)
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+          <small style={{ color: "var(--muted, #64748b)" }}>
+            ⚡ Friction hurdle: 2.0 bps (STT + NSE Fees + SEBI + GST + 0.05 Tick Slippage). Zero future lookahead.
+          </small>
+          <button type="submit" className="btn primary" disabled={busy} style={{ minWidth: "220px" }}>
+            {busy ? "Fitting & Benchmarking Folds…" : `⚡ Train & Benchmark ${model}`}
+          </button>
+        </div>
+      </form>
+
+      {error ? (
+        <div style={{ marginTop: "16px", padding: "10px 14px", background: "rgba(239, 68, 68, 0.1)", border: "1px solid #ef4444", borderRadius: "6px", color: "#fca5a5", fontSize: "0.85rem" }}>
+          <strong>Error:</strong> {error}
+        </div>
+      ) : null}
+
+      {result ? (
+        <div style={{ marginTop: "20px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px", marginBottom: "16px" }}>
+            <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
+              <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Holdout Accuracy</span>
+              <strong style={{ fontSize: "1.4rem", color: result.holdout_accuracy >= 0.52 ? "#10b981" : "#f59e0b" }}>
+                {(result.holdout_accuracy * 100).toFixed(2)}%
+              </strong>
+              <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "2px" }}>Folds 15–19 Out-of-Sample</small>
+            </div>
+
+            <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
+              <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Brier Skill Score</span>
+              <strong style={{ fontSize: "1.4rem", color: result.holdout_brier_skill_score > 0 ? "#10b981" : "#ef4444" }}>
+                {result.holdout_brier_skill_score > 0 ? "+" : ""}{result.holdout_brier_skill_score.toFixed(4)}
+              </strong>
+              <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "2px" }}>vs Climatological Baseline</small>
+            </div>
+
+            <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
+              <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Holdout Net Return</span>
+              <strong style={{ fontSize: "1.4rem", color: result.holdout_net_return_2bps > 0 ? "#10b981" : "#ef4444" }}>
+                {result.holdout_net_return_2bps > 0 ? "+" : ""}{result.holdout_net_return_2bps.toFixed(2)}%
+              </strong>
+              <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "2px" }}>After 2 bps Friction</small>
+            </div>
+
+            <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
+              <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Full Max Drawdown</span>
+              <strong style={{ fontSize: "1.4rem", color: "#f87171" }}>
+                {result.full_max_drawdown.toFixed(2)}%
+              </strong>
+              <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "2px" }}>Across 19 Expanding Folds</small>
+            </div>
+          </div>
+
+          {result.all_strategies && result.all_strategies.length > 0 ? (
+            <div className="table-wrap">
+              <table>
+                <caption>Strategy Comparison Matrix ({result.instrument} · 19 Expanding Folds)</caption>
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>Strategy Mode</th>
+                    <th>Holdout Accuracy</th>
+                    <th>Brier Skill Score</th>
+                    <th>Holdout Net Return (2bps)</th>
+                    <th>Full Net Return (2bps)</th>
+                    <th>Max Drawdown</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.all_strategies.map((row, idx) => {
+                    const isSelected = row.model_name === result.model_name && row.strategy_mode === result.strategy_mode;
+                    return (
+                      <tr key={idx} style={{ background: isSelected ? "rgba(59, 130, 246, 0.1)" : "transparent" }}>
+                        <td><strong>{row.model_name}</strong> {isSelected ? <span className="pill ok" style={{ fontSize: "0.65rem", padding: "1px 6px" }}>SELECTED</span> : null}</td>
+                        <td><code>{row.strategy_mode}</code></td>
+                        <td>{(row.holdout_accuracy * 100).toFixed(2)}%</td>
+                        <td>{row.holdout_brier_skill_score > 0 ? "+" : ""}{row.holdout_brier_skill_score.toFixed(4)}</td>
+                        <td style={{ color: row.holdout_net_return_2bps > 0 ? "#10b981" : "#ef4444", fontWeight: 600 }}>
+                          {row.holdout_net_return_2bps > 0 ? "+" : ""}{row.holdout_net_return_2bps.toFixed(2)}%
+                        </td>
+                        <td style={{ color: row.full_net_return_2bps > 0 ? "#10b981" : "#ef4444" }}>
+                          {row.full_net_return_2bps > 0 ? "+" : ""}{row.full_net_return_2bps.toFixed(2)}%
+                        </td>
+                        <td>{row.full_max_drawdown.toFixed(2)}%</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
   );
 }
 

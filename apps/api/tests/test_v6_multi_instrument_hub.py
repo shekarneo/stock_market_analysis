@@ -147,3 +147,44 @@ def test_api_endpoints_integration(client: TestClient):
     h_data = res_health.json()
     assert "primary_instruments" in h_data
     assert len(h_data["primary_instruments"]) == 3
+
+
+def test_train_benchmark_endpoint_requires_auth(client: TestClient):
+    res = client.post(
+        "/api/forecasting/train-benchmark",
+        json={"instrument": "NIFTY", "model_type": "lightgbm", "strategy_mode": "regime_gated"},
+    )
+    assert res.status_code in {401, 403}
+
+
+def test_train_benchmark_endpoint_missing_dataset(client: TestClient):
+    from tests.conftest import login
+    login(client)
+
+    res = client.post(
+        "/api/forecasting/train-benchmark",
+        json={"instrument": "SENSEX", "model_type": "lightgbm", "strategy_mode": "regime_gated"},
+    )
+    assert res.status_code == 400
+    body = res.json()
+    assert body["code"] == "DATASET_NOT_FOUND"
+    assert "SENSEX" in body["message"]
+
+
+def test_train_benchmark_endpoint_nifty(client: TestClient):
+    from tests.conftest import login
+    login(client)
+
+    res = client.post(
+        "/api/forecasting/train-benchmark",
+        json={"instrument": "NIFTY", "model_type": "lightgbm", "strategy_mode": "regime_gated", "folds": 2},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["instrument"] == "NIFTY"
+    assert "all_strategies" in body
+    assert body["num_folds"] > 0
+    assert "holdout_accuracy" in body
+    assert "holdout_brier_skill_score" in body
+

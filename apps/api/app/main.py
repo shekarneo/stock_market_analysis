@@ -777,6 +777,138 @@ def read_market_data_health(
     return get_instrument_data_health(session)
 
 
+class BenchmarkTrainRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    instrument: str = "NIFTY"
+    model: str = "lightgbm"
+    model_type: str | None = None
+    strategy_mode: str = "regime_gated"
+    interval: str = "M15"
+    folds: int = 19
+
+
+@app.post("/api/forecasting/train-benchmark")
+def train_and_benchmark_model(
+    body: BenchmarkTrainRequest,
+    request: Request,
+    settings: Settings = Depends(settings_dep),
+) -> dict:
+    """Train and run chronological walk-forward benchmark across model families and strategy modes."""
+    read_session(request, settings)
+    import json
+    from datetime import timezone
+    from app.errors import AppError
+    from app.settings import REPO_ROOT
+    from app.forecasting.m37_lightgbm_htf_research import run_m37_lightgbm_benchmark
+
+    inst = body.instrument.upper().strip()
+    dataset_file = None
+    if inst in {"NIFTY", "NSE-NIFTY", "NIFTY 50"}:
+        dataset_file = REPO_ROOT / "var/datasets/derived_nifty_15m_m23_bc7d31bceebf13a3.json"
+    elif inst in {"BANKNIFTY", "NSE-BANKNIFTY", "BANK NIFTY"}:
+        dataset_file = REPO_ROOT / "var/datasets/derived_banknifty_15m_m40.json"
+    elif inst in {"SENSEX", "BSE-SENSEX"}:
+        cand = REPO_ROOT / "var/datasets/derived_sensex_15m.json"
+        if cand.exists():
+            dataset_file = cand
+        else:
+            raise AppError(
+                "DATASET_NOT_FOUND",
+                "Independent BSE SENSEX historical dataset must be pulled and imported before training. Use the 'Pull Market Data' tool above.",
+                400,
+            )
+    elif inst in {"CRUDEOILMINI", "MCX-CRUDEOILMINI", "CRUDE"}:
+        cand = REPO_ROOT / "var/datasets/derived_crude_15m.json"
+        if cand.exists():
+            dataset_file = cand
+        else:
+            raise AppError(
+                "DATASET_NOT_FOUND",
+                "MCX Crude Oil historical dataset must be pulled and imported before training. Use the 'Pull Market Data' tool above.",
+                400,
+            )
+
+    if not dataset_file or not dataset_file.exists():
+        raise AppError(
+            "DATASET_NOT_FOUND",
+            f"Historical candle dataset for {inst} was not found on disk.",
+            400,
+        )
+
+    try:
+        data = json.loads(dataset_file.read_text(encoding="utf-8"))
+        candles = data.get("candles") or []
+        if not candles:
+            raise AppError("EMPTY_CANDLES", "Dataset contains 0 candles.", 400)
+
+        report = run_m37_lightgbm_benchmark(candles, dataset_id=data.get("dataset_id", inst))
+
+        req_model = (body.model_type or body.model or "lightgbm").lower()
+        if "logist" in req_model or "l2" in req_model:
+            model_key = "logistic_regression"
+        elif "light" in req_model or "lgb" in req_model or "gbdt" in req_model:
+            model_key = "lightgbm"
+        elif "prior" in req_model or "majority" in req_model or "baseline" in req_model:
+            model_key = "empirical_prior"
+        else:
+            model_key = "logistic_regression"
+
+        req_mode = body.strategy_mode.lower()
+        if "regime" in req_mode:
+            mode_key = "regime_gated"
+        elif "dead" in req_mode:
+            mode_key = "deadband"
+        else:
+            mode_key = "raw"
+
+        matching = None
+        for s in report.strategies:
+            if s.model_name == model_key and s.strategy_mode == mode_key:
+                matching = s
+                break
+        if not matching and report.strategies:
+            matching = report.strategies[0]
+
+        all_summaries = []
+        for s in report.strategies:
+            all_summaries.append({
+                "model_name": s.model_name,
+                "strategy_mode": s.strategy_mode,
+                "holdout_accuracy": round(s.holdout_accuracy, 4),
+                "holdout_brier_skill_score": round(s.holdout_brier_skill_score, 4),
+                "holdout_net_return_2bps": round(s.holdout_net_return_2bps, 2),
+                "holdout_max_drawdown": round(s.holdout_max_drawdown_2bps, 2),
+                "holdout_win_rate": round(s.holdout_win_rate, 4),
+                "full_net_return_2bps": round(s.full_net_return_2bps, 2),
+                "full_max_drawdown": round(s.full_max_drawdown_2bps, 2),
+            })
+
+        return {
+            "ok": True,
+            "instrument": inst,
+            "model_name": matching.model_name if matching else model_key,
+            "strategy_mode": matching.strategy_mode if matching else mode_key,
+            "total_15m_candles": len(candles),
+            "resampled_htf_candles": report.resampled_htf_candles,
+            "total_aligned_rows": report.total_aligned_rows,
+            "num_folds": report.num_folds,
+            "dev_fold_count": report.dev_fold_count,
+            "holdout_fold_count": report.holdout_fold_count,
+            "holdout_accuracy": round(matching.holdout_accuracy, 4) if matching else 0.5,
+            "holdout_brier_skill_score": round(matching.holdout_brier_skill_score, 4) if matching else 0.0,
+            "holdout_net_return_2bps": round(matching.holdout_net_return_2bps, 2) if matching else 0.0,
+            "holdout_max_drawdown": round(matching.holdout_max_drawdown_2bps, 2) if matching else 0.0,
+            "holdout_win_rate": round(matching.holdout_win_rate, 4) if matching else 0.5,
+            "full_net_return_2bps": round(matching.full_net_return_2bps, 2) if matching else 0.0,
+            "full_max_drawdown": round(matching.full_max_drawdown_2bps, 2) if matching else 0.0,
+            "all_strategies": all_summaries,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as exc:
+        log.exception("benchmark training failed")
+        return {"ok": False, "code": "TRAINING_ERROR", "message": f"{exc.__class__.__name__}: {str(exc)}"}
+
+
 def create_app() -> FastAPI:
     reset_engine()
     get_settings.cache_clear()

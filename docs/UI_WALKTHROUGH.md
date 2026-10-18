@@ -401,6 +401,52 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
       - `Outcome`: Color-coded indicator: `✓ Correct (BULLISH/BEARISH)`, `✗ Incorrect`, or `⏳ Horizon pending`.
       - `Brier`: Individual squared prediction error.
       - `Status`: `SCORED` or `PENDING` pill.
+  - **Historical Data Ingestion Workstation (`<DataPullWorkstation />`)**:
+    - **Purpose**: Enables operators to query, fetch, and ingest historical OHLCV candle datasets on demand for any supported Indian market index or commodity future across multiple API brokers and granularities.
+    - **Component / Instrument Selector**:
+      - Dropdown options: `NIFTY` (NSE NIFTY 50), `BANKNIFTY` (NSE NIFTY BANK), `SENSEX` (BSE SENSEX 30), and `CRUDEOILMINI` (MCX Crude Oil Mini).
+    - **Data Provider Dropdown**:
+      - Supported brokers/data feeds: `groww` (Groww Direct API), `upstox` (Upstox Pro API), `kite` (Zerodha Kite Connect), and `angelone` (Angel One SmartAPI).
+    - **Granular Candle Interval Dropdown**:
+      - Granularities: `1m` (1 Minute - Scalping), `5m` (5 Minutes - Intraday), `15m` (15 Minutes - Standard M15 Model Benchmark), `1h` (1 Hour - Swing), and `1d` (1 Day - Positional).
+    - **Date Range Presets & Selectors**:
+      - Quick preset buttons: `1M` (Last 30 Days), `3M` (Last 90 Days), `6M` (Last 180 Days), `1Y` (Last 365 Days) — automatically populates the start and end dates with single-click ease.
+      - `Start Date` and `End Date` date picker inputs for arbitrary ISO date range configurations.
+    - **`Pull & Ingest Historical Data` Action Button**:
+      - Sends asynchronous request to `POST /api/history/imports` to fetch candles, parse timestamps, validate boundary alignment, and store candle ledgers.
+      - Renders loading spinner (`Ingesting Historical Candles...`) while processing.
+    - **Live Ingestion Result Panel**:
+      - Status pill: `COMPLETED` (green) or `FAILED` (red).
+      - Metadata breakdown: Import Job ID, total candles ingested, provider, interval, and date span.
+      - Interactive prompt: When new candles are pulled, offers direct link to train models on the newly acquired dataset.
+
+  - **Model Selection & Walk-Forward Training Station (`<ModelTrainingWorkstation />`)**:
+    - **Purpose**: Provides interactive model selection, hyperparameter strategy mode gating, and on-demand 19-fold walk-forward cross-validation training on historical candle ledgers with statutory friction.
+    - **Model Architecture Dropdown (`model_type`)**:
+      - `lightgbm` (LightGBM Gradient Boosting Trees - SOTA V6 M37 multi-feature model).
+      - `logistic_regression` (Regularized Logistic Regression - L2 Baseline).
+      - `empirical_prior` (Empirical Prior Baseline - No Look-Ahead Historical Class Distribution).
+    - **Training Instrument Dropdown (`instrument`)**:
+      - `NIFTY`: NSE NIFTY 50 (pre-packaged with 6,227 M15 candles across 19 walk-forward folds).
+      - `BANKNIFTY`: NSE BANK NIFTY (pre-packaged with 6,227 M15 candles across 19 walk-forward folds).
+      - `SENSEX`: BSE SENSEX (prompts user to ingest candle data via Data Ingestion Workstation if not yet populated).
+      - `CRUDEOILMINI`: MCX CRUDEOIL MINI (prompts user to ingest commodity data if not yet populated).
+    - **Execution Strategy Mode Dropdown (`strategy_mode`)**:
+      - `regime_gated`: Dynamic regime-conditioned execution (widens deadband during high-volatility regimes; trades with confidence during low-volatility regimes).
+      - `deadband`: Strict probability deadband cutoff ($P > 0.55$ for Long, $P < 0.45$ for Short; cash otherwise).
+      - `raw`: Continuous fractional Kelly/probabilistic sizing without deadband suppression.
+    - **`Train & Run Walk-Forward Benchmark` Action Button**:
+      - Invokes `POST /api/forecasting/train-benchmark`.
+      - Displays real-time spinner (`Training & Evaluating Walk-Forward Benchmark...`) during 19-fold model cross-validation.
+    - **Benchmark Metric Scorecard**:
+      - `Out-of-Sample Accuracy`: Directional prediction accuracy % over unseen test folds.
+      - `Brier Skill Score (BSS)`: Probabilistic skill improvement over canonical prior baseline (positive confirms true predictive edge).
+      - `Net Return (Friction-Adjusted)`: Total strategy cumulative return net of 2.0 bps Indian transaction costs (STT, exchange turnover fees, SEBI charges, stamp duty, slippage).
+      - `Max Drawdown`: Peak-to-trough portfolio drawdown percentage during walk-forward execution.
+    - **Strategy Comparison Matrix Table**:
+      - Real-time comparison of `Selected Strategy Mode`, `Baseline Logistic Regression`, and `Empirical Buy-and-Hold` detailing Net Return %, Max Drawdown %, Directional Win Rate %, and Total Trade Count.
+    - **Walk-Forward Folds Breakdown Accordion**:
+      - Inspect individual fold metrics: Fold index, train date range, test date range, fold directional accuracy %, fold BSS, and fold trade count.
   - **Approved Forecasts Section**: Lists all active models approved for production forecasting.
   - **Registered Models Table**: Lineage, training dataset ID, checksum, and safety flags.
   - **Experiments Section**: Holdout and walk-forward experiment tables.
