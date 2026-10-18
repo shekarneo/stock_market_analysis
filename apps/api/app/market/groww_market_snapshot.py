@@ -298,7 +298,40 @@ def _fallback_commodities(retrieved_at: datetime | None = None) -> list[dict]:
     return []
 
 
+def fetch_live_usdinr(retrieved_at: datetime | None = None) -> dict | None:
+    """Fetch live USD/INR FX spot/reference rate from public FX APIs."""
+    stamp = (retrieved_at or datetime.now(timezone.utc)).isoformat()
+    for url, source_label in [
+        ("https://open.er-api.com/v6/latest/USD", "ExchangeRate-API Live FX"),
+        ("https://api.frankfurter.app/latest?from=USD&to=INR", "ECB / RBI Reference FX"),
+    ]:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": HEADERS["User-Agent"]})
+            with urllib.request.urlopen(req, timeout=4.0) as resp:
+                payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+            rate = (payload.get("rates") or {}).get("INR")
+            if isinstance(rate, (int, float)) and rate > 0:
+                return {
+                    "instrument": "USDINR",
+                    "name": "USD / INR Exchange Rate",
+                    "segment": "GLOBAL_MARKET",
+                    "last_price": round(float(rate), 2),
+                    "day_change": 0.0,
+                    "percent_change": "Live FX",
+                    "unit": "INR/USD",
+                    "retrieved_at": stamp,
+                    "source": source_label,
+                    "data_class": "UNVERIFIED_PROVIDER_DATA",
+                    "verification_status": "UNVERIFIED",
+                    "limitations": ["Public FX reference rate feed."],
+                }
+        except Exception as exc:
+            logger.debug("FX fetch failed for %s: %s", url, exc)
+    return None
+
+
 def parse_global_indices(html: str | None = None, retrieved_at: datetime | None = None) -> list[dict]:
+    is_live_fetch = html is None
     if html is None:
         html = fetch_html("https://groww.in/indices/global-indices/dow-jones")
     stamp = (retrieved_at or datetime.now(timezone.utc)).isoformat()
@@ -352,6 +385,10 @@ def parse_global_indices(html: str | None = None, retrieved_at: datetime | None 
                         "limitations": ["Global market snapshot from Groww portal (non-interval, snapshot quote)."],
                     })
             if res:
+                if is_live_fetch:
+                    fx = fetch_live_usdinr(retrieved_at)
+                    if fx:
+                        res.append(fx)
                 return res
     except Exception as exc:
         logger.debug("Failed NEXT_DATA parse for global indices: %s", exc)
@@ -392,7 +429,12 @@ def parse_global_indices(html: str | None = None, retrieved_at: datetime | None 
     if not found:
         return []
 
-    return list(found.values())
+    out = list(found.values())
+    if is_live_fetch:
+        fx = fetch_live_usdinr(retrieved_at)
+        if fx:
+            out.append(fx)
+    return out
 
 
 def _fallback_global_indices(retrieved_at: datetime | None = None) -> list[dict]:

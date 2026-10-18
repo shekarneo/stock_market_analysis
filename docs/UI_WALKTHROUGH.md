@@ -166,7 +166,7 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
      - Multi-Agent Consensus: Summary of stage 1–4 synthesis with direct link to `/analysis`.
      - Book Posture: Final risk call.
   6. **Tape Snapshot (`<Snapshot />`)**:
-     - Live market tape featuring 10 domestic and global benchmarks: NIFTY, SENSEX, CRUDE MINI, INDIA VIX, S&P 500, NASDAQ, DOW JONES, US VIX, CRUDE OIL, USD/INR.
+     - Live market tape featuring 10 domestic and global benchmarks: NIFTY, SENSEX, CRUDE MINI, INDIA VIX, S&P 500, NASDAQ, DOW JONES, US VIX, CRUDE OIL, and live USD/INR (`ExchangeRate-API Live FX` / `ECB / RBI Reference FX`).
      - Live Feed Table: Underlying, Last Price, Origin (`Groww Live`), Class (`LIVE FEED`), Quality (`GOOD`), and Event Time.
      - Collapsible Synthetic Baseline: Archive of synthetic test fixtures used for offline compliance testing.
   7. **Diagnostics Grid (`<LiveQuotes />` & `<Quarantine />`)**:

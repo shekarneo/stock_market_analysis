@@ -103,9 +103,9 @@ def get_macro_observations(path: Path | None = None) -> list[dict[str, Any]]:
                 },
                 "USDINR_REF": {
                     "instrument": "USDINR_REF",
-                    "rate": 84.05,
-                    "as_of_date": "2026-10-16",
-                    "source": "FBIL / RBI Reference Rate",
+                    "rate": 95.08,
+                    "as_of_date": "2026-10-18",
+                    "source": "FBIL / RBI & ExchangeRate Reference",
                     "verification_status": "VERIFIED_PUBLIC_REPORT",
                 },
                 "US10Y_YIELD": {
@@ -166,7 +166,7 @@ def get_macro_observations(path: Path | None = None) -> list[dict[str, Any]]:
     fx_data = series_map.get("USDINR_REF")
     if fx_data and isinstance(fx_data, dict):
         spec = MACRO_SERIES_SPECS["USDINR_REF"]
-        rate = float(fx_data.get("rate") or 84.05)
+        rate = float(fx_data.get("rate") or 95.08)
         obs_time = _to_iso(str(fx_data.get("as_of_date") or "2026-10-16"), "13:30:00+05:30")
         observations.append({
             "instrument": "USDINR_REF",
