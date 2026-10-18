@@ -48,18 +48,36 @@ function DataPullWorkstation() {
   const [instrument, setInstrument] = useState("NIFTY");
   const [provider, setProvider] = useState("groww");
   const [interval, setInterval] = useState("M15");
-  const [start, setStart] = useState("2026-09-18");
-  const [end, setEnd] = useState("2026-10-18");
+  const [start, setStart] = useState("2025-10-17");
+  const [end, setEnd] = useState("2026-10-16");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
 
-  const setPreset = (months) => {
-    const e = new Date("2026-10-18");
+  const calculateDays = (sStr, eStr) => {
+    if (!sStr || !eStr) return 0;
+    const ms = new Date(eStr).getTime() - new Date(sStr).getTime();
+    return Math.round(ms / (1000 * 60 * 60 * 24));
+  };
+
+  const diffDays = calculateDays(start, end);
+  const isRangeTooLong = diffDays > 366;
+  const isRangeInvalid = diffDays <= 0;
+
+  const clampToLimit = () => {
+    const e = new Date(end || "2026-10-16");
     const s = new Date(e);
-    s.setMonth(s.getMonth() - months);
+    s.setDate(s.getDate() - 365);
     setStart(s.toISOString().slice(0, 10));
-    setEnd(e.toISOString().slice(0, 10));
+    setError("");
+  };
+
+  const setPresetDays = (days) => {
+    const e = new Date(end || "2026-10-16");
+    const s = new Date(e);
+    s.setDate(s.getDate() - days);
+    setStart(s.toISOString().slice(0, 10));
+    setError("");
   };
 
   const handlePullData = async (e) => {
@@ -67,6 +85,16 @@ function DataPullWorkstation() {
     setBusy(true);
     setError("");
     setResult(null);
+
+    let effectiveStart = start;
+    if (diffDays > 366) {
+      const eDate = new Date(end || "2026-10-16");
+      const sDate = new Date(eDate);
+      sDate.setDate(sDate.getDate() - 365);
+      effectiveStart = sDate.toISOString().slice(0, 10);
+      setStart(effectiveStart);
+    }
+
     try {
       const res = await fetch("/api/history/imports", {
         method: "POST",
@@ -78,7 +106,7 @@ function DataPullWorkstation() {
           provider,
           instrument,
           interval,
-          start: `${start}T09:15:00+05:30`,
+          start: `${effectiveStart}T09:15:00+05:30`,
           end: `${end}T15:30:00+05:30`,
         }),
       });
@@ -167,7 +195,7 @@ function DataPullWorkstation() {
               type="date"
               value={start}
               onChange={(e) => setStart(e.target.value)}
-              style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.88rem" }}
+              style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: `1px solid ${isRangeTooLong ? "#ef4444" : "var(--line, #334155)"}`, borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.88rem" }}
             />
           </div>
 
@@ -179,18 +207,40 @@ function DataPullWorkstation() {
               type="date"
               value={end}
               onChange={(e) => setEnd(e.target.value)}
-              style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.88rem" }}
+              style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: `1px solid ${isRangeTooLong ? "#ef4444" : "var(--line, #334155)"}`, borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.88rem" }}
             />
           </div>
+        </div>
+
+        {/* Date Duration and Auto-Clamp Strip */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px", marginTop: "-6px", marginBottom: "14px", fontSize: "0.82rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{ color: "var(--muted, #64748b)" }}>Query Span:</span>
+            <span style={{ fontWeight: 600, color: isRangeTooLong ? "#f87171" : isRangeInvalid ? "#fbbf24" : "#34d399" }}>
+              {diffDays} days {isRangeTooLong ? "(Exceeds 366-day limit)" : isRangeInvalid ? "(Invalid range)" : "(Valid)"}
+            </span>
+            {isRangeTooLong && (
+              <button
+                type="button"
+                onClick={clampToLimit}
+                style={{ padding: "2px 8px", background: "rgba(239, 68, 68, 0.2)", border: "1px solid #ef4444", borderRadius: "4px", color: "#fca5a5", fontSize: "0.75rem", cursor: "pointer" }}
+              >
+                ⚡ Auto-clamp to 365 Days
+              </button>
+            )}
+          </div>
+          <span style={{ fontSize: "0.75rem", color: "var(--muted, #64748b)" }}>
+            API Statutory Limit: 366 days max per request batch
+          </span>
         </div>
 
         {/* Quick Date Range Presets */}
         <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "16px" }}>
           <span style={{ fontSize: "0.78rem", color: "var(--muted, #64748b)" }}>Quick Presets:</span>
-          <button type="button" className="btn small secondary" onClick={() => setPreset(1)}>1 Month</button>
-          <button type="button" className="btn small secondary" onClick={() => setPreset(3)}>3 Months</button>
-          <button type="button" className="btn small secondary" onClick={() => setPreset(6)}>6 Months</button>
-          <button type="button" className="btn small secondary" onClick={() => { setStart("2025-10-14"); setEnd("2026-10-16"); }}>1 Year (M23 Baseline)</button>
+          <button type="button" className="btn small secondary" onClick={() => setPresetDays(30)}>1 Month</button>
+          <button type="button" className="btn small secondary" onClick={() => setPresetDays(90)}>3 Months</button>
+          <button type="button" className="btn small secondary" onClick={() => setPresetDays(180)}>6 Months</button>
+          <button type="button" className="btn small secondary" onClick={() => setPresetDays(365)}>1 Year (365d Max)</button>
         </div>
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
@@ -292,7 +342,7 @@ function ModelTrainingWorkstation() {
             >
               <option value="NIFTY">NIFTY 50 (6,227 Candles)</option>
               <option value="BANKNIFTY">BANK NIFTY (6,227 Candles)</option>
-              <option value="SENSEX">BSE SENSEX (Independent Dataset Required)</option>
+              <option value="SENSEX">BSE SENSEX (6,831 Candles - Ready)</option>
               <option value="CRUDEOILMINI">CRUDEOIL MINI (MCX Dataset Required)</option>
             </select>
           </div>

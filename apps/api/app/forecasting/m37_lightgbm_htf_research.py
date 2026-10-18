@@ -142,6 +142,13 @@ def generate_19_expanding_folds(
     target_folds: int = 19,
 ) -> list[tuple[int, int, int, int]]:
     """Generate exactly 19 expanding walk-forward folds with embargo."""
+    # If standard parameters (e.g. 200 + 19 * 15 + 2 = 487) exceed total_rows, dynamically adapt
+    needed_rows = initial_train_bars + (target_folds * val_step_bars) + embargo_bars
+    if total_rows < needed_rows and total_rows >= 100:
+        step = max(5, (total_rows - embargo_bars - 150) // target_folds)
+        val_step_bars = step
+        initial_train_bars = total_rows - embargo_bars - (target_folds * val_step_bars)
+
     folds: list[tuple[int, int, int, int]] = []
     curr_train_end = initial_train_bars
 

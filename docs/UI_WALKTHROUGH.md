@@ -412,6 +412,7 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
     - **Date Range Presets & Selectors**:
       - Quick preset buttons: `1M` (Last 30 Days), `3M` (Last 90 Days), `6M` (Last 180 Days), `1Y` (Last 365 Days) — automatically populates the start and end dates with single-click ease.
       - `Start Date` and `End Date` date picker inputs for arbitrary ISO date range configurations.
+      - **Live Query Span & Auto-Clamp Strip**: Displays real-time day count difference (`Query Span: X days`). If the selected duration exceeds the 366-day statutory broker limit, a warning badge is highlighted alongside a one-click `⚡ Auto-clamp to 365 Days` button. Client-side pre-submission validation automatically caps ranges to 365 days to prevent `RANGE_TOO_LONG` API rejections.
     - **`Pull & Ingest Historical Data` Action Button**:
       - Sends asynchronous request to `POST /api/history/imports` to fetch candles, parse timestamps, validate boundary alignment, and store candle ledgers.
       - Renders loading spinner (`Ingesting Historical Candles...`) while processing.
@@ -429,7 +430,7 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
     - **Training Instrument Dropdown (`instrument`)**:
       - `NIFTY`: NSE NIFTY 50 (pre-packaged with 6,227 M15 candles across 19 walk-forward folds).
       - `BANKNIFTY`: NSE BANK NIFTY (pre-packaged with 6,227 M15 candles across 19 walk-forward folds).
-      - `SENSEX`: BSE SENSEX (prompts user to ingest candle data via Data Ingestion Workstation if not yet populated).
+      - `SENSEX`: BSE SENSEX (populated with 6,831 M15 candles across 19 walk-forward folds).
       - `CRUDEOILMINI`: MCX CRUDEOIL MINI (prompts user to ingest commodity data if not yet populated).
     - **Execution Strategy Mode Dropdown (`strategy_mode`)**:
       - `regime_gated`: Dynamic regime-conditioned execution (widens deadband during high-volatility regimes; trades with confidence during low-volatility regimes).
