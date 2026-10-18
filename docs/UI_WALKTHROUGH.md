@@ -374,9 +374,31 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
 ### 4.5 Multi-Horizon Forecast Desk (`/forecast`)
 - **Purpose**: Quantitative multi-horizon forecasting, directional probabilities, and empirical out-of-sample calibration tracking.
 - **Components & Controls**:
+  - **Live Candlestick & Forward Projected Trend Chart (`<PredictedTrendChart />`)**:
+    - **Purpose**: Combines verified historical candlesticks, live market spot price action, and ML forward projected trajectory with dynamic confidence cones ($\pm 1\sigma$ volatility corridors), target spot, and stop-loss levels.
+    - **Header Controls & State**:
+      - `Instrument Selector Pills`: One-click buttons for `NIFTY 50`, `BANK NIFTY`, `BSE SENSEX`, and `CRUDEOIL MINI`. Automatically synchronizes with global `MarketDataContext`.
+      - `Lookback Window Pills`: Choose historical bar depth (`20 Bars`, `35 Bars`, `50 Bars`).
+      - `Live Market Status Pill`: Green pulsing indicator displaying `🟢 LIVE STREAM ACTIVE` when streaming live Groww quotes, or `🟡 VERIFIED FEED` with last tick timestamp.
+    - **Key Metrics Ribbon**:
+      - `Live Spot Price`: High-visibility bold current underlying market price.
+      - `Predicted Direction & Decision Badge`: Pill indicating `🟢 BULLISH (BUY)`, `🔴 BEARISH (SELL)`, or `🟡 NEUTRAL (STAND ASIDE)`.
+      - `Calibrated Probability`: Model calibrated confidence (e.g. `54.2% P(Up)`).
+      - `Horizon & Model`: Horizon (e.g. `+4 Bars (60m)`) and serving model architecture (`LightGBM M37`).
+      - `Target Spot & Potential Gain`: Target price in INR and points / percentage move.
+      - `Stop Loss & Invalidation Risk`: Protective stop price in INR and risk distance.
+    - **Interactive Candlestick & Projection Chart Area**:
+      - `Historical OHLC Candlesticks`: Green (`#10b981`) bullish and Red (`#f43f5e`) bearish candles with vertical wicks and rectangular bodies representing historical interval bars.
+      - `NOW (Live Spot) Vertical Divider`: Prominent cyan dashed line (`#38bdf8`) separating realized historical data from the future predictive horizon, adorned with a glowing live spot price tag.
+      - `Projected Forecast Path`: Dashed colored trajectory line projecting future prices across upcoming intervals ($T+1$, $T+2$, $T+3$, $T+4$).
+      - `Probabilistic Confidence Corridor (Cone)`: Semi-transparent shaded cone expanding into the future representing $\pm 1\sigma$ volatility bounds derived from historical ATR and calibrated variance.
+      - `Target & Stop Loss Horizontal Markers`: Dashed target line (`#10b981`) with `TARGET` badge and dashed stop line (`#f43f5e`) with `STOP LOSS` badge.
+      - `Interactive Crosshair & Hover Tooltip`: Moving across historical candles reveals exact Bar Open, High, Low, Close, and Volume; hovering future projection points displays Projected Spot, Upper Confidence Bound, Lower Confidence Bound, and Delta from current spot.
+      - `Chart Legend`: Color keys for Bullish Bar, Bearish Bar, Live Spot, Forward Projection, and Confidence Corridor.
   - `<InstrumentSelector />`: Select primary underlying to inspect.
   - `<InstrumentForecastCard />`: Displays forecast cards for 1-hour, 4-hour, 1-day, and 5-day horizons with calibrated probabilities and expected return.
   - **Forecast Accuracy & Out-of-Sample Calibration Hub (`<ForecastAccuracyHub />`)**:
+
     - `Evaluate Pending Outcomes` action button: Triggers `POST /api/analysis/forecast-accuracy/evaluate` to score pending forecasts whose horizon has elapsed against incoming quotes without look-ahead bias.
     - **Calibration Status Banner**:
       - Status badge: Displays `CALIBRATED_RESEARCH` (green) if sample size $\ge 30$ and Brier Skill Score $> 0$, or `UNCALIBRATED` (amber) if preliminary sample or negative skill score.

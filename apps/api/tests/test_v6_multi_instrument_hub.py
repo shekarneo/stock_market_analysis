@@ -293,3 +293,27 @@ def test_multi_benchmark_endpoint(client: TestClient):
     assert "CRUDEOILMINI" in body["top_by_instrument"]
 
 
+def test_live_trend_chart_endpoint(client: TestClient):
+    from tests.conftest import login
+    # Unauthenticated should fail
+    unauth = client.get("/api/forecasting/live-trend-chart?instrument=NIFTY")
+    assert unauth.status_code in {401, 403}
+
+    login(client)
+    res = client.get("/api/forecasting/live-trend-chart?instrument=NIFTY&bars=25")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["instrument"] == "NIFTY"
+    assert "candles" in body
+    assert len(body["candles"]) > 0
+    assert "current_spot" in body
+    assert "projected_path" in body
+    assert len(body["projected_path"]) > 0
+    assert "target_spot" in body
+    assert "stop_loss_spot" in body
+    assert "upper_bound" in body["projected_path"][0]
+    assert "lower_bound" in body["projected_path"][0]
+
+
+

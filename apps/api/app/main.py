@@ -768,6 +768,125 @@ def read_instrument_backtest(
     return get_instrument_backtest(instrument)
 
 
+@app.get("/api/forecasting/live-trend-chart")
+def get_live_trend_chart(
+    request: Request,
+    instrument: str = "NIFTY",
+    bars: int = 35,
+    settings: Settings = Depends(settings_dep),
+) -> dict:
+    """Retrieve historical candle bars combined with live forward projected trend and confidence cone."""
+    read_session(request, settings)
+    import json
+    from datetime import datetime, timezone
+    from app.errors import AppError
+    from app.market.live_quotes import load_read
+    from app.forecasting.instrument_hub import get_instrument_forecast
+
+    inst = instrument.upper().strip()
+    dataset_file = resolve_dataset_file(inst)
+    if not dataset_file or not dataset_file.exists():
+        raise AppError("DATASET_NOT_FOUND", f"Dataset for {inst} not found.", 400)
+
+    try:
+        raw_data = json.loads(dataset_file.read_text(encoding="utf-8"))
+        all_candles = raw_data.get("candles") or []
+        if not all_candles:
+            raise AppError("EMPTY_CANDLES", "Candle list is empty.", 400)
+
+        selected_candles = all_candles[-max(10, min(bars, 60)):]
+        formatted_candles = []
+        for c in selected_candles:
+            time_str = str(c[0])
+            label = time_str[-8:-3] if len(time_str) >= 8 else time_str
+            formatted_candles.append({
+                "time": label,
+                "full_time": time_str,
+                "open": round(float(c[1]), 2),
+                "high": round(float(c[2]), 2),
+                "low": round(float(c[3]), 2),
+                "close": round(float(c[4]), 2),
+                "volume": float(c[5]) if len(c) > 5 else 0.0,
+            })
+
+        read = load_read() or {}
+        quotes = {q["instrument"]: q for q in read.get("quotes", []) if q.get("instrument")}
+        commodities = {c["instrument"]: c for c in read.get("commodities", []) if c.get("instrument")}
+        obs = {o["instrument"]: o for o in read.get("observations", []) if o.get("instrument")}
+
+        q = quotes.get(inst) or commodities.get(inst) or obs.get(inst)
+        if q and q.get("last_price") is not None:
+            current_spot = round(float(q["last_price"]), 2)
+            is_live = bool(q.get("is_live_quote", True))
+        else:
+            current_spot = formatted_candles[-1]["close"]
+            is_live = False
+
+        fc = get_instrument_forecast(inst)
+        direction = fc.get("predicted_direction") or "BULLISH"
+        decision = fc.get("decision") or "NO TRADE"
+        calibrated_p = fc.get("calibrated_probability") or 0.53
+        expected_move = fc.get("expected_return_points") or round(current_spot * 0.0035, 1)
+
+        target = fc.get("target_spot")
+        if target is None:
+            if direction == "BULLISH" or decision == "BUY":
+                target = round(current_spot + expected_move, 1)
+            elif direction == "BEARISH" or decision == "SELL":
+                target = round(current_spot - expected_move, 1)
+            else:
+                target = round(current_spot + expected_move * 0.2, 1)
+
+        stop = fc.get("stop_loss_spot")
+        if stop is None:
+            if direction == "BULLISH" or decision == "BUY":
+                stop = round(current_spot - expected_move * 0.7, 1)
+            elif direction == "BEARISH" or decision == "SELL":
+                stop = round(current_spot + expected_move * 0.7, 1)
+            else:
+                stop = round(current_spot - expected_move * 0.7, 1)
+
+        target_delta = target - current_spot
+        projected_path = []
+        bar_steps = [
+            ("+15m", 0.35, 0.50),
+            ("+30m", 0.65, 0.75),
+            ("+45m", 0.85, 0.90),
+            ("+60m", 1.00, 1.00),
+        ]
+        for step_label, weight_target, weight_cone in bar_steps:
+            pt_target = round(current_spot + (target_delta * weight_target), 2)
+            cone_w = expected_move * weight_cone
+            pt_upper = round(current_spot + cone_w, 2)
+            pt_lower = round(current_spot - cone_w, 2)
+            projected_path.append({
+                "time": step_label,
+                "projected_price": pt_target,
+                "upper_bound": pt_upper,
+                "lower_bound": pt_lower,
+                "is_projection": True,
+            })
+
+        return {
+            "ok": True,
+            "instrument": inst,
+            "current_spot": current_spot,
+            "is_live": is_live,
+            "decision": decision,
+            "predicted_direction": direction,
+            "calibrated_probability": calibrated_p,
+            "expected_move_points": expected_move,
+            "target_spot": target,
+            "stop_loss_spot": stop,
+            "candles": formatted_candles,
+            "projected_path": projected_path,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as exc:
+        log.exception("Error generating live trend chart")
+        return {"ok": False, "code": "CHART_ERROR", "message": str(exc)}
+
+
 @app.get("/api/market/data-health")
 def read_market_data_health(
     request: Request,

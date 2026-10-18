@@ -5,6 +5,7 @@ import ResearchBoard, { csrf } from "../components/ResearchBoard";
 import ReadState from "../components/ReadState";
 import { useRead } from "../components/useRead";
 import InstrumentForecastCard from "../components/InstrumentForecastCard";
+import PredictedTrendChart from "../components/PredictedTrendChart";
 import { flagLabel } from "../research/status.mjs";
 import { observationClass, valueText } from "../research/present.mjs";
 
@@ -31,6 +32,7 @@ export default function ForecastPage() {
     >
       {() => (
         <>
+          <PredictedTrendChart />
           <InstrumentForecastCard />
           <DataPullWorkstation />
           <ModelTrainingWorkstation />

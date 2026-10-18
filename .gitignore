@@ -13,3 +13,4 @@ apps/web/blob-report/
 apps/api/*.egg-info/
 apps/api/dist/
 var/
+catboost_info/
