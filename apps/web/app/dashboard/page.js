@@ -237,12 +237,12 @@ function Snapshot() {
               <div style={{ marginBottom: "1.25rem" }}>
                 <h3>Verified Market Macro Context</h3>
                 <ul>
-                  <li>INDIA_VIX: {live.sectoral_indices?.find((s) => s.instrument === "VIX")?.last_price || "14.03"} pts (NSE VIX)</li>
-                  <li>USDINR: ₹{live.global_indices?.find((g) => g.instrument === "USDINR")?.last_price || "95.08"} INR per USD (Live FX / RBI Reference)</li>
-                  <li>MCX_CRUDE: ₹{live.commodities?.find((c) => c.instrument === "CRUDE")?.last_price || "9,310"} ₹/bbl (MCX Commodity)</li>
-                  <li>MCX_GOLD: ₹{live.commodities?.find((c) => c.instrument === "GOLD")?.last_price || "1,47,350"} ₹/10g (MCX Commodity)</li>
-                  <li>DOW_JONES: {live.global_indices?.find((g) => g.instrument === "DJI")?.last_price || "52,056.27"} pts (Global Benchmark)</li>
-                  <li>GIFT_NIFTY: {live.global_indices?.find((g) => g.instrument === "GIFTNIFTY")?.last_price || "23,068.5"} pts (NSE IX GIFT City)</li>
+                  <li>INDIA_VIX: {live.sectoral_indices?.find((s) => s.instrument === "VIX")?.last_price || "—"} pts (NSE VIX)</li>
+                  <li>USDINR: ₹{live.global_indices?.find((g) => g.instrument === "USDINR" || g.instrument === "USDINR_REF")?.last_price || "—"} INR per USD (Live FX / RBI Reference)</li>
+                  <li>MCX_CRUDE: ₹{live.commodities?.find((c) => c.instrument === "CRUDE" || c.instrument === "CRUDEOILMINI" || c.instrument === "CRUDEMINI")?.last_price || "—"} ₹/bbl (MCX Commodity)</li>
+                  <li>MCX_GOLD: ₹{live.commodities?.find((c) => c.instrument === "GOLD" || c.instrument === "GOLDMINI")?.last_price || "—"} ₹/10g (MCX Commodity)</li>
+                  <li>DOW_JONES: {live.global_indices?.find((g) => g.instrument === "DJI")?.last_price || "—"} pts (Global Benchmark)</li>
+                  <li>GIFT_NIFTY: {live.global_indices?.find((g) => g.instrument === "GIFTNIFTY")?.last_price || "—"} pts (NSE IX GIFT City)</li>
                 </ul>
               </div>
             )}
@@ -447,17 +447,15 @@ function BoardCard({ item, quotes, context, live, spots = {} }) {
       );
     }
     if (item.id === "USDINR") {
-      const fxLive = live?.global_indices?.find((g) => g.instrument === "USDINR");
-      const hasLiveFeed = Boolean(fxLive) || (Array.isArray(live?.quotes) && live.quotes.length > 0);
-      if (hasLiveFeed) {
-        const fxPrice = fxLive?.last_price ?? 95.08;
+      const fxLive = live?.global_indices?.find((g) => g.instrument === "USDINR" || g.instrument === "USDINR_REF");
+      if (fxLive && fxLive.last_price != null) {
         return (
           <article className="quote-card">
             <p className="name">{item.label}</p>
-            <p className="px">₹{Number(fxPrice).toFixed(2)}</p>
+            <p className="px">₹{Number(fxLive.last_price).toFixed(2)}</p>
             <p className="sub">INR per USD</p>
-            <p className="sub">{valueText(fxLive?.retrieved_at || live.quotes?.[0]?.retrieved_at || live.quotes?.[0]?.event_timestamp)}</p>
-            <p className="sub">{fxLive?.source || "RBI / Live FX"} <span className="data-badge unverified">FX RATE</span></p>
+            <p className="sub">{valueText(fxLive.retrieved_at || fxLive.event_timestamp)}</p>
+            <p className="sub">{fxLive.source || "RBI / Live FX"} <span className="data-badge unverified">FX RATE</span></p>
           </article>
         );
       }
@@ -625,7 +623,7 @@ function DeskSummary() {
             {secIndices.length > 0 ? (
               <div>
                 <p>
-                  <strong>India VIX:</strong> {vixItem ? `${vixItem.last_price} (${vixItem.day_change_text})` : "14.03"}
+                  <strong>India VIX:</strong> {vixItem ? `${vixItem.last_price} (${vixItem.day_change_text})` : "—"}
                 </p>
                 <p style={{ fontSize: "0.85rem", marginTop: "4px" }}>
                   {secIndices.filter((s) => s.instrument !== "VIX").map((s) => `${s.name}: ${s.last_price} (${s.day_change_text})`).join(" · ")}

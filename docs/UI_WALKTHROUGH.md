@@ -37,7 +37,7 @@
 **India Market Master (IMM)** is an autonomous, quantitative forecasting and options trading desk engineered specifically for the Indian financial markets.
 
 ### Supported Tradable Instruments
-1. **NIFTY 50 (`NIFTY`)**: National Stock Exchange of India (NSE) benchmark equity index (50 large-cap stocks; lot size 75; strike interval 50 pts).
+1. **NIFTY 50 (`NIFTY`)**: National Stock Exchange of India (NSE) benchmark equity index (50 large-cap stocks; lot size 25; strike interval 50 pts).
 2. **BSE SENSEX (`SENSEX`)**: Bombay Stock Exchange (BSE) benchmark equity index (30 blue-chip stocks; lot size 20; strike interval 100 pts).
 3. **CRUDEOIL MINI (`CRUDEOILMINI` / `CRUDEMINI`)**: Multi Commodity Exchange of India (MCX) energy commodity future/option contract (lot size 10 bbl; strike interval 50 pts).
 
@@ -162,7 +162,8 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
      - **Blocker List (`<BlockerList />`)**: Shows active gate blockers. When experimental paper execution is enabled, filters out production model approval gates and shows only active experimental blockers.
   5. **Desk Summary (`<DeskSummary />`)**:
      - Verified Market News: Headlines ingested from Economic Times and financial feeds.
-     - Volatility & Breadth: Current India VIX level and sectoral index performance.
+     - Volatility & Breadth: Current India VIX level and sectoral index performance. Displays `—` (dash) if live VIX quotes are unretrieved (no fictitious values).
+     - Verified Market Macro Context: Displays live prices for INDIA_VIX, USDINR (Live FX / RBI Reference), MCX_CRUDE, MCX_GOLD, DOW_JONES, and GIFT_NIFTY, safely defaulting to `—` (dash) when quotes are unpopulated.
      - Multi-Agent Consensus: Summary of stage 1–4 synthesis with direct link to `/analysis`.
      - Book Posture: Final risk call.
   6. **Tape Snapshot (`<Snapshot />`)**:
@@ -415,7 +416,9 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
 - **Live Options Greeks Card (`<V6OptionsGreeksCard />`)**:
   - Real-time calculations for Delta ($\Delta$), Gamma ($\Gamma$), Theta ($\Theta$), Vega ($\mathcal{V}$), Implied Volatility (IV), and Put-Call Ratio (PCR).
 - **Live Option Strike Matrix**:
-  - Automatically identifies real-time At-The-Money (ATM) strike based on live Groww spot.
+  - Automatically identifies real-time At-The-Money (ATM) strike based on verified live Groww spot quotes.
+  - Fail-closed empty state: If live spot quotes are not yet retrieved, renders an awaiting feed notification without inventing fictitious prices.
+  - Accurate exchange lot sizes: 25 for NIFTY, 20 for SENSEX, and 10 for CRUDEOIL MINI.
   - Shows 5 key strike levels: ATM, ITM 1, ITM 2, OTM 1, OTM 2.
   - Displays strike, option type, moneyness tag, theoretical premium estimate, and lot size.
   - `Select Strike` button: Prefills the research order ticket.

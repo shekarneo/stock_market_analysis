@@ -68,12 +68,12 @@ function LiveStrikeMatrix({ underlying, side, liveData, onSelectContract }) {
 
   if (underlying === "NIFTY") {
     const q = quotes.find((row) => row.instrument === "NIFTY");
-    spot = q?.last_price ?? 22997.35;
-    lotSize = 75;
+    spot = q?.last_price ?? null;
+    lotSize = 25;
     strikeStep = 50;
   } else if (underlying === "SENSEX") {
     const q = quotes.find((row) => row.instrument === "SENSEX");
-    spot = q?.last_price ?? 74315.61;
+    spot = q?.last_price ?? null;
     lotSize = 20;
     strikeStep = 100;
   } else if (underlying === "CRUDEOILMINI" || underlying === "CRUDEMINI") {
@@ -83,7 +83,15 @@ function LiveStrikeMatrix({ underlying, side, liveData, onSelectContract }) {
     strikeStep = 50;
   }
 
-  if (spot == null) return null;
+  if (spot == null) {
+    return (
+      <div className="empty-state" style={{ padding: "16px", marginBottom: "20px", border: "1px dashed var(--border, #334155)", borderRadius: "8px" }}>
+        <p style={{ margin: 0, color: "var(--sub, #94a3b8)", fontSize: "0.9rem" }}>
+          ⚡ Awaiting verified live {underlying} spot quote from Groww / market data feed to generate strike matrix...
+        </p>
+      </div>
+    );
+  }
 
   const atmStrike = Math.round(spot / strikeStep) * strikeStep;
   const offsets = [-2, -1, 0, 1, 2];

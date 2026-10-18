@@ -155,11 +155,27 @@ def news_node(state: AnalysisState) -> dict:
     }
 
 
+MACRO_ALIASES: dict[str, set[str]] = {
+    "CRUDE": {"CRUDE", "CRUDEOILMINI", "CRUDEMINI", "MCX_CRUDE"},
+    "USDINR": {"USDINR", "USDINR_REF"},
+}
+
+
+def _macro_missing(expected: tuple[str, ...], rows: list[dict]) -> list[str]:
+    present = {row.get("instrument") for row in rows}
+    missing = []
+    for name in expected:
+        aliases = MACRO_ALIASES.get(name, {name})
+        if not (aliases & present):
+            missing.append(name)
+    return missing
+
+
 def macro_node(state: AnalysisState) -> dict:
     if not state.get("include_macro", True):
         return {"node_status": _status(state, "macro", "SKIPPED")}
-    rows = _take(state, "MACRO", MACRO_INSTRUMENTS) + [row for row in _take(state, "MACRO") if row.get("instrument") not in MACRO_INSTRUMENTS]
-    missing = _missing(MACRO_INSTRUMENTS, rows)
+    rows = _take(state, "MACRO")
+    missing = _macro_missing(MACRO_INSTRUMENTS, rows)
     status = "COMPLETED" if rows else "PROVIDER_UNAVAILABLE"
     errors = list(state.get("errors") or [])
     if not rows:
