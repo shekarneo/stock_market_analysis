@@ -82,7 +82,7 @@ DEFAULT_AGENTS_CONFIG: dict[str, dict[str, Any]] = {
         "max_tokens": 800,
         "timeout_seconds": 15.0,
         "fallback_provider": "gemini",
-        "fallback_model": "gemini-1.5-flash",
+        "fallback_model": "gemini-flash-latest",
         "description": "Assesses data quality, coverage, freshness, missing values, and provider reconciliation results.",
     },
     AgentRole.TECHNICAL.value: {
@@ -90,7 +90,7 @@ DEFAULT_AGENTS_CONFIG: dict[str, dict[str, Any]] = {
         "display_name": "Technical Analyst",
         "enabled": True,
         "provider": "google",
-        "model": "gemini-1.5-pro",
+        "model": "gemini-flash-latest",
         "temperature": 0.1,
         "max_tokens": 1000,
         "timeout_seconds": 15.0,
@@ -108,7 +108,7 @@ DEFAULT_AGENTS_CONFIG: dict[str, dict[str, Any]] = {
         "max_tokens": 1000,
         "timeout_seconds": 15.0,
         "fallback_provider": "gemini",
-        "fallback_model": "gemini-1.5-flash",
+        "fallback_model": "gemini-flash-latest",
         "description": "Analyzes GIFT NIFTY, global equity indices, US Treasury yields, crude oil, USD/INR, and India VIX.",
     },
     AgentRole.NEWS_EVENT.value: {
@@ -116,7 +116,7 @@ DEFAULT_AGENTS_CONFIG: dict[str, dict[str, Any]] = {
         "display_name": "News and Event Analyst",
         "enabled": True,
         "provider": "google",
-        "model": "gemini-1.5-pro",
+        "model": "gemini-flash-latest",
         "temperature": 0.0,
         "max_tokens": 1200,
         "timeout_seconds": 15.0,
@@ -134,7 +134,7 @@ DEFAULT_AGENTS_CONFIG: dict[str, dict[str, Any]] = {
         "max_tokens": 800,
         "timeout_seconds": 15.0,
         "fallback_provider": "gemini",
-        "fallback_model": "gemini-1.5-flash",
+        "fallback_model": "gemini-flash-latest",
         "description": "Analyzes options-derived metrics (PCR, Max Pain, IV) strictly when verified data is available.",
     },
     AgentRole.QUANT_FORECAST.value: {
@@ -147,7 +147,7 @@ DEFAULT_AGENTS_CONFIG: dict[str, dict[str, Any]] = {
         "max_tokens": 1000,
         "timeout_seconds": 15.0,
         "fallback_provider": "gemini",
-        "fallback_model": "gemini-1.5-flash",
+        "fallback_model": "gemini-flash-latest",
         "description": "Interprets registered quantitative model forecasts, evaluation evidence, and probability estimates.",
     },
     AgentRole.RISK_UNCERTAINTY.value: {
@@ -160,7 +160,7 @@ DEFAULT_AGENTS_CONFIG: dict[str, dict[str, Any]] = {
         "max_tokens": 1200,
         "timeout_seconds": 15.0,
         "fallback_provider": "gemini",
-        "fallback_model": "gemini-1.5-pro",
+        "fallback_model": "gemini-flash-latest",
         "description": "Identifies conflicting evidence, stale inputs, high model uncertainty, and unsupported assumptions.",
     },
     AgentRole.FINAL_DECISION.value: {
@@ -173,7 +173,7 @@ DEFAULT_AGENTS_CONFIG: dict[str, dict[str, Any]] = {
         "max_tokens": 1500,
         "timeout_seconds": 20.0,
         "fallback_provider": "gemini",
-        "fallback_model": "gemini-1.5-pro",
+        "fallback_model": "gemini-flash-latest",
         "description": "Synthesizes specialist agent outputs into a structured recommendation, enforcing NO_TRADE on gate failure.",
     },
 }

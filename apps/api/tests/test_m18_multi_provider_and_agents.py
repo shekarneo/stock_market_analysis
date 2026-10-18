@@ -185,17 +185,18 @@ def test_indmoney_and_nse_investigations():
     assert "DotEx" in nse_eval["finding"]
 
 
-def test_agent_configuration_crud():
-    cfg = load_agent_system_config()
+def test_agent_configuration_crud(tmp_path):
+    cfg_file = tmp_path / "agent_system_config.json"
+    cfg = load_agent_system_config(config_file=cfg_file)
     assert len(cfg.agents) == 8
     assert AgentRole.MARKET_DATA.value in cfg.agents
     assert AgentRole.FINAL_DECISION.value in cfg.agents
 
     # Modify an agent configuration
     cfg.agents[AgentRole.TECHNICAL.value].temperature = 0.42
-    save_agent_system_config(cfg)
+    save_agent_system_config(cfg, config_file=cfg_file)
 
-    reloaded = load_agent_system_config()
+    reloaded = load_agent_system_config(config_file=cfg_file)
     assert reloaded.agents[AgentRole.TECHNICAL.value].temperature == 0.42
 
     # Reset
@@ -203,7 +204,7 @@ def test_agent_configuration_crud():
         version="v6.18.0",
         agents={r: SingleAgentConfig(**c) for r, c in DEFAULT_AGENTS_CONFIG.items()},
     )
-    save_agent_system_config(default_cfg)
+    save_agent_system_config(default_cfg, config_file=cfg_file)
 
 
 def test_ai_provider_registry_and_fallback():

@@ -11,6 +11,8 @@ os.environ["OPERATOR_PASSWORD"] = "test-password"
 os.environ["LIVE_ORDER_SERVER_FLAG"] = "false"
 os.environ["WEB_ORIGIN"] = "http://localhost:3000"
 os.environ["INTEGRATIONS_SECRET_KEY"] = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+os.environ["IMM_ENABLE_AGENT_LLM"] = "0"
+os.environ["ENABLE_AGENT_LLM"] = "0"
 
 from alembic import command
 from alembic.config import Config

@@ -71,7 +71,8 @@ def _should_invoke_llm(state: AnalysisState, cfg: SingleAgentConfig) -> bool:
     """Invoke AIProviderRegistry only when explicitly requested or when custom/mock providers are registered."""
     if state.get("enable_agent_llm") is True:
         return True
-    if os.environ.get("ENABLE_AGENT_LLM", "").strip() in {"1", "true", "TRUE", "yes"}:
+    env_flag = (os.environ.get("IMM_ENABLE_AGENT_LLM") or os.environ.get("ENABLE_AGENT_LLM") or "").strip().lower()
+    if env_flag in {"1", "true", "yes"}:
         return True
     p_name = (cfg.provider or "").lower().strip()
     fb_name = (cfg.fallback_provider or "").lower().strip()

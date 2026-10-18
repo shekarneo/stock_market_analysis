@@ -52,6 +52,8 @@ const DEFAULT_OPENAI_MODELS = [
 ];
 
 const DEFAULT_GEMINI_MODELS = [
+  { id: "gemini-flash-latest", label: "gemini-flash-latest (Recommended Live Flash)" },
+  { id: "gemini-3.8-flash", label: "gemini-3.8-flash (Latest Generation Flash)" },
   { id: "gemini-2.5-pro", label: "gemini-2.5-pro (Flagship Reasoning & Code)" },
   { id: "gemini-2.5-flash", label: "gemini-2.5-flash (Fast, Highly Capable)" },
   { id: "gemini-2.0-flash", label: "gemini-2.0-flash (High-Speed Multimodal)" },

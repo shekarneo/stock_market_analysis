@@ -256,10 +256,17 @@ def test_ai_provider_negative_cases_and_reasoning_payload():
     assert res_safety.error_code == "SAFETY_BLOCKED"
 
 
-def test_specialist_agents_truthful_execution_mode_and_llm_routing():
+def test_specialist_agents_truthful_execution_mode_and_llm_routing(monkeypatch):
     """Verify specialist agents distinguish DETERMINISTIC_RULE, LLM, LLM_FALLBACK, and DETERMINISTIC_FALLBACK_ON_LLM_ERROR."""
+    from app.analysis.agent_config import DEFAULT_AGENTS_CONFIG, MultiAgentSystemConfig, SingleAgentConfig
     from app.analysis.agent_nodes import market_data_analyst_node, technical_analyst_node
     from app.analysis.ai_providers import AIProviderRegistry, GeminiModelProvider, OpenAIModelProvider
+
+    canonical_cfg = MultiAgentSystemConfig(
+        version="v6.18.0",
+        agents={r: SingleAgentConfig(**c) for r, c in DEFAULT_AGENTS_CONFIG.items()},
+    )
+    monkeypatch.setattr("app.analysis.agent_nodes.load_agent_system_config", lambda: canonical_cfg)
 
     AIProviderRegistry._providers.clear()
     base_state = {
@@ -375,8 +382,11 @@ def test_agent_config_legacy_frontend_keys_normalized():
     assert cfg.fallback_model == "gemini-1.5-flash"
 
 
-def test_leak_free_registry_and_historical_feature_provenance():
-    """Verify var/registry/registry.json passes checksum verification and uses leak-free out-of-sample split."""
+def test_leak_free_registry_and_historical_feature_provenance(db):
+    """Verify var/registry/registry.json passes checksum verification, uses leak-free out-of-sample split, and resolves live DB candles when available."""
+    from datetime import datetime, timedelta, timezone
+    from decimal import Decimal
+    from app.domain.tables import MarketCandle
     from app.forecasting.live_forecast import compute_live_forecast_for_instrument
     from app.registry.store import registry_store
 
@@ -388,12 +398,43 @@ def test_leak_free_registry_and_historical_feature_provenance():
     assert lr_outcomes["test"]["observations"] == 474
     assert 0.45 <= lr_outcomes["test"]["accuracy"]["value"] <= 0.70
 
-    # Verify trailing feature resolution preserves actual historical candle bar_end instead of spoofing now()
+    # 1. Verify trailing feature resolution preserves actual historical candle bar_end when no newer DB candles exist
     f_nifty = compute_live_forecast_for_instrument("NIFTY", {"instrument": "NIFTY", "last_price": 23146.15})
     assert f_nifty["status"] == "ACTIVE"
     assert f_nifty["feature_source"] == "HISTORICAL_CANDLE_DATASET"
     assert f_nifty["is_live_feature_vector"] is False
     assert f_nifty["feature_bar_end"] == "2026-10-14T15:30:00+05:30"
+
+    # 2. Verify live 15m candles in MarketCandle take precedence and set is_live_feature_vector=True
+    session = get_session_factory()()
+    try:
+        ist = timezone(timedelta(hours=5, minutes=30))
+        base_dt = datetime(2026, 10, 16, 9, 15, tzinfo=ist)
+        for i in range(12):
+            bar_ts = base_dt + timedelta(minutes=15 * i)
+            session.add(
+                MarketCandle(
+                    symbol="NSE-NIFTY",
+                    interval="15minute",
+                    timestamp=bar_ts,
+                    open=Decimal(str(23100.0 + i * 5)),
+                    high=Decimal(str(23115.0 + i * 5)),
+                    low=Decimal(str(23090.0 + i * 5)),
+                    close=Decimal(str(23108.0 + i * 5)),
+                    volume=Decimal("100000"),
+                    session_type="REGULAR",
+                    is_complete=True,
+                )
+            )
+        session.commit()
+
+        f_live = compute_live_forecast_for_instrument("NIFTY", {"instrument": "NIFTY", "last_price": 23165.0})
+        assert f_live["status"] == "ACTIVE"
+        assert f_live["feature_source"] == "LIVE_DB_MARKET_CANDLES"
+        assert f_live["is_live_feature_vector"] is True
+        assert "2026-10-16" in f_live["feature_bar_end"]
+    finally:
+        session.close()
 
 
 def test_experimental_paper_risk_limits_enforced(db):

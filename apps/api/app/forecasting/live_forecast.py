@@ -129,69 +129,223 @@ def is_candle_complete(quote_data: dict, current_time: datetime | None = None) -
     return True
 
 
-def _resolve_trailing_features_and_meta(instrument: str) -> tuple[dict[str, float] | None, str | None, float | None]:
-    """Resolve trailing features, actual candle bar_end, and last candle close from verified completed candles."""
+def _compute_features_from_candle_dicts(inst: str, candles_data: list[dict]) -> tuple[dict[str, float] | None, str | None, float | None]:
+    """Build Candle objects from normalized dicts and compute the trailing MODEL_FEATURES vector."""
+    if len(candles_data) < 10:
+        return None, None, None
+    from app.features.pipeline import compute_feature_row
+    from app.market.calendar import ExchangeCalendar
+    from app.market.schemas import Candle, DataOrigin, MarketSession
+
+    cal_dates = set()
+    candle_objs = []
+    exchange = "BSE" if inst == "SENSEX" else "NSE"
+    for c in candles_data[-30:]:
+        start_dt = datetime.fromisoformat(str(c["bar_start"]).replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(str(c["bar_end"]).replace("Z", "+00:00"))
+        cal_dates.add(start_dt.date())
+        candle_objs.append(
+            Candle(
+                instrument_id=inst,
+                underlying=inst,
+                exchange=exchange,
+                interval="M15",
+                bar_start=start_dt,
+                bar_end=end_dt,
+                provider_timestamp=start_dt,
+                retrieved_at=end_dt,
+                open=float(c["open"]),
+                high=float(c["high"]),
+                low=float(c["low"]),
+                close=float(c["close"]),
+                volume=float(c["volume"]) if c.get("volume") is not None else None,
+                source_id=str(c.get("source_id") or "derived_regular"),
+                origin=DataOrigin.PROVIDER,
+                session=MarketSession.OPEN,
+            )
+        )
+    calendar = ExchangeCalendar(listed_sessions=cal_dates, closed_dates=set())
+    row = compute_feature_row(candle_objs, len(candle_objs) - 1, calendar)
+    res = {}
+    for f in MODEL_FEATURES:
+        if f in row.values and row.values[f].value is not None:
+            val = float(row.values[f].value)
+            if math.isfinite(val):
+                res[f] = val
+    if len(res) == len(MODEL_FEATURES):
+        last_c = candle_objs[-1]
+        return res, last_c.bar_end.isoformat(), float(last_c.close)
+    return None, None, None
+
+
+def _resolve_trailing_features_and_meta(instrument: str) -> tuple[dict[str, float] | None, str | None, float | None, str, bool]:
+    """Resolve trailing features, actual candle bar_end, last close, feature_source, and is_live_feature_vector."""
+    import os
+    from datetime import timedelta
+
     inst = instrument.upper()
-    if inst == "NIFTY":
-        dataset_path = REPO_ROOT / "var" / "datasets" / "derived_nifty_15m_regular_ac9484b605d484c2.json"
-        if not dataset_path.is_file():
-            candidates = list((REPO_ROOT / "var" / "datasets").glob("derived_nifty_15m_regular_*.json"))
-            if candidates:
-                dataset_path = candidates[0]
+
+    # 1. Check live persisted MarketCandle rows in PostgreSQL (if newer than static dataset cutoff 2026-10-14T15:30+05:30)
+    try:
+        from sqlalchemy import select
+        from app.db import get_session_factory
+        from app.domain.tables import MarketCandle
+
+        session = get_session_factory()()
+        try:
+            symbol_variants = [inst, f"NSE-{inst}", f"BSE-{inst}"]
+            db_rows = list(
+                session.scalars(
+                    select(MarketCandle)
+                    .where(
+                        MarketCandle.symbol.in_(symbol_variants),
+                        MarketCandle.interval.in_(["15minute", "M15", "15m"]),
+                        MarketCandle.is_complete.is_(True),
+                        MarketCandle.session_type == "REGULAR",
+                    )
+                    .order_by(MarketCandle.timestamp.desc())
+                    .limit(30)
+                ).all()
+            )
+            if len(db_rows) >= 10:
+                db_rows.reverse()
+                latest_ts = db_rows[-1].timestamp
+                static_cutoff = datetime.fromisoformat("2026-10-14T15:30:00+05:30")
+                if latest_ts is not None and latest_ts > static_cutoff:
+                    c_dicts = []
+                    for r in db_rows:
+                        b_start = r.timestamp
+                        b_end = b_start + timedelta(minutes=15)
+                        c_dicts.append(
+                            {
+                                "bar_start": b_start.isoformat(),
+                                "bar_end": b_end.isoformat(),
+                                "open": float(r.open),
+                                "high": float(r.high),
+                                "low": float(r.low),
+                                "close": float(r.close),
+                                "volume": float(r.volume) if r.volume is not None else None,
+                                "source_id": "db_market_candles",
+                            }
+                        )
+                    res, bar_end_iso, last_close = _compute_features_from_candle_dicts(inst, c_dicts)
+                    if res is not None:
+                        return res, bar_end_iso, last_close, "LIVE_DB_MARKET_CANDLES", True
+        finally:
+            session.close()
+    except Exception:
+        pass
+
+    # 2. Attempt live Groww 15m historical candle fetch when Groww credentials are enabled (outside offline pytest)
+    if os.environ.get("IMM_ENABLE_AGENT_LLM") != "0" and inst in {"NIFTY", "SENSEX", "BANKNIFTY"}:
+        try:
+            from app.db import get_session_factory
+            from app.domain.tables import IntegrationCredential
+            from app.integrations.crypto import decrypt_secrets
+            from app.integrations.groww import read_historical_candles
+            from app.market.storage import parse_iso_or_epoch_to_ist
+            from app.settings import get_settings
+
+            session = get_session_factory()()
+            groww_token = None
+            try:
+                row = session.get(IntegrationCredential, "groww")
+                if row is not None and row.enabled and row.ciphertext:
+                    secrets = decrypt_secrets(get_settings(), row.ciphertext)
+                    groww_token = (secrets.get("access_token") or "").strip() or None
+            finally:
+                session.close()
+
+            if groww_token:
+                now_utc = datetime.now(timezone.utc)
+                start_str = (now_utc - timedelta(days=5)).strftime("%Y-%m-%d %H:%M:%S")
+                end_str = now_utc.strftime("%Y-%m-%d %H:%M:%S")
+                exchange = "BSE" if inst == "SENSEX" else "NSE"
+                raw_resp = read_historical_candles(
+                    groww_token,
+                    exchange=exchange,
+                    segment="CASH",
+                    groww_symbol=inst,
+                    start_time=start_str,
+                    end_time=end_str,
+                    candle_interval="15minute",
+                )
+                raw_candles = (raw_resp or {}).get("candles") if isinstance(raw_resp, dict) else None
+                if isinstance(raw_candles, list) and len(raw_candles) >= 10:
+                    c_dicts = []
+                    for item in raw_candles:
+                        if isinstance(item, (list, tuple)) and len(item) >= 5:
+                            b_start = parse_iso_or_epoch_to_ist(item[0])
+                            b_end = b_start + timedelta(minutes=15)
+                            if b_end <= now_utc.astimezone(b_end.tzinfo):
+                                c_dicts.append(
+                                    {
+                                        "bar_start": b_start.isoformat(),
+                                        "bar_end": b_end.isoformat(),
+                                        "open": float(item[1]),
+                                        "high": float(item[2]),
+                                        "low": float(item[3]),
+                                        "close": float(item[4]),
+                                        "volume": float(item[5]) if len(item) > 5 and item[5] is not None else None,
+                                        "source_id": "live_groww_15m",
+                                    }
+                                )
+                    res, bar_end_iso, last_close = _compute_features_from_candle_dicts(inst, c_dicts)
+                    if res is not None:
+                        return res, bar_end_iso, last_close, "LIVE_GROWW_15M_CANDLES", True
+        except Exception:
+            pass
+
+    # 3. Fallback to verified local historical candle dataset
+    if inst in {"NIFTY", "BANKNIFTY"}:
+        if inst == "NIFTY":
+            dataset_path = REPO_ROOT / "var" / "datasets" / "derived_nifty_15m_regular_ac9484b605d484c2.json"
+            if not dataset_path.is_file():
+                candidates = list((REPO_ROOT / "var" / "datasets").glob("derived_nifty_15m_regular_*.json"))
+                if candidates:
+                    dataset_path = candidates[0]
+        else:
+            dataset_path = REPO_ROOT / "var" / "datasets" / "derived_banknifty_15m_m40.json"
+
         if dataset_path.is_file():
             try:
                 data = json.loads(dataset_path.read_text(encoding="utf-8"))
-                candles_data = data.get("regular_candles") or []
-                if len(candles_data) >= 10:
-                    from app.market.schemas import Candle, DataOrigin, MarketSession
-                    from app.market.calendar import ExchangeCalendar
-                    from app.features.pipeline import compute_feature_row
-
-                    cal_dates = set()
-                    candle_objs = []
-                    for c in candles_data[-30:]:
-                        start_dt = datetime.fromisoformat(c["bar_start"])
-                        end_dt = datetime.fromisoformat(c["bar_end"])
-                        cal_dates.add(start_dt.date())
-                        candle_objs.append(
-                            Candle(
-                                instrument_id="NIFTY",
-                                underlying="NIFTY",
-                                exchange="NSE",
-                                interval="M15",
-                                bar_start=start_dt,
-                                bar_end=end_dt,
-                                provider_timestamp=start_dt,
-                                retrieved_at=end_dt,
-                                open=float(c["open"]),
-                                high=float(c["high"]),
-                                low=float(c["low"]),
-                                close=float(c["close"]),
-                                volume=float(c["volume"]) if c.get("volume") is not None else None,
-                                source_id="derived_regular",
-                                origin=DataOrigin.PROVIDER,
-                                session=MarketSession.OPEN,
-                            )
-                        )
-                    calendar = ExchangeCalendar(listed_sessions=cal_dates, closed_dates=set())
-                    row = compute_feature_row(candle_objs, len(candle_objs) - 1, calendar)
-                    res = {}
-                    for f in MODEL_FEATURES:
-                        if f in row.values and row.values[f].value is not None:
-                            val = float(row.values[f].value)
-                            if math.isfinite(val):
-                                res[f] = val
-                    if len(res) == len(MODEL_FEATURES):
-                        last_c = candle_objs[-1]
-                        return res, last_c.bar_end.isoformat(), float(last_c.close)
+                candles_data = data.get("regular_candles") or data.get("candles") or []
+                normalized = []
+                for c in candles_data[-30:]:
+                    b_start_str = c.get("bar_start") or c.get("timestamp")
+                    if not b_start_str:
+                        continue
+                    b_start = datetime.fromisoformat(str(b_start_str).replace("Z", "+00:00"))
+                    b_end_str = c.get("bar_end")
+                    b_end = (
+                        datetime.fromisoformat(str(b_end_str).replace("Z", "+00:00"))
+                        if b_end_str
+                        else b_start + timedelta(minutes=15)
+                    )
+                    normalized.append(
+                        {
+                            "bar_start": b_start.isoformat(),
+                            "bar_end": b_end.isoformat(),
+                            "open": float(c["open"]),
+                            "high": float(c["high"]),
+                            "low": float(c["low"]),
+                            "close": float(c["close"]),
+                            "volume": float(c["volume"]) if c.get("volume") is not None else None,
+                            "source_id": "derived_regular",
+                        }
+                    )
+                res, bar_end_iso, last_close = _compute_features_from_candle_dicts(inst, normalized)
+                if res is not None:
+                    return res, bar_end_iso, last_close, "HISTORICAL_CANDLE_DATASET", False
             except Exception:
                 pass
-    return None, None, None
+    return None, None, None, "UNAVAILABLE", False
 
 
 def resolve_trailing_features_for_instrument(instrument: str) -> dict[str, float] | None:
     """Resolve and compute trailing features from verified completed candles."""
-    feats, _, _ = _resolve_trailing_features_and_meta(instrument)
+    feats, _, _, _, _ = _resolve_trailing_features_and_meta(instrument)
     return feats
 
 
@@ -230,11 +384,11 @@ def compute_live_forecast_for_instrument(
     feature_source = "LIVE_QUOTE_FEATURES"
     is_live_feature_vector = True
     if not isinstance(features, dict) or not features:
-        trailing, trailing_bar_end, _ = _resolve_trailing_features_and_meta(inst)
+        trailing, trailing_bar_end, _, resolved_src, resolved_is_live = _resolve_trailing_features_and_meta(inst)
         if trailing and len(trailing) == len(MODEL_FEATURES):
             features = trailing
-            feature_source = "HISTORICAL_CANDLE_DATASET"
-            is_live_feature_vector = False
+            feature_source = resolved_src
+            is_live_feature_vector = resolved_is_live
             quote_data["features"] = features
             if not quote_data.get("bar_end") and trailing_bar_end:
                 quote_data["bar_end"] = trailing_bar_end
@@ -434,17 +588,17 @@ def generate_all_live_forecasts() -> dict:
                 quotes["SENSEX"].setdefault("is_live_quote", False)
                 break
     if not quotes.get("NIFTY"):
-        trailing, trailing_bar_end, last_close = _resolve_trailing_features_and_meta("NIFTY")
+        trailing, trailing_bar_end, last_close, resolved_src, resolved_is_live = _resolve_trailing_features_and_meta("NIFTY")
         if last_close is not None:
             quotes["NIFTY"] = {
                 "instrument": "NIFTY",
                 "last_price": last_close,
                 "features": trailing,
                 "bar_end": trailing_bar_end,
-                "feature_source": "HISTORICAL_CANDLE_DATASET",
-                "is_live_feature_vector": False,
-                "quote_source": "HISTORICAL_CANDLE_SNAPSHOT",
-                "is_live_quote": False,
+                "feature_source": resolved_src,
+                "is_live_feature_vector": resolved_is_live,
+                "quote_source": "HISTORICAL_CANDLE_SNAPSHOT" if not resolved_is_live else "LIVE_CANDLE_SNAPSHOT",
+                "is_live_quote": resolved_is_live,
             }
 
     vix_row = next(

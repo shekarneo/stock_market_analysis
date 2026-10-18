@@ -267,9 +267,10 @@ class GeminiModelProvider:
         self.caller = caller or HttpxCaller()
         self._explicit_key = api_key
 
-    def _resolve_api_key(self) -> str | None:
+    def _resolve_api_keys(self) -> list[str]:
         if self._explicit_key:
-            return self._explicit_key
+            return [self._explicit_key]
+        keys: list[str] = []
         # Check database credentials store first so operator UI settings and enable/disable toggle take precedence
         try:
             from app.db import get_session_factory
@@ -282,36 +283,41 @@ class GeminiModelProvider:
                 row = session.get(IntegrationCredential, "gemini")
                 if row is not None:
                     if row.enabled is False:
-                        return None
+                        return []
                     if row.ciphertext:
                         secrets = decrypt_secrets(get_settings(), row.ciphertext)
                         db_key = (secrets.get("api_key") or "").strip()
                         if db_key:
-                            return db_key
+                            keys.append(db_key)
             finally:
                 session.close()
         except Exception:
             pass
         env_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
-        if env_key:
-            return env_key
+        if env_key and env_key not in keys:
+            keys.append(env_key)
         env_keys = (os.environ.get("GEMINI_API_KEYS") or "").strip()
         if env_keys:
-            first_key = [k.strip() for k in env_keys.split(",") if k.strip()]
-            if first_key:
-                return first_key[0]
-        return None
+            for k in env_keys.split(","):
+                ks = k.strip()
+                if ks and ks not in keys:
+                    keys.append(ks)
+        return keys
+
+    def _resolve_api_key(self) -> str | None:
+        keys = self._resolve_api_keys()
+        return keys[0] if keys else None
 
     def generate(
         self,
         messages: list[dict[str, str]],
-        model: str = "gemini-1.5-pro",
+        model: str = "gemini-flash-latest",
         temperature: float = 0.0,
         max_tokens: int = 1000,
         timeout: float = 15.0,
     ) -> AICompletionResult:
-        api_key = self._resolve_api_key()
-        if not api_key:
+        api_keys = self._resolve_api_keys()
+        if not api_keys:
             return AICompletionResult(
                 ok=False,
                 provider=self.name,
@@ -337,36 +343,71 @@ class GeminiModelProvider:
         if not contents:
             contents = [{"role": "user", "parts": [{"text": "Generate summary"}]}]
 
+        clean_model = model.replace("models/", "")
+        effective_max_tokens = (
+            max(int(max_tokens), 1024)
+            if ("gemini-3" in clean_model or "latest" in clean_model)
+            else int(max_tokens)
+        )
         payload: dict[str, Any] = {
             "contents": contents,
             "generationConfig": {
                 "temperature": max(0.0, min(2.0, float(temperature))),
-                "maxOutputTokens": int(max_tokens),
+                "maxOutputTokens": effective_max_tokens,
                 "responseMimeType": "application/json",
             },
         }
         if system_instruction:
             payload["systemInstruction"] = system_instruction
 
-        clean_model = model.replace("models/", "")
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent"
-        headers = {
-            "x-goog-api-key": api_key,
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-
-        try:
-            resp = self.caller.send(
+        def _send_once(target_model: str, target_key: str, req_payload: dict[str, Any]):
+            target_url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent"
+            req_headers = {
+                "x-goog-api-key": target_key,
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            }
+            return self.caller.send(
                 "POST",
-                url,
-                headers=headers,
-                json_body=payload,
+                target_url,
+                headers=req_headers,
+                json_body=req_payload,
                 timeout=timeout,
             )
+
+        api_key = api_keys[0]
+        resp = None
+        try:
+            for idx, candidate_key in enumerate(api_keys):
+                api_key = candidate_key
+                resp = _send_once(clean_model, api_key, payload)
+                status_code = getattr(resp, "status_code", 0)
+                # If a retired legacy Gemini model (1.5 / 2.0 / 2.5) returns 404 on live API, upgrade to gemini-flash-latest
+                if (
+                    status_code == 404
+                    and self._explicit_key is None
+                    and clean_model != "gemini-flash-latest"
+                    and any(ver in clean_model for ver in ("1.5", "2.0", "2.5"))
+                ):
+                    clean_model = "gemini-flash-latest"
+                    model = "gemini-flash-latest"
+                    payload["generationConfig"]["maxOutputTokens"] = max(int(max_tokens), 1024)
+                    resp = _send_once(clean_model, api_key, payload)
+                    status_code = getattr(resp, "status_code", 0)
+                if status_code == 503 and self._explicit_key is None:
+                    alt_model = "gemini-3.8-flash" if clean_model != "gemini-3.8-flash" else "gemini-flash-latest"
+                    payload["generationConfig"]["maxOutputTokens"] = max(int(max_tokens), 1024)
+                    resp = _send_once(alt_model, api_key, payload)
+                    status_code = getattr(resp, "status_code", 0)
+                    if status_code == 200:
+                        clean_model = alt_model
+                        model = alt_model
+                if status_code in {429, 503} and idx + 1 < len(api_keys):
+                    continue
+                break
         except Exception as exc:
             elapsed = (time.monotonic() - start_time) * 1000
-            clean_err = redact_text(str(exc), [api_key])
+            clean_err = redact_text(str(exc), api_keys)
             return AICompletionResult(
                 ok=False,
                 provider=self.name,
@@ -383,7 +424,7 @@ class GeminiModelProvider:
 
         if status_code != 200:
             err = body.get("error", {}) if isinstance(body.get("error"), dict) else {}
-            err_msg = redact_text(str(err.get("message") or f"HTTP {status_code}"), [api_key])
+            err_msg = redact_text(str(err.get("message") or f"HTTP {status_code}"), api_keys)
             err_code = str(err.get("code") or f"HTTP_{status_code}")
             return AICompletionResult(
                 ok=False,
