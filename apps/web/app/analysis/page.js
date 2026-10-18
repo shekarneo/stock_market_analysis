@@ -1,12 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import ResearchBoard from "../components/ResearchBoard";
 import V6Desk from "../components/V6Desk";
 import V6IntelligenceHub from "../components/V6IntelligenceHub";
-import InstrumentSelector from "../components/InstrumentSelector";
-import InstrumentForecastCard from "../components/InstrumentForecastCard";
-import NewsSourcesManager from "../components/NewsSourcesManager";
 import { useMarketData } from "../components/MarketDataContext";
 
 export default function AnalysisPage() {
@@ -20,12 +18,7 @@ export default function AnalysisPage() {
     >
       {() => (
         <>
-          {/* Top Compact Instrument Switcher */}
-          <div style={{ marginBottom: "16px" }}>
-            <InstrumentSelector compact={true} />
-          </div>
-
-          {/* Analysis View Mode Navigation to eliminate endless vertical scrolling */}
+          {/* Streamlined 2-View Mode Bar + Direct Links to Dedicated Desks */}
           <div style={{
             display: "flex",
             gap: "8px",
@@ -35,6 +28,7 @@ export default function AnalysisPage() {
             border: "1px solid var(--line)",
             marginBottom: "20px",
             flexWrap: "wrap",
+            alignItems: "center",
           }}>
             <button
               type="button"
@@ -80,91 +74,50 @@ export default function AnalysisPage() {
             >
               <span>🧠</span> Institutional Intelligence Hub &amp; Greeks
             </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("forecast")}
-              style={{
-                flex: "1 1 auto",
-                padding: "8px 16px",
-                borderRadius: "8px",
-                border: "none",
-                background: activeTab === "forecast" ? "rgba(255, 255, 255, 0.12)" : "transparent",
-                color: activeTab === "forecast" ? "#ffffff" : "var(--muted)",
-                fontWeight: 650,
-                fontSize: "0.85rem",
-                cursor: "pointer",
-                transition: "all 0.15s ease",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-              }}
-            >
-              <span>📈</span> Multi-Horizon Statistical Forecasts
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("news-config")}
-              style={{
-                flex: "1 1 auto",
-                padding: "8px 16px",
-                borderRadius: "8px",
-                border: "none",
-                background: activeTab === "news-config" ? "rgba(255, 255, 255, 0.12)" : "transparent",
-                color: activeTab === "news-config" ? "#ffffff" : "var(--muted)",
-                fontWeight: 650,
-                fontSize: "0.85rem",
-                cursor: "pointer",
-                transition: "all 0.15s ease",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-              }}
-            >
-              <span>📰</span> News Agent Web Feeds
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("all")}
+            <Link
+              href="/forecast"
               style={{
                 padding: "8px 14px",
                 borderRadius: "8px",
-                border: "none",
-                background: activeTab === "all" ? "rgba(255, 255, 255, 0.12)" : "transparent",
-                color: activeTab === "all" ? "#ffffff" : "var(--muted)",
-                fontWeight: 650,
-                fontSize: "0.85rem",
-                cursor: "pointer",
-                transition: "all 0.15s ease",
+                color: "#c084fc",
+                fontWeight: 600,
+                fontSize: "0.82rem",
+                textDecoration: "none",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
               }}
-              title="View all components stacked"
+              title="Open dedicated Multi-Horizon Statistical Forecasts & Out-of-Sample Accuracy Desk"
             >
-              📄 Expanded View
-            </button>
+              <span>📈</span> Forecasts &amp; Accuracy →
+            </Link>
+            <Link
+              href="/live"
+              style={{
+                padding: "8px 14px",
+                borderRadius: "8px",
+                color: "#34d399",
+                fontWeight: 600,
+                fontSize: "0.82rem",
+                textDecoration: "none",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+              title="Open Live & Auto Trading Desk"
+            >
+              <span>⚡</span> Live Desk →
+            </Link>
           </div>
 
-          {/* Tab 1: Primary Multi-Agent Decision Desk (Right at the top!) */}
-          {(activeTab === "desk" || activeTab === "all") && (
+          {/* View 1: Primary Multi-Agent Decision Desk */}
+          {activeTab === "desk" && (
             <V6Desk defaultTab="trades" hideTickers={true} />
           )}
 
-          {/* Tab 2: Institutional Intelligence Hub (Greeks, Multi-Asset, 8-Gate) */}
-          {(activeTab === "consensus" || activeTab === "all") && (
+          {/* View 2: Institutional Intelligence Hub (Greeks, Multi-Asset, 8-Gate) */}
+          {activeTab === "consensus" && (
             <V6IntelligenceHub initialTab="consensus" liveQuotes={quotes} />
-          )}
-
-          {/* Tab 3: Multi-Horizon Statistical Forecasts */}
-          {(activeTab === "forecast" || activeTab === "all") && (
-            <>
-              <InstrumentSelector compact={false} />
-              <InstrumentForecastCard />
-            </>
-          )}
-
-          {/* Tab 4: News Agent Web Feeds Configuration */}
-          {(activeTab === "news-config" || activeTab === "all") && (
-            <NewsSourcesManager />
           )}
         </>
       )}

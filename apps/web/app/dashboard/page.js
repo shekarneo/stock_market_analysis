@@ -1,25 +1,20 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 
-import V6Desk from "../components/V6Desk";
-import V6IntelligenceHub from "../components/V6IntelligenceHub";
-import InstrumentSelector from "../components/InstrumentSelector";
 import MultiInstrumentOverviewCard from "../components/MultiInstrumentOverviewCard";
-import InstrumentForecastCard from "../components/InstrumentForecastCard";
-import ResearchBoard, { BlockerList, csrf } from "../components/ResearchBoard";
+import ResearchBoard, { BlockerList } from "../components/ResearchBoard";
 import ReadState from "../components/ReadState";
 import { useRead } from "../components/useRead";
 import { useMarketData } from "../components/MarketDataContext";
-import { flagLabel } from "../research/status.mjs";
 import { observationClass, valueText } from "../research/present.mjs";
 
 export default function DashboardPage() {
-  const { quotes } = useMarketData();
   return (
     <ResearchBoard
       title="Trade desk"
-      lede="The tape, the analysis, and the order ticket. The call is buy, sell, wait, or stand aside. An order leaves this desk only when the book allows it."
+      lede="Executive market overview, multi-instrument tape, and active order ticket. Deep-dive multi-agent synthesis, statistical forecasts, and auto-trading live in their dedicated desks."
     >
       {({ status }) => (
         <>
@@ -32,16 +27,79 @@ export default function DashboardPage() {
             </span>
             <span className="pill bad"><i />NO TRADE</span>
           </div>
-          <InstrumentSelector />
+
+          {/* Quick Desk Shortcuts */}
+          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "16px" }}>
+            <Link
+              href="/analysis"
+              style={{
+                padding: "8px 14px",
+                borderRadius: "8px",
+                background: "rgba(56, 189, 248, 0.14)",
+                border: "1px solid rgba(56, 189, 248, 0.35)",
+                color: "#38bdf8",
+                fontWeight: 600,
+                fontSize: "0.83rem",
+                textDecoration: "none",
+              }}
+            >
+              🤖 Open 12-Agent Analysis Desk →
+            </Link>
+            <Link
+              href="/live"
+              style={{
+                padding: "8px 14px",
+                borderRadius: "8px",
+                background: "rgba(16, 185, 129, 0.14)",
+                border: "1px solid rgba(16, 185, 129, 0.35)",
+                color: "#34d399",
+                fontWeight: 600,
+                fontSize: "0.83rem",
+                textDecoration: "none",
+              }}
+            >
+              ⚡ Live &amp; Auto Trading →
+            </Link>
+            <Link
+              href="/forecast"
+              style={{
+                padding: "8px 14px",
+                borderRadius: "8px",
+                background: "rgba(168, 85, 247, 0.14)",
+                border: "1px solid rgba(168, 85, 247, 0.35)",
+                color: "#c084fc",
+                fontWeight: 600,
+                fontSize: "0.83rem",
+                textDecoration: "none",
+              }}
+            >
+              📈 Statistical Forecasts &amp; Accuracy →
+            </Link>
+            <Link
+              href="/options"
+              style={{
+                padding: "8px 14px",
+                borderRadius: "8px",
+                background: "rgba(255, 255, 255, 0.05)",
+                border: "1px solid rgba(255, 255, 255, 0.12)",
+                color: "#e2e8f0",
+                fontWeight: 600,
+                fontSize: "0.83rem",
+                textDecoration: "none",
+              }}
+            >
+              🎯 Options Chain &amp; Greeks →
+            </Link>
+          </div>
+
           <MultiInstrumentOverviewCard />
-          <InstrumentForecastCard />
           <TradeTicket status={status} />
-          <Snapshot />
-          <V6IntelligenceHub liveQuotes={quotes} />
-          <V6Desk />
-          <LiveQuotes />
           <DeskSummary />
-          <Quarantine />
+          <Snapshot />
+          <div className="v6-grid" style={{ marginTop: "16px" }}>
+            <LiveQuotes />
+            <Quarantine />
+          </div>
         </>
       )}
     </ResearchBoard>

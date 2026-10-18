@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import ResearchBoard, { csrf } from "../components/ResearchBoard";
 import ReadState from "../components/ReadState";
 import { useRead } from "../components/useRead";
-import InstrumentSelector from "../components/InstrumentSelector";
 import InstrumentForecastCard from "../components/InstrumentForecastCard";
 import { flagLabel } from "../research/status.mjs";
 import { observationClass, valueText } from "../research/present.mjs";
@@ -32,7 +31,6 @@ export default function ForecastPage() {
     >
       {() => (
         <>
-          <InstrumentSelector />
           <InstrumentForecastCard />
           <ForecastAccuracyHub />
           <Approved />

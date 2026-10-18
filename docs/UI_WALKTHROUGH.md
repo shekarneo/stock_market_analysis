@@ -140,27 +140,22 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
 ## 4. Primary Trading Desk Pages
 
 ### 4.1 Overview Desk (`/dashboard`)
-- **Purpose**: The central morning-to-evening cockpit providing an executive snapshot of the market tape, current desk recommendation, live quotes, and active blockers.
+- **Purpose**: The central morning-to-evening cockpit providing a fast executive snapshot of the market tape, current desk recommendation, live quotes, and active blockers without duplicating full analysis or forecasting desks.
 - **Components & Options**:
   1. **Session Ribbon**:
      - Visual badge indicating current posture (`Standing aside`, `NO TRADE`).
      - Dynamic Context Message:
        - When experimental paper trading is enabled: explains that experimental paper execution is active with virtual risk controls, but consensus forecast indicates neutral conditions so the ticket stands aside.
        - When experimental paper trading is blocked: explains that virtual risk controls (capital, max positions, loss limits) must be configured.
-  2. **Instrument Selector (`<InstrumentSelector />`)**:
-     - Global selector card showing detailed metadata for the selected instrument:
-       - Real-time exchange source (NSE / BSE / MCX).
-       - Active trading hours (e.g., `09:15 AM – 03:30 PM IST`).
-       - Data freshness status (`LIVE` or `CLOSED_SESSION_VALID`).
-       - Supported forecast horizons (`1h`, `4h`, `1d`, `5d`).
-       - Model validation status (`Paper Ready` / `Validation Required`).
+  2. **Quick Desk Shortcuts**:
+     - `🤖 Open 12-Agent Analysis Desk →` (`/analysis`): Opens the full 12-agent consensus and options recommendation desk.
+     - `⚡ Live & Auto Trading →` (`/live`): Opens the live paper/auto execution and outcome evaluation desk.
+     - `📈 Statistical Forecasts & Accuracy →` (`/forecast`): Opens the multi-horizon quantitative forecast and Brier calibration desk.
+     - `🎯 Options Chain & Greeks →` (`/options`): Opens the live strike matrix and Black-Scholes Greeks workstation.
   3. **Multi-Instrument Overview Card (`<MultiInstrumentOverviewCard />`)**:
      - 3-card comparison grid for NIFTY 50, SENSEX, and CRUDEOIL MINI.
-     - Displays Spot LTP, Day Change (pts & %), Session Phase, and 52-week High/Low boundaries.
-  4. **Instrument Forecast Card (`<InstrumentForecastCard />`)**:
-     - Multi-horizon directional forecasts (1-hour, 4-hour, 1-day, 5-day).
-     - Calibrated Up/Down probabilities, expected return (basis points), and model lineage.
-  5. **Trade Ticket (`<TradeTicket />`)**:
+     - Displays Spot LTP, Day Change (pts & %), Session Phase, and multi-horizon consensus forecast badges.
+  4. **Trade Ticket (`<TradeTicket />`)**:
      - Order ticket layout showing current recommendation (`STAND ASIDE`).
      - Live Spot ticker reference showing current Groww LTP and daily OHLC (Open, High, Low, Close).
      - Metadata list: Side, Structure, Size, Expected Net, Paper Capital, and Paper Book status (`Enabled` / `Blocked`).
@@ -168,33 +163,30 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
        - Displays `No eligible paper trade — Consensus forecast indicates neutral market conditions (standing aside). No trade signal qualifies under virtual risk filters.` when paper trading is enabled without an active directional edge.
        - Displays `Paper execution blocked — Virtual account controls require configuration (risk capital, position limits, loss fraction).` when virtual controls are missing.
      - **Blocker List (`<BlockerList />`)**: Shows active gate blockers. When experimental paper execution is enabled, filters out production model approval gates and shows only active experimental blockers.
-  6. **Tape Snapshot (`<Snapshot />`)**:
-     - Live market tape featuring 10 domestic and global benchmarks: NIFTY, SENSEX, CRUDE OIL, INDIA VIX, S&P 500, NASDAQ, DOW JONES, US VIX, BRENT, USD/INR.
-     - Live Feed Table: Underlying, Last Price, Origin (`Groww Live`), Class (`LIVE FEED`), Quality (`GOOD`), and Event Time.
-     - Collapsible Synthetic Baseline: Archive of synthetic test fixtures used for offline compliance testing.
-  7. **Live Quotes Reader (`<LiveQuotes />`)**:
-     - Direct inspection of raw quotes retrieved from Groww with domestic indices, MCX commodities, global benchmarks, and sectoral/volatility prints.
-     - `Read Groww quotes` button: Re-triggers synchronous Groww quote fetch.
-  8. **Desk Summary (`<DeskSummary />`)**:
+  5. **Desk Summary (`<DeskSummary />`)**:
      - Verified Market News: Headlines ingested from Economic Times and financial feeds.
      - Volatility & Breadth: Current India VIX level and sectoral index performance.
-     - Multi-Agent Consensus: Summary of stage 1–4 synthesis.
+     - Multi-Agent Consensus: Summary of stage 1–4 synthesis with direct link to `/analysis`.
      - Book Posture: Final risk call.
-  9. **Quarantine Ledger (`<Quarantine />`)**:
-     - Table of any candle files quarantined due to invalid timestamp formatting, clock drift, or empty payloads.
+  6. **Tape Snapshot (`<Snapshot />`)**:
+     - Live market tape featuring 10 domestic and global benchmarks: NIFTY, SENSEX, CRUDE MINI, INDIA VIX, S&P 500, NASDAQ, DOW JONES, US VIX, CRUDE OIL, USD/INR.
+     - Live Feed Table: Underlying, Last Price, Origin (`Groww Live`), Class (`LIVE FEED`), Quality (`GOOD`), and Event Time.
+     - Collapsible Synthetic Baseline: Archive of synthetic test fixtures used for offline compliance testing.
+  7. **Diagnostics Grid (`<LiveQuotes />` & `<Quarantine />`)**:
+     - **Live Quotes Reader (`<LiveQuotes />`)**: Direct inspection of raw quotes retrieved from Groww with domestic indices, MCX commodities, global benchmarks, and sectoral/volatility prints, plus `Read Groww quotes` button.
+     - **Quarantine Ledger (`<Quarantine />`)**: Table of any candle files quarantined due to invalid timestamp formatting, clock drift, or empty payloads.
 
 ---
 
 ### 4.2 Multi-Agent Analysis Desk (`/analysis`)
 - **Purpose**: Deep institutional analysis synthesizing technical regimes, order flows, macro indicators, and Bayesian uncertainty gates across 12 specialized agents.
-- **Top Controls**:
-  - `<InstrumentSelector compact={true} />`: Switch between NIFTY 50, SENSEX, and CRUDEOIL MINI.
-  - **5-Tab View Switcher** (eliminates endless vertical scrolling):
-    1. `🤖 Multi-Agent Decision Desk & Signals` (Default): Shows `V6Desk` with the core trade call and agent breakdown.
-    2. `🧠 Institutional Intelligence Hub & Greeks`: Shows `V6IntelligenceHub` with correlation matrices and Greek radar.
-    3. `📈 Multi-Horizon Statistical Forecasts`: Shows `InstrumentForecastCard` with quantitative probability models.
-    4. `📰 News Agent Web Feeds`: Shows `NewsSourcesManager` to configure, enable/disable, add, or delete web feeds scraped by the News Sentiment Agent.
-    5. `📄 Expanded View`: Displays all sections stacked sequentially.
+- **Top View Mode Navigation Bar**:
+  - Uses the sticky global header `<InstrumentSelector compact />` (no duplicate selector banners).
+  - **2 Focused View Modes + Direct Desk Links**:
+    1. `🤖 Multi-Agent Decision Desk & Signals` (Default): Shows `V6Desk` with the core trade call, 12 specialist agents, master dossier, and news wire.
+    2. `🧠 Institutional Intelligence Hub & Greeks`: Shows `V6IntelligenceHub` with correlation matrices, Greek radar, and 8-gate readiness.
+    3. `📈 Forecasts & Accuracy →` link: Navigates directly to `/forecast` for multi-horizon statistical probability distributions and out-of-sample Brier calibration.
+    4. `⚡ Live Desk →` link: Navigates directly to `/live` for automated paper trading and live contract evaluation.
 
 #### Tab 1: Multi-Agent Decision Desk (`V6Desk`)
 - **Collapsible Market Ticker Strip**:
@@ -250,11 +242,7 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
 - Institutional Sentiment Gauge synthesizing domestic news feeds.
 - Greeks Sensitivity Surface (Delta, Gamma, Theta, Vega across varying expiries).
 
-#### Tab 3: Multi-Horizon Statistical Forecasts (`InstrumentForecastCard`)
-- Multi-horizon quantitative forecast distribution across M15, H1, H4, and D1 timeframes.
-- Displays return distributions, directional probability, and calibration metrics (Brier Score).
-
-#### Tab 4: News Agent Web Feeds (`NewsSourcesManager`)
+#### Embedded News Agent Web Feeds (`NewsSourcesManager` inside `V6Desk` -> `📰 Headlines & News Wire`)
 - **Purpose**: Gives operators granular control over which external web portals and RSS feeds the News Sentiment Agent reads for market intelligence.
 - **Top Metrics & Global Controls**:
   - `Feed Count Badge`: Displays current active feeds versus total configured (e.g., `5/5 Active`).
