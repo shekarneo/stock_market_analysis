@@ -243,9 +243,9 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
 #### Embedded News Agent Web Feeds (`NewsSourcesManager` inside `V6Desk` -> `📰 Headlines & News Wire`)
 - **Purpose**: Gives operators granular control over which external web portals and RSS feeds the News Sentiment Agent reads for market intelligence.
 - **Top Metrics & Global Controls**:
-  - `Feed Count Badge`: Displays current active feeds versus total configured (e.g., `5/5 Active`).
+  - `Feed Count Badge`: Displays current active feeds versus total configured (e.g., `11/11 Active`).
   - `+ Add Feed Link` button: Toggles the inline custom link addition form.
-  - `↺ Reset Defaults` button: Reverts the feed configuration back to the 5 baseline financial feeds (Economic Times, Mint, Business Standard, The Hindu, Moneycontrol) and reenables all. Requires explicit confirmation dialog.
+  - `↺ Reset Defaults` button: Reverts the feed configuration back to the 11 baseline financial feeds (Economic Times Markets, ET Stocks, ET Commodities, Mint, Business Standard, The Hindu, The Hindu BusinessLine, CNBC-TV18, NDTV Profit, Business Today, Moneycontrol) and reenables all. Requires explicit confirmation dialog.
   - `↻ Fetch Live Articles Now` button: Triggers immediate multi-source RSS scraping and article ingestion across all active feeds, refreshing sentiment scores in real-time.
 - **Add Feed Link Form**:
   - `Feed / Publication Name` input (e.g., `Reuters India Equities`): Human-readable source label.

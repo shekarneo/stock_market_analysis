@@ -125,7 +125,7 @@ export default function NewsSourcesManager({ onNewsUpdated }) {
   }
 
   async function handleReset() {
-    if (!window.confirm("Reset all news sources back to the 5 default feeds? Any custom links will be removed and default feeds will be re-enabled.")) return;
+    if (!window.confirm("Reset all news sources back to the default feeds? Any custom links will be removed and default feeds will be re-enabled.")) return;
     setLoading(true);
     setError("");
     setNotice("");
