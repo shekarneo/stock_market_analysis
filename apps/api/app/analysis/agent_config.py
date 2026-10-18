@@ -40,6 +40,7 @@ class SingleAgentConfig(BaseModel):
     timeout_seconds: float = Field(default=15.0, ge=1.0, le=60.0)
     fallback_provider: str | None = None
     fallback_model: str | None = None
+    auto_reroute: bool = True
     description: str = ""
 
     @model_validator(mode="before")
@@ -63,11 +64,12 @@ class SingleAgentConfig(BaseModel):
         return out
 
 
-
 class MultiAgentSystemConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     version: str = "v6.18.0"
     updated_at: str | None = None
+    enable_live_llm: bool = True
+    auto_reroute_available_models: bool = True
     agents: dict[str, SingleAgentConfig]
 
 

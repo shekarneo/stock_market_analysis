@@ -704,7 +704,7 @@ Accessible via the collapsible `Tools Show (7) ▾` toggle in the left navigatio
 - **Confirmation Dialog for Credential Removal**:
   - When clicking `Remove` on any card, a focused modal dialog opens explaining that the action is permanent, highlighting the alternative to use `Disconnect` instead, and offering `Cancel` or `Permanently Delete Credentials`.
 - **Independently Configurable AI Agents (LangGraph)**:
-  - Configures distinct LLM providers and hyperparameters across 8 specialized multi-agent roles (`market_data_analyst`, `technical_analyst`, `global_macro_analyst`, `news_event_analyst`, `options_analyst`, `quant_forecast_analyst`, `risk_uncertainty_analyst`, `final_decision_agent`):
+  - Configures distinct LLM providers, live callability routing, and hyperparameters across 8 specialized multi-agent roles (`market_data_analyst`, `technical_analyst`, `global_macro_analyst`, `news_event_analyst`, `options_analyst`, `quant_forecast_analyst`, `risk_uncertainty_analyst`, `final_decision_agent`):
     1. `Market Data Analyst`: Ingests and verifies OHLCV ticks.
     2. `Technical Analyst`: Momentum, support/resistance, and volume oscillators.
     3. `Global Macro Analyst`: Currency pairs (USD/INR), treasury yields, and crude oil.
@@ -713,14 +713,29 @@ Accessible via the collapsible `Tools Show (7) ▾` toggle in the left navigatio
     6. `Quant Forecast Analyst`: Probabilistic ML model calibration and Brier metrics.
     7. `Risk & Uncertainty Analyst`: Stress testing and tail-risk gating.
     8. `Final Decision Agent`: Master consensus arbitrator enforcing fail-closed trade safety.
-  - `Active Provider`: Select `OpenAI` (`openai`) or `Google Gemini` (`gemini`) per role.
-  - `Model` (`cfg.model`): Specify canonical model identifier (e.g. `gemini-flash-latest`, `gemini-flash-lite-latest`, `gemini-3.8-flash`, `gemini-3.1-flash-lite`, `gpt-4o`, `gpt-4o-mini`, `o1`, `gemini-2.5-flash`, `gemini-1.5-pro`).
-  - `Temperature` (`cfg.temperature`): Float input (`0.0` to `2.0`, step `0.05`) controlling deterministic vs. creative output.
-  - `Max Tokens` (`cfg.max_tokens`): Output token limit (`100` to `8000`, step `100`).
-  - `Fallback Provider & Model` (`cfg.fallback_provider`, `cfg.fallback_model`): Automatic failover provider and model when primary provider faces rate limits or outage.
-  - `Enabled Checkbox` (`cfg.enabled`): Toggle specialist agent participation in the analysis graph.
-  - `Save Agent Settings` button: Persists agent matrix to `PUT /api/analysis/agents/config` using the canonical `SingleAgentConfig` schema (`model`, `max_tokens`, `fallback_model`).
-  - `Reset to Defaults` button: Restores default LangGraph configuration (`POST /api/analysis/agents/reset`).
+  - **Global Routing & Execution Controls Bar**:
+    - `Enable Live LLM Agent Execution` checkbox (`agentsConfig.enable_live_llm`): Controls whether the 8 specialist agents execute live OpenAI/Gemini completions (`LLM` / `LLM_FALLBACK`) or stay in offline `DETERMINISTIC_RULE` mode. Syncs `IMM_ENABLE_AGENT_LLM` in the running backend server when saved.
+    - `Auto-Reroute to Available Models on Quota/Billing Failure` checkbox (`agentsConfig.auto_reroute_available_models`): Globally enables automatic cascading across verified available models (`gemini-flash-lite-latest`, `gemini-3.1-flash-lite`, `gemini-flash-latest`, `gpt-4o-mini`, `gpt-4o`) whenever a configured primary or fallback model fails due to quota exhaustion (`429`), account billing exhaustion (`credit_balance_exhausted`), or model unavailability (`404`/`503`).
+    - `Quick Bulk Model Assignment` buttons:
+      - `All → Gemini Flash-Lite (Verified Callable)`: Sets all 8 agents to `gemini/gemini-flash-lite-latest` with fallback `gemini/gemini-3.1-flash-lite` and enables `auto_reroute`.
+      - `All → OpenAI GPT-4o-mini + Gemini Failover`: Sets all 8 agents to `openai/gpt-4o-mini` with fallback `gemini/gemini-flash-lite-latest` and enables `auto_reroute`.
+  - **Header Action Buttons**:
+    - `Check Callable Models` button: Sends `POST /api/analysis/agents/check-models` (`{ auto_apply: false }`) to probe live completion callability across candidate OpenAI and Google Gemini models and renders the **Live Model Callability Matrix**.
+    - `Auto-Assign Available Models` button: Sends `POST /api/analysis/agents/check-models` (`{ auto_apply: true }`), probes all candidate models, automatically assigns verified callable models as primary and fallback across any agent whose current model is uncallable, enables `auto_reroute_available_models`, and persists the configuration to `var/config/agent_system_config.json`.
+    - `Reset to Defaults` button: Restores default LangGraph configuration (`POST /api/analysis/agents/reset`).
+    - `Save Agent Settings` button: Persists the full `MultiAgentSystemConfig` (`enable_live_llm`, `auto_reroute_available_models`, and all 8 `SingleAgentConfig` entries) to `PUT /api/analysis/agents/config`.
+  - **Live Model Callability Matrix Panel** (rendered after clicking `Check Callable Models` or `Auto-Assign Available Models`):
+    - Displays each probed model (`GEMINI · gemini-flash-lite-latest`, `GEMINI · gemini-3.1-flash-lite`, `GEMINI · gemini-flash-latest`, `GEMINI · gemini-2.5-flash`, `OPENAI · gpt-4o-mini`, `OPENAI · gpt-4o`) with a green `CALLABLE (<latency> ms)` status or red `BLOCKED (<error_code>)` status.
+    - `Use for All` button on each callable model card: One-click assigns that verified callable provider/model across all 8 specialist agents.
+  - **Per-Agent Configuration Table Columns**:
+    - `Active Provider`: Dropdown (`OpenAI` or `Google Gemini`) per role; switching provider automatically selects that provider's default callable model.
+    - `Model ID` (`cfg.model`): Dual control featuring a provider-aware `<select>` dropdown populated from the active provider's model catalog (`geminiModels` or `openaiModels`) paired with a synchronized text `<input>` for custom/fine-tuned model IDs.
+    - `Temperature` (`cfg.temperature`): Float input (`0.0` to `2.0`, step `0.05`) controlling deterministic vs. creative output.
+    - `Max Tokens` (`cfg.max_tokens`): Output token limit (`100` to `8000`, step `100`).
+    - `Fallback Provider` (`cfg.fallback_provider`): Dropdown (`None`, `OpenAI`, `Google Gemini`) specifying the failover provider.
+    - `Fallback Model` (`cfg.fallback_model`): Dual control with a provider-aware `<select>` dropdown and custom text `<input>` for the failover model ID.
+    - `Auto-Reroute` checkbox (`cfg.auto_reroute`): Per-agent toggle allowing the agent to automatically cascade to available models in the registry pool if both its primary and fallback models fail.
+    - `Enabled` checkbox (`cfg.enabled`): Toggle specialist agent participation in the analysis graph.
   - **LangGraph Multi-Agent Dynamic Consensus Card (`<V6ConsensusCard />`)**:
     - `Run Consensus Cycle` button: Sends `POST /api/market-analysis` and immediately binds the returned report (`consensus` and `agent_outputs`) into local component state without requiring a page reload or falling back to hardcoded mock metrics.
     - Displays real-time `Directional Dispersion Index (D)` (`disagreement_index`), `Composite Epistemic Uncertainty (U)` (`epistemic_uncertainty`), `Consensus Directional Bias` (`directional_recommendation` and `consensus_score`), and `Active Risk Vetoes` (`vetoes` / `reason_codes`).

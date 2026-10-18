@@ -380,6 +380,58 @@ def test_agent_config_legacy_frontend_keys_normalized():
     assert cfg.model == "gpt-4o"
     assert cfg.max_tokens == 1200
     assert cfg.fallback_model == "gemini-1.5-flash"
+    assert cfg.auto_reroute is True
+
+
+def test_auto_reroute_to_available_models_on_quota_exhaustion():
+    """Verify generate_with_fallback auto-reroutes to available Gemini model when OpenAI fails with credit_balance_exhausted even without an explicit fallback configured."""
+    from app.analysis.ai_providers import AIProviderRegistry, GeminiModelProvider, OpenAIModelProvider
+
+    AIProviderRegistry._providers.clear()
+    fail_openai = OpenAIModelProvider(
+        caller=_make_mock_http_caller(
+            status_code=429,
+            body={"error": {"message": "No credits remaining", "code": "credit_balance_exhausted"}},
+        ),
+        api_key="sk-test",
+    )
+    ok_gemini = GeminiModelProvider(
+        caller=_make_mock_http_caller(
+            status_code=200,
+            body={
+                "candidates": [
+                    {
+                        "finishReason": "STOP",
+                        "content": {
+                            "parts": [
+                                {"text": '{"directional_bias": "NEUTRAL", "confidence": 0.61, "findings": ["Auto-rerouted to Gemini Flash-Lite."], "limitations": []}'}
+                            ]
+                        },
+                    }
+                ],
+                "usageMetadata": {"promptTokenCount": 30, "candidatesTokenCount": 18, "totalTokenCount": 48},
+            },
+        ),
+        api_key="AIzaSyTest",
+    )
+    AIProviderRegistry.register_provider("openai", fail_openai)
+    AIProviderRegistry.register_provider("gemini", ok_gemini)
+    try:
+        res = AIProviderRegistry.generate_with_fallback(
+            primary_provider="openai",
+            primary_model="gpt-4o-mini",
+            messages=[{"role": "user", "content": "test"}],
+            fallback_provider=None,
+            fallback_model=None,
+            auto_reroute=True,
+        )
+        assert res.ok is True
+        assert res.provider == "gemini"
+        assert res.model == "gemini-flash-lite-latest"
+        assert res.fallback_used is True
+        assert res.primary_error_code == "credit_balance_exhausted"
+    finally:
+        AIProviderRegistry._providers.clear()
 
 
 def test_leak_free_registry_and_historical_feature_provenance(db):

@@ -568,6 +568,32 @@ class AIProviderRegistry:
 
     _providers: dict[str, BaseAIModelProvider] = {}
 
+    AUTO_REROUTE_CANDIDATES: list[tuple[str, str]] = [
+        ("gemini", "gemini-flash-lite-latest"),
+        ("gemini", "gemini-3.1-flash-lite"),
+        ("gemini", "gemini-flash-latest"),
+        ("openai", "gpt-4o-mini"),
+        ("openai", "gpt-4o"),
+    ]
+
+    ACCOUNT_WIDE_ERROR_CODES: set[str] = {
+        "credit_balance_exhausted",
+        "insufficient_quota",
+        "billing_not_active",
+        "MISSING_API_KEY",
+        "invalid_api_key",
+        "HTTP_401",
+    }
+
+    @staticmethod
+    def _norm_provider(name: str) -> str:
+        clean = (name or "").lower().strip()
+        if clean in {"google", "gemini"}:
+            return "gemini"
+        if clean in {"openai", "chatgpt"}:
+            return "openai"
+        return clean
+
     @classmethod
     def get_provider(cls, name: str) -> BaseAIModelProvider:
         clean = name.lower().strip()
@@ -599,8 +625,15 @@ class AIProviderRegistry:
         timeout: float = 15.0,
         fallback_provider: str | None = None,
         fallback_model: str | None = None,
+        auto_reroute: bool = False,
     ) -> AICompletionResult:
-        """Attempt completion with primary provider/model; fall back cleanly if configured and needed."""
+        """Attempt completion with primary provider/model; fall back cleanly or auto-reroute to available models."""
+        attempted: set[tuple[str, str]] = set()
+        hard_failed_providers: set[str] = set()
+
+        norm_primary = cls._norm_provider(primary_provider)
+        attempted.add((norm_primary, primary_model))
+
         p_provider = cls.get_provider(primary_provider)
         res = p_provider.generate(
             messages=messages,
@@ -610,28 +643,171 @@ class AIProviderRegistry:
             timeout=timeout,
         )
 
-        if res.ok or not fallback_provider or not fallback_model:
+        if res.ok:
             return res
 
-        log.warning(
-            "Primary AI provider %s/%s failed (%s: %s). Attempting configured fallback %s/%s",
-            primary_provider,
-            primary_model,
-            res.error_code,
-            res.error_message,
-            fallback_provider,
-            fallback_model,
-        )
-        fb_provider = cls.get_provider(fallback_provider)
-        fb_res = fb_provider.generate(
-            messages=messages,
-            model=fallback_model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout=timeout,
-        )
-        fb_res.fallback_used = True
-        fb_res.primary_error_code = res.error_code
-        fb_res.primary_error_message = res.error_message
-        return fb_res
+        if (res.error_code or "") in cls.ACCOUNT_WIDE_ERROR_CODES:
+            hard_failed_providers.add(norm_primary)
+
+        last_res = res
+
+        if fallback_provider and fallback_model:
+            norm_fb = cls._norm_provider(fallback_provider)
+            attempted.add((norm_fb, fallback_model))
+            log.warning(
+                "Primary AI provider %s/%s failed (%s: %s). Attempting configured fallback %s/%s",
+                primary_provider,
+                primary_model,
+                res.error_code,
+                res.error_message,
+                fallback_provider,
+                fallback_model,
+            )
+            fb_provider = cls.get_provider(fallback_provider)
+            fb_res = fb_provider.generate(
+                messages=messages,
+                model=fallback_model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout,
+            )
+            fb_res.fallback_used = True
+            fb_res.primary_error_code = res.error_code
+            fb_res.primary_error_message = res.error_message
+            if fb_res.ok:
+                return fb_res
+            if (fb_res.error_code or "") in cls.ACCOUNT_WIDE_ERROR_CODES:
+                hard_failed_providers.add(norm_fb)
+            last_res = fb_res
+
+        if not auto_reroute:
+            return last_res
+
+        # Auto-reroute across available working models when enabled
+        is_standard_provider = norm_primary in {"openai", "gemini"}
+        if not is_standard_provider and not cls._providers:
+            return last_res
+
+        for cand_prov_name, cand_model in cls.AUTO_REROUTE_CANDIDATES:
+            norm_cand = cls._norm_provider(cand_prov_name)
+            if (norm_cand, cand_model) in attempted:
+                continue
+            if norm_cand in hard_failed_providers:
+                continue
+            # If running under unit test mocks where only specific providers were registered, respect mock scope
+            if cls._providers and norm_cand not in cls._providers and cand_prov_name not in cls._providers:
+                if any(k not in {"openai", "gemini", "google", "chatgpt"} for k in cls._providers):
+                    continue
+
+            attempted.add((norm_cand, cand_model))
+            log.warning(
+                "Auto-rerouting AI completion after %s/%s failure (%s) -> trying available candidate %s/%s",
+                primary_provider,
+                primary_model,
+                res.error_code,
+                cand_prov_name,
+                cand_model,
+            )
+            try:
+                cand_provider = cls.get_provider(cand_prov_name)
+                cand_res = cand_provider.generate(
+                    messages=messages,
+                    model=cand_model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    timeout=timeout,
+                )
+            except Exception as exc:
+                log.warning("Auto-reroute candidate %s/%s raised %s", cand_prov_name, cand_model, exc)
+                continue
+
+            cand_res.fallback_used = True
+            cand_res.primary_error_code = res.error_code
+            cand_res.primary_error_message = res.error_message
+            if cand_res.ok:
+                return cand_res
+            if (cand_res.error_code or "") in cls.ACCOUNT_WIDE_ERROR_CODES:
+                hard_failed_providers.add(norm_cand)
+            last_res = cand_res
+
+        return last_res
+
+    @classmethod
+    def probe_callable_models(cls, timeout: float = 8.0) -> dict[str, Any]:
+        """Probe candidate OpenAI and Gemini models to verify live callability and quota availability."""
+        probe_candidates: list[tuple[str, str]] = [
+            ("gemini", "gemini-flash-lite-latest"),
+            ("gemini", "gemini-3.1-flash-lite"),
+            ("gemini", "gemini-flash-latest"),
+            ("gemini", "gemini-2.5-flash"),
+            ("openai", "gpt-4o-mini"),
+            ("openai", "gpt-4o"),
+        ]
+        probe_messages = [
+            {"role": "system", "content": 'Respond strictly with JSON: {"ok": true}'},
+            {"role": "user", "content": '{"ping": 1}'},
+        ]
+        results: list[dict[str, Any]] = []
+        callable_models: list[dict[str, Any]] = []
+        blocked_providers: dict[str, tuple[str, str]] = {}
+
+        for prov_name, model_id in probe_candidates:
+            norm_p = cls._norm_provider(prov_name)
+            if norm_p in blocked_providers:
+                err_c, err_m = blocked_providers[norm_p]
+                results.append(
+                    {
+                        "provider": norm_p,
+                        "model": model_id,
+                        "callable": False,
+                        "latency_ms": 0.0,
+                        "error_code": err_c,
+                        "error_message": err_m,
+                    }
+                )
+                continue
+
+            try:
+                provider = cls.get_provider(norm_p)
+                res = provider.generate(
+                    messages=probe_messages,
+                    model=model_id,
+                    temperature=0.0,
+                    max_tokens=30,
+                    timeout=timeout,
+                )
+                item = {
+                    "provider": norm_p,
+                    "model": model_id,
+                    "callable": bool(res.ok),
+                    "latency_ms": float(res.latency_ms or 0.0),
+                    "error_code": res.error_code,
+                    "error_message": res.error_message,
+                }
+                results.append(item)
+                if res.ok:
+                    callable_models.append(item)
+                elif (res.error_code or "") in cls.ACCOUNT_WIDE_ERROR_CODES:
+                    blocked_providers[norm_p] = (str(res.error_code), str(res.error_message or ""))
+            except Exception as exc:
+                results.append(
+                    {
+                        "provider": norm_p,
+                        "model": model_id,
+                        "callable": False,
+                        "latency_ms": 0.0,
+                        "error_code": "PROBE_EXCEPTION",
+                        "error_message": str(exc)[:160],
+                    }
+                )
+
+        best_callable = callable_models[0] if callable_models else None
+        secondary_callable = callable_models[1] if len(callable_models) > 1 else best_callable
+        return {
+            "probed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "results": results,
+            "callable_models": callable_models,
+            "best_callable": best_callable,
+            "secondary_callable": secondary_callable,
+        }
 

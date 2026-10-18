@@ -128,20 +128,81 @@ def put_agents_config(
     session: Session = Depends(get_db),
     settings: Settings = Depends(_settings),
 ) -> dict:
+    import os
     principal = require_csrf(request, settings)
     from app.analysis.agent_config import MultiAgentSystemConfig, save_agent_system_config
     config = MultiAgentSystemConfig(**body)
     saved = save_agent_system_config(config)
+    os.environ["IMM_ENABLE_AGENT_LLM"] = "1" if saved.enable_live_llm else "0"
     session.add(
         AuditEvent(
             actor=principal.get("sub", "operator"),
             action="agents.config.update",
             entity="multi_agent_system",
             before=None,
-            after={"version": saved.version, "agent_count": len(saved.agents)},
+            after={
+                "version": saved.version,
+                "agent_count": len(saved.agents),
+                "enable_live_llm": saved.enable_live_llm,
+                "auto_reroute_available_models": saved.auto_reroute_available_models,
+            },
         )
     )
     return saved.model_dump()
+
+
+@router.post("/api/analysis/agents/check-models")
+def post_check_callable_models(
+    request: Request,
+    body: dict | None = None,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    from app.analysis.agent_config import load_agent_system_config, save_agent_system_config
+    from app.analysis.ai_providers import AIProviderRegistry
+
+    payload = body or {}
+    auto_apply = bool(payload.get("auto_apply", False))
+    probe = AIProviderRegistry.probe_callable_models()
+
+    cfg = load_agent_system_config()
+    if auto_apply and probe.get("best_callable"):
+        best = probe["best_callable"]
+        sec = probe.get("secondary_callable") or best
+        callable_set = {(m["provider"], m["model"]) for m in probe.get("callable_models", [])}
+        cfg.auto_reroute_available_models = True
+        cfg.enable_live_llm = True
+        for role, agent in cfg.agents.items():
+            norm_p = "gemini" if agent.provider in {"google", "gemini"} else agent.provider
+            if (norm_p, agent.model) not in callable_set:
+                agent.provider = best["provider"]
+                agent.model = best["model"]
+            norm_fb = "gemini" if (agent.fallback_provider or "") in {"google", "gemini"} else (agent.fallback_provider or "")
+            if not agent.fallback_provider or not agent.fallback_model or (norm_fb, agent.fallback_model) not in callable_set:
+                agent.fallback_provider = sec["provider"]
+                agent.fallback_model = sec["model"]
+            agent.auto_reroute = True
+        cfg = save_agent_system_config(cfg)
+        session.add(
+            AuditEvent(
+                actor=principal.get("sub", "operator"),
+                action="agents.config.auto_assign_callable_models",
+                entity="multi_agent_system",
+                before=None,
+                after={
+                    "best_callable": best,
+                    "secondary_callable": sec,
+                    "callable_count": len(probe.get("callable_models", [])),
+                },
+            )
+        )
+
+    return {
+        "probe": probe,
+        "config": cfg.model_dump(),
+        "auto_applied": bool(auto_apply and probe.get("best_callable")),
+    }
 
 
 @router.post("/api/analysis/agents/reset")

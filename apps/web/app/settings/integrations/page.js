@@ -148,6 +148,8 @@ export default function IntegrationsPage() {
   const [geminiDraft, setGeminiDraft] = useState(null);
   const [agentsConfig, setAgentsConfig] = useState(null);
   const [agentsBusy, setAgentsBusy] = useState(false);
+  const [modelProbeResult, setModelProbeResult] = useState(null);
+  const [probingModels, setProbingModels] = useState(false);
   const [compResult, setCompResult] = useState(null);
   const [compBusy, setCompBusy] = useState(false);
   const [confirmEnable, setConfirmEnable] = useState(false);
@@ -768,6 +770,65 @@ export default function IntegrationsPage() {
     }
   }
 
+  async function checkCallableModels(autoApply = false) {
+    setProbingModels(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/analysis/agents/check-models", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-csrf-token": csrf() },
+        body: JSON.stringify({ auto_apply: autoApply }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setError(`Model callability check failed: ${data.detail || data.message || "Unknown error"}`);
+      } else {
+        setModelProbeResult(data.probe || null);
+        if (data.config) {
+          setAgentsConfig(data.config);
+        }
+        const callableCount = data.probe?.callable_models?.length || 0;
+        if (autoApply && data.auto_applied) {
+          const best = data.probe?.best_callable;
+          setNotice(
+            `Probed models: ${callableCount} callable. Auto-assigned ${best?.provider}/${best?.model} and saved agent configuration.`
+          );
+        } else {
+          setNotice(`Model callability probe complete: ${callableCount} callable model(s) verified.`);
+        }
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setProbingModels(false);
+    }
+  }
+
+  function applyBulkModelToAgents(provider, model, fallbackProvider = "gemini", fallbackModel = "gemini-3.1-flash-lite") {
+    setAgentsConfig((prev) => {
+      if (!prev || !prev.agents) return prev;
+      const nextAgents = {};
+      for (const [role, cfg] of Object.entries(prev.agents)) {
+        nextAgents[role] = {
+          ...cfg,
+          provider,
+          model,
+          fallback_provider: fallbackProvider,
+          fallback_model: fallbackModel,
+          auto_reroute: true,
+        };
+      }
+      return {
+        ...prev,
+        enable_live_llm: true,
+        auto_reroute_available_models: true,
+        agents: nextAgents,
+      };
+    });
+    setNotice(`Assigned ${provider}/${model} (fallback: ${fallbackProvider}/${fallbackModel}) across all 8 agents. Click "Save Agent Settings" to persist.`);
+  }
+
   async function runModelComparison() {
     setCompBusy(true);
     setError("");
@@ -1121,14 +1182,30 @@ export default function IntegrationsPage() {
       {/* INDEPENDENT AI AGENTS CONFIGURATION */}
       {agentsConfig && agentsConfig.agents ? (
         <section style={{ marginTop: "32px", background: "var(--card-bg, #1e1e24)", border: "1px solid var(--border-color, #333)", borderRadius: "8px", padding: "20px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px", marginBottom: "16px" }}>
             <div>
               <h2 style={{ margin: 0, fontSize: "20px" }}>Independently Configurable AI Agents (LangGraph)</h2>
               <p style={{ margin: "4px 0 0 0", fontSize: "13px", color: "var(--text-muted, #aaa)" }}>
-                Config Version {agentsConfig.version}. Configure distinct AI model providers and parameters per specialist role.
+                Config Version {agentsConfig.version}. Configure distinct AI model providers, live model callability routing, and fallback parameters per specialist role.
               </p>
             </div>
-            <div style={{ display: "flex", gap: "8px" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+              <button
+                type="button"
+                onClick={() => checkCallableModels(false)}
+                disabled={probingModels || agentsBusy}
+                style={{ padding: "6px 12px" }}
+              >
+                {probingModels ? "Probing Models..." : "Check Callable Models"}
+              </button>
+              <button
+                type="button"
+                onClick={() => checkCallableModels(true)}
+                disabled={probingModels || agentsBusy}
+                style={{ padding: "6px 12px", background: "#1e3a2f", borderColor: "#2e7d32", color: "#a5d6a7" }}
+              >
+                {probingModels ? "Assigning..." : "Auto-Assign Available Models"}
+              </button>
               <button type="button" onClick={resetAgentConfig} disabled={agentsBusy} style={{ padding: "6px 14px" }}>
                 Reset to Defaults
               </button>
@@ -1137,6 +1214,106 @@ export default function IntegrationsPage() {
               </button>
             </div>
           </div>
+
+          {/* GLOBAL ROUTING & EXECUTION CONTROLS */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "12px", marginBottom: "16px", background: "#25252d", padding: "14px", borderRadius: "6px", border: "1px solid #343440" }}>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: "10px", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={agentsConfig.enable_live_llm !== false}
+                onChange={(e) => setAgentsConfig((prev) => ({ ...prev, enable_live_llm: e.target.checked }))}
+                style={{ marginTop: "3px" }}
+              />
+              <div>
+                <div style={{ fontWeight: "bold", fontSize: "13px" }}>Enable Live LLM Agent Execution</div>
+                <div style={{ fontSize: "12px", color: "var(--text-muted, #aaa)", marginTop: "2px" }}>
+                  Invoke configured OpenAI/Gemini models during multi-agent analysis. When unchecked, agents run in offline deterministic rule mode.
+                </div>
+              </div>
+            </label>
+
+            <label style={{ display: "flex", alignItems: "flex-start", gap: "10px", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={agentsConfig.auto_reroute_available_models !== false}
+                onChange={(e) => setAgentsConfig((prev) => ({ ...prev, auto_reroute_available_models: e.target.checked }))}
+                style={{ marginTop: "3px" }}
+              />
+              <div>
+                <div style={{ fontWeight: "bold", fontSize: "13px" }}>Auto-Reroute to Available Models on Quota/Billing Failure</div>
+                <div style={{ fontSize: "12px", color: "var(--text-muted, #aaa)", marginTop: "2px" }}>
+                  Automatically cascades across verified working models (<code>gemini-flash-lite-latest</code>, <code>gemini-3.1-flash-lite</code>, <code>gemini-flash-latest</code>, <code>gpt-4o-mini</code>) if primary or fallback fails.
+                </div>
+              </div>
+            </label>
+
+            <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: "6px" }}>
+              <span style={{ fontSize: "12px", fontWeight: "bold", color: "#ccc" }}>Quick Bulk Model Assignment:</span>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                <button
+                  type="button"
+                  onClick={() => applyBulkModelToAgents("gemini", "gemini-flash-lite-latest", "gemini", "gemini-3.1-flash-lite")}
+                  style={{ fontSize: "11px", padding: "4px 8px" }}
+                >
+                  All → Gemini Flash-Lite (Verified Callable)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => applyBulkModelToAgents("openai", "gpt-4o-mini", "gemini", "gemini-flash-lite-latest")}
+                  style={{ fontSize: "11px", padding: "4px 8px" }}
+                >
+                  All → OpenAI GPT-4o-mini + Gemini Failover
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* LIVE CALLABILITY PROBE RESULTS */}
+          {modelProbeResult && Array.isArray(modelProbeResult.results) ? (
+            <div style={{ marginBottom: "16px", background: "#18181f", border: "1px solid #333", borderRadius: "6px", padding: "12px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                <strong style={{ fontSize: "13px" }}>
+                  Live Model Callability Matrix ({modelProbeResult.callable_models?.length || 0} / {modelProbeResult.results.length} Callable)
+                </strong>
+                <span style={{ fontSize: "11px", color: "#888" }}>Probed at {when(modelProbeResult.probed_at)}</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "8px" }}>
+                {modelProbeResult.results.map((item) => (
+                  <div
+                    key={`${item.provider}-${item.model}`}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: "8px 10px",
+                      borderRadius: "4px",
+                      background: item.callable ? "rgba(46, 125, 50, 0.12)" : "rgba(198, 40, 40, 0.12)",
+                      border: `1px solid ${item.callable ? "#2e7d32" : "#c62828"}`,
+                      fontSize: "12px",
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: "bold" }}>{item.provider.toUpperCase()} · {item.model}</div>
+                      <div style={{ fontSize: "11px", color: item.callable ? "#81c784" : "#ef9a9a" }}>
+                        {item.callable
+                          ? `CALLABLE (${Math.round(item.latency_ms)} ms)`
+                          : `BLOCKED (${item.error_code || "UNAVAILABLE"})`}
+                      </div>
+                    </div>
+                    {item.callable ? (
+                      <button
+                        type="button"
+                        onClick={() => applyBulkModelToAgents(item.provider, item.model, "gemini", "gemini-3.1-flash-lite")}
+                        style={{ fontSize: "11px", padding: "3px 8px" }}
+                      >
+                        Use for All
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
@@ -1149,84 +1326,180 @@ export default function IntegrationsPage() {
                   <th style={{ padding: "8px" }}>Max Tokens</th>
                   <th style={{ padding: "8px" }}>Fallback Provider</th>
                   <th style={{ padding: "8px" }}>Fallback Model</th>
-                  <th style={{ padding: "8px" }}>Enabled</th>
+                  <th style={{ padding: "8px", textAlign: "center" }}>Auto-Reroute</th>
+                  <th style={{ padding: "8px", textAlign: "center" }}>Enabled</th>
                 </tr>
               </thead>
               <tbody>
-                {Object.entries(agentsConfig.agents).map(([role, cfg]) => (
-                  <tr key={role} style={{ borderBottom: "1px solid #2a2a30" }}>
-                    <td style={{ padding: "8px", fontWeight: "bold" }}>
-                      {cfg.display_name || role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
-                    </td>
-                    <td style={{ padding: "8px" }}>
-                      <select
-                        value={cfg.provider === "google" ? "gemini" : (cfg.provider || "openai")}
-                        onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], provider: e.target.value } } }))}
-                        style={{ padding: "4px 6px" }}
-                      >
-                        <option value="openai">OpenAI</option>
-                        <option value="gemini">Google Gemini</option>
-                      </select>
-                    </td>
-                    <td style={{ padding: "8px" }}>
-                      <input
-                        type="text"
-                        value={cfg.model ?? cfg.model_id ?? ""}
-                        onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], model: e.target.value } } }))}
-                        style={{ width: "130px", padding: "4px 6px" }}
-                      />
-                    </td>
-                    <td style={{ padding: "8px" }}>
-                      <input
-                        type="number"
-                        step="0.05"
-                        min="0"
-                        max="2"
-                        value={cfg.temperature ?? 0}
-                        onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], temperature: parseFloat(e.target.value) || 0 } } }))}
-                        style={{ width: "60px", padding: "4px 6px" }}
-                      />
-                    </td>
-                    <td style={{ padding: "8px" }}>
-                      <input
-                        type="number"
-                        step="100"
-                        min="100"
-                        max="8000"
-                        value={cfg.max_tokens ?? cfg.max_output_tokens ?? 1000}
-                        onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], max_tokens: parseInt(e.target.value, 10) || 1000 } } }))}
-                        style={{ width: "70px", padding: "4px 6px" }}
-                      />
-                    </td>
-                    <td style={{ padding: "8px" }}>
-                      <select
-                        value={cfg.fallback_provider === "google" ? "gemini" : (cfg.fallback_provider || "")}
-                        onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], fallback_provider: e.target.value || null } } }))}
-                        style={{ padding: "4px 6px" }}
-                      >
-                        <option value="">None</option>
-                        <option value="openai">OpenAI</option>
-                        <option value="gemini">Google Gemini</option>
-                      </select>
-                    </td>
-                    <td style={{ padding: "8px" }}>
-                      <input
-                        type="text"
-                        value={cfg.fallback_model ?? cfg.fallback_model_id ?? ""}
-                        placeholder="Fallback Model"
-                        onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], fallback_model: e.target.value || null } } }))}
-                        style={{ width: "130px", padding: "4px 6px" }}
-                      />
-                    </td>
-                    <td style={{ padding: "8px", textAlign: "center" }}>
-                      <input
-                        type="checkbox"
-                        checked={Boolean(cfg.enabled)}
-                        onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], enabled: e.target.checked } } }))}
-                      />
-                    </td>
-                  </tr>
-                ))}
+                {Object.entries(agentsConfig.agents).map(([role, cfg]) => {
+                  const activeProv = cfg.provider === "google" ? "gemini" : (cfg.provider || "openai");
+                  const fbProv = cfg.fallback_provider === "google" ? "gemini" : (cfg.fallback_provider || "");
+                  const primaryCatalog = activeProv === "gemini" ? geminiModels : openaiModels;
+                  const fbCatalog = fbProv === "gemini" ? geminiModels : (fbProv === "openai" ? openaiModels : []);
+                  const currentModel = cfg.model ?? cfg.model_id ?? "";
+                  const currentFbModel = cfg.fallback_model ?? cfg.fallback_model_id ?? "";
+                  return (
+                    <tr key={role} style={{ borderBottom: "1px solid #2a2a30" }}>
+                      <td style={{ padding: "8px", fontWeight: "bold" }}>
+                        {cfg.display_name || role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                      </td>
+                      <td style={{ padding: "8px" }}>
+                        <select
+                          value={activeProv}
+                          onChange={(e) => {
+                            const nextProv = e.target.value;
+                            const defaultModel = nextProv === "gemini" ? "gemini-flash-lite-latest" : "gpt-4o-mini";
+                            setAgentsConfig((prev) => ({
+                              ...prev,
+                              agents: {
+                                ...prev.agents,
+                                [role]: {
+                                  ...prev.agents[role],
+                                  provider: nextProv,
+                                  model: defaultModel,
+                                },
+                              },
+                            }));
+                          }}
+                          style={{ padding: "4px 6px" }}
+                        >
+                          <option value="openai">OpenAI</option>
+                          <option value="gemini">Google Gemini</option>
+                        </select>
+                      </td>
+                      <td style={{ padding: "8px" }}>
+                        <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                          <select
+                            aria-label={`${role} Model Select`}
+                            value={primaryCatalog.some((m) => m.id === currentModel) ? currentModel : "__custom__"}
+                            onChange={(e) => {
+                              if (e.target.value !== "__custom__") {
+                                setAgentsConfig((prev) => ({
+                                  ...prev,
+                                  agents: { ...prev.agents, [role]: { ...prev.agents[role], model: e.target.value } },
+                                }));
+                              }
+                            }}
+                            style={{ width: "155px", padding: "4px 6px" }}
+                          >
+                            {primaryCatalog.map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {m.id}
+                              </option>
+                            ))}
+                            {!primaryCatalog.some((m) => m.id === currentModel) && currentModel ? (
+                              <option value="__custom__">{currentModel} (Custom)</option>
+                            ) : null}
+                          </select>
+                          <input
+                            type="text"
+                            value={currentModel}
+                            title="Custom or selected Model ID"
+                            onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], model: e.target.value } } }))}
+                            style={{ width: "115px", padding: "4px 6px" }}
+                          />
+                        </div>
+                      </td>
+                      <td style={{ padding: "8px" }}>
+                        <input
+                          type="number"
+                          step="0.05"
+                          min="0"
+                          max="2"
+                          value={cfg.temperature ?? 0}
+                          onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], temperature: parseFloat(e.target.value) || 0 } } }))}
+                          style={{ width: "60px", padding: "4px 6px" }}
+                        />
+                      </td>
+                      <td style={{ padding: "8px" }}>
+                        <input
+                          type="number"
+                          step="100"
+                          min="100"
+                          max="8000"
+                          value={cfg.max_tokens ?? cfg.max_output_tokens ?? 1000}
+                          onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], max_tokens: parseInt(e.target.value, 10) || 1000 } } }))}
+                          style={{ width: "70px", padding: "4px 6px" }}
+                        />
+                      </td>
+                      <td style={{ padding: "8px" }}>
+                        <select
+                          value={fbProv}
+                          onChange={(e) => {
+                            const nextFbProv = e.target.value || null;
+                            const nextFbModel = nextFbProv === "gemini" ? "gemini-flash-lite-latest" : (nextFbProv === "openai" ? "gpt-4o-mini" : null);
+                            setAgentsConfig((prev) => ({
+                              ...prev,
+                              agents: {
+                                ...prev.agents,
+                                [role]: {
+                                  ...prev.agents[role],
+                                  fallback_provider: nextFbProv,
+                                  fallback_model: prev.agents[role].fallback_model || nextFbModel,
+                                },
+                              },
+                            }));
+                          }}
+                          style={{ padding: "4px 6px" }}
+                        >
+                          <option value="">None</option>
+                          <option value="openai">OpenAI</option>
+                          <option value="gemini">Google Gemini</option>
+                        </select>
+                      </td>
+                      <td style={{ padding: "8px" }}>
+                        <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                          {fbProv ? (
+                            <select
+                              aria-label={`${role} Fallback Model Select`}
+                              value={fbCatalog.some((m) => m.id === currentFbModel) ? currentFbModel : "__custom__"}
+                              onChange={(e) => {
+                                if (e.target.value !== "__custom__") {
+                                  setAgentsConfig((prev) => ({
+                                    ...prev,
+                                    agents: { ...prev.agents, [role]: { ...prev.agents[role], fallback_model: e.target.value || null } },
+                                  }));
+                                }
+                              }}
+                              style={{ width: "155px", padding: "4px 6px" }}
+                            >
+                              {fbCatalog.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.id}
+                                </option>
+                              ))}
+                              {!fbCatalog.some((m) => m.id === currentFbModel) && currentFbModel ? (
+                                <option value="__custom__">{currentFbModel} (Custom)</option>
+                              ) : null}
+                            </select>
+                          ) : null}
+                          <input
+                            type="text"
+                            value={currentFbModel}
+                            placeholder="Fallback Model"
+                            onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], fallback_model: e.target.value || null } } }))}
+                            style={{ width: "115px", padding: "4px 6px" }}
+                          />
+                        </div>
+                      </td>
+                      <td style={{ padding: "8px", textAlign: "center" }}>
+                        <input
+                          type="checkbox"
+                          title="Auto-reroute this agent to available models if configured models fail"
+                          checked={cfg.auto_reroute !== false}
+                          onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], auto_reroute: e.target.checked } } }))}
+                        />
+                      </td>
+                      <td style={{ padding: "8px", textAlign: "center" }}>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(cfg.enabled)}
+                          onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], enabled: e.target.checked } } }))}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -71,12 +71,17 @@ def _should_invoke_llm(state: AnalysisState, cfg: SingleAgentConfig) -> bool:
     """Invoke AIProviderRegistry only when explicitly requested or when custom/mock providers are registered."""
     if state.get("enable_agent_llm") is True:
         return True
-    env_flag = (os.environ.get("IMM_ENABLE_AGENT_LLM") or os.environ.get("ENABLE_AGENT_LLM") or "").strip().lower()
-    if env_flag in {"1", "true", "yes"}:
-        return True
+    if state.get("enable_agent_llm") is False:
+        return False
     p_name = (cfg.provider or "").lower().strip()
     fb_name = (cfg.fallback_provider or "").lower().strip()
     if p_name in AIProviderRegistry._providers or (fb_name and fb_name in AIProviderRegistry._providers):
+        return True
+    sys_cfg = load_agent_system_config()
+    if sys_cfg.enable_live_llm is False:
+        return False
+    env_flag = (os.environ.get("IMM_ENABLE_AGENT_LLM") or os.environ.get("ENABLE_AGENT_LLM") or "").strip().lower()
+    if env_flag in {"1", "true", "yes"}:
         return True
     return False
 
@@ -150,6 +155,9 @@ def _finalize_agent_output(
         {"role": "user", "content": json.dumps(user_payload)},
     ]
 
+    sys_cfg = load_agent_system_config()
+    use_auto_reroute = bool(sys_cfg.auto_reroute_available_models and getattr(cfg, "auto_reroute", True))
+
     try:
         res = AIProviderRegistry.generate_with_fallback(
             primary_provider=cfg.provider,
@@ -160,6 +168,7 @@ def _finalize_agent_output(
             timeout=cfg.timeout_seconds,
             fallback_provider=cfg.fallback_provider,
             fallback_model=cfg.fallback_model,
+            auto_reroute=use_auto_reroute,
         )
     except Exception as exc:
         return AgentOutput(
