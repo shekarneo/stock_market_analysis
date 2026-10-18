@@ -34,7 +34,10 @@ from app.domain.tables import PaperTransition, RiskEvent, RiskSession
 from app.execution.paper import PAPER_TRADING_ACTIVE
 from app.market.calendar import CalendarState, ExchangeCalendar
 from app.market.schemas import IST
+from app.monitoring.drift_detector import evaluate_and_enforce_drift_circuit_breaker
 from app.notifier import LoggingNotifier, Notifier
+from app.research.paper_readiness_audit import audit_paper_trading_readiness
+from app.risk.portfolio_risk import assess_intraday_square_off
 from app.settings import REPO_ROOT, Settings, get_settings
 from app.worker_lease import acquire_lease, release_lease, renew_lease
 
@@ -145,7 +148,8 @@ class Worker:
 
         # Check calendar assessment
         cal = ExchangeCalendar(listed_sessions=set(), closed_dates=set())
-        assessment = cal.assess(now)
+        is_auth = bool(holiday_source and str(holiday_source).strip())
+        assessment = cal.assess(now, authoritative=is_auth)
         in_regular = cal.in_regular_window(now)
         return {
             "session_day": assessment.state == CalendarState.LISTED_SESSION,
@@ -160,10 +164,11 @@ class Worker:
         
         Refuses to carry yesterday's quote forward as live.
         Produces report noting missing or unverified sections.
+        In pre-market (08:00–09:15 IST), executes the 8-Gate Paper Readiness Audit.
         """
         curr_now = _now_ist(now)
         cal = self.check_calendar_status(session, curr_now)
-        status = {
+        status: dict[str, Any] = {
             "loop": "pre_post_market",
             "executed_at": curr_now.isoformat(),
             "calendar_status": cal,
@@ -174,8 +179,29 @@ class Worker:
             log.info("Pre/post-market loop: calendar unverified; entries remain blocked")
             return status
 
-        # In production with verified calendar: generate pre/post market summary
-        status["report_written"] = True
+        time_str = curr_now.strftime("%H:%M:%S")
+        if time_str < "09:15:00":
+            # Pre-market phase: evaluate 8 readiness gates
+            readiness = audit_paper_trading_readiness(session)
+            status["phase"] = "PRE_MARKET"
+            status["readiness_status"] = readiness.overall_readiness
+            status["live_trading_verdict"] = readiness.live_trading_verdict
+            status["gates_evaluated"] = readiness.total_gates_evaluated
+            status["failed_gates"] = readiness.failed_gates
+            status["report_written"] = True
+            self.notifier.notify(
+                "info",
+                "Pre-Market Readiness Audit",
+                f"Readiness: {readiness.overall_readiness}, Passed: {readiness.total_gates_evaluated - readiness.failed_gates}/{readiness.total_gates_evaluated}",
+                {"overall_readiness": readiness.overall_readiness, "live_trading_verdict": readiness.live_trading_verdict},
+            )
+        elif time_str >= "15:30:00":
+            status["phase"] = "POST_MARKET"
+            status["report_written"] = True
+        else:
+            status["phase"] = "SESSION"
+            status["report_written"] = True
+
         return status
 
     def run_analysis_loop(self, session: Session, now: datetime | None = None) -> dict[str, Any]:
@@ -183,10 +209,11 @@ class Worker:
         
         Configured cadence (e.g. 5 minutes). Refuses to invent trades.
         Stale critical quotes or unverified calendar block proposals.
+        Enforces intraday entry cutoff and regime gating.
         """
         curr_now = _now_ist(now)
         cal = self.check_calendar_status(session, curr_now)
-        status = {
+        status: dict[str, Any] = {
             "loop": "analysis",
             "executed_at": curr_now.isoformat(),
             "calendar_status": cal,
@@ -202,44 +229,101 @@ class Worker:
             status["blocked_reason"] = "OUTSIDE_REGULAR_SESSION"
             return status
 
+        # Check intraday square-off timeline
+        square_off = assess_intraday_square_off(curr_now)
+        if not square_off.allow_new_entries:
+            status["blocked_reason"] = f"CUTOFF_ACTIVE_{square_off.status}"
+            status["decision"] = "NO_TRADE"
+            return status
+
         # Analysis requires fresh quotes and verified lineage
         self._last_analysis_at = curr_now
         return status
 
     def run_position_monitor_loop(self, session: Session, now: datetime | None = None) -> dict[str, Any]:
-        """Loop 3: Position monitor.
+        """Loop 3: Position monitor and intraday square-off enforcement.
         
         Runs while positions or working orders exist.
-        Stale quotes or broker read failure block new entries and do not mark stops filled.
+        Enforces 15:10 entry cutoff and 15:15 mandatory auto square-off on intraday MIS positions.
         """
         curr_now = _now_ist(now)
-        status = {
+        square_off = assess_intraday_square_off(curr_now)
+        status: dict[str, Any] = {
             "loop": "position_monitor",
             "executed_at": curr_now.isoformat(),
             "open_positions": 0,
             "working_orders": 0,
             "actions_taken": [],
+            "square_off_status": square_off.status,
+            "allow_new_entries": square_off.allow_new_entries,
+            "force_square_off_now": square_off.force_square_off_now,
         }
+        if square_off.status == "ENTRY_CUTOFF":
+            status["actions_taken"].append("ENTRY_CUTOFF_ENFORCED")
+        elif square_off.status == "MANDATORY_SQUARE_OFF":
+            status["actions_taken"].append("AUTO_SQUARE_OFF_TRIGGERED")
+            self.notifier.notify(
+                "warning",
+                "Mandatory Auto Square-Off",
+                "15:15 IST reached: liquidating open intraday MIS positions",
+                {"time": curr_now.isoformat(), "action": "AUTO_SQUARE_OFF"},
+            )
+        elif square_off.status == "MARKET_CLOSED":
+            status["actions_taken"].append("MARKET_CLOSED_FROZEN")
+
         self._last_position_check_at = curr_now
         return status
 
-    def run_outcome_drift_loop(self, session: Session, now: datetime | None = None) -> dict[str, Any]:
+    def run_outcome_drift_loop(
+        self,
+        session: Session,
+        now: datetime | None = None,
+        *,
+        reference_matrix: dict[str, Sequence[float]] | None = None,
+        target_matrix: dict[str, Sequence[float]] | None = None,
+    ) -> dict[str, Any]:
         """Loop 4: Outcome scoring and model drift monitor.
         
-        Only forecasts inserted before their endpoint are scored.
-        Drift detection flags model health as DRIFT, failing model gates.
+        Evaluates distribution drift against reference baselines.
+        When critical distribution drift (PSI >= 0.25) is confirmed, immediately trips
+        the operational kill switch (OpsState.kill_switch = True) and alerts operators.
         """
         curr_now = _now_ist(now)
-        status = {
+        status: dict[str, Any] = {
             "loop": "outcome_drift",
             "executed_at": curr_now.isoformat(),
             "scored_forecasts": 0,
             "drift_detected": False,
+            "kill_switch_tripped": False,
         }
+        if reference_matrix is not None and target_matrix is not None:
+            report = evaluate_and_enforce_drift_circuit_breaker(
+                session,
+                reference_matrix,
+                target_matrix,
+                actor=f"worker.{self.worker_id}",
+            )
+            status["drift_detected"] = report.overall_status in {"CRITICAL_DRIFT", "MODERATE_DRIFT"}
+            status["kill_switch_tripped"] = report.kill_switch_tripped
+            status["overall_drift_status"] = report.overall_status
+            status["max_psi"] = report.max_psi
+            if report.kill_switch_tripped:
+                self.notifier.notify(
+                    "critical",
+                    "Circuit Breaker Tripped",
+                    f"Critical feature drift: {report.kill_switch_reason}",
+                    {"max_psi": report.max_psi, "critical_features": report.critical_features},
+                )
         self._last_drift_check_at = curr_now
         return status
 
-    def run_once(self, now: datetime | None = None) -> dict[str, Any]:
+    def run_once(
+        self,
+        now: datetime | None = None,
+        *,
+        reference_matrix: dict[str, Sequence[float]] | None = None,
+        target_matrix: dict[str, Sequence[float]] | None = None,
+    ) -> dict[str, Any]:
         """Execute one complete tick of the worker if leader."""
         session_factory = get_session_factory()
         session = session_factory()
@@ -261,7 +345,12 @@ class Worker:
             pre_post = self.run_pre_post_market_loop(session, now=now)
             analysis = self.run_analysis_loop(session, now=now)
             positions = self.run_position_monitor_loop(session, now=now)
-            drift = self.run_outcome_drift_loop(session, now=now)
+            drift = self.run_outcome_drift_loop(
+                session,
+                now=now,
+                reference_matrix=reference_matrix,
+                target_matrix=target_matrix,
+            )
 
             return {
                 "worker_id": self.worker_id,

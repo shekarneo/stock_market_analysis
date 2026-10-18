@@ -122,55 +122,55 @@ def fetch_official_groww_mcx_quote(trading_symbol: str | None = None, retrieved_
             token = secrets.get("access_token")
             if not token:
                 return None
-
-            candidates = [trading_symbol] if trading_symbol else ["CRUDEOILM19NOV26FUT", "CRUDEOILM19OCT26FUT"]
-            best_quote = None
-            best_vol = -1
-
-            for sym in candidates:
-                url = f"https://api.groww.in/v1/live-data/quote?exchange=MCX&segment=COMMODITY&trading_symbol={sym}"
-                req = urllib.request.Request(url, headers={
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/json",
-                    "X-API-VERSION": "1.0",
-                    "User-Agent": "Mozilla/5.0",
-                })
-                try:
-                    with urllib.request.urlopen(req, timeout=3.5) as resp:
-                        data = json.loads(resp.read().decode("utf-8"))
-                    if data.get("status") == "SUCCESS" and isinstance(data.get("payload"), dict):
-                        p = data["payload"]
-                        ltp = float(p.get("last_price") or 0)
-                        vol = int(p.get("volume") or 0)
-                        if ltp > 0 and vol > best_vol:
-                            best_vol = vol
-                            label = "19 Nov" if "NOV" in sym else "19 Oct" if "OCT" in sym else sym
-                            pct_val = float(p.get("day_change_perc") or 0)
-                            best_quote = {
-                                "instrument": "CRUDEOILMINI",
-                                "name": f"MCX Crude Oil Mini ({label})",
-                                "trading_symbol": sym,
-                                "exchange": "MCX",
-                                "segment": "COMMODITY",
-                                "last_price": ltp,
-                                "day_change": float(p.get("day_change") or 0),
-                                "percent_change": f"{pct_val:+.2f}%",
-                                "ohlc": p.get("ohlc") or {},
-                                "volume": vol,
-                                "open_interest": p.get("open_interest"),
-                                "unit": "₹/bbl",
-                                "retrieved_at": (retrieved_at or datetime.now(timezone.utc)).isoformat(),
-                                "source": f"GET /v1/live-data/quote ({sym})",
-                                "data_class": "UNVERIFIED_PROVIDER_DATA",
-                                "verification_status": "VERIFIED_STREAM",
-                                "limitations": [f"Live active contract {sym} directly from Groww Official Trade API."],
-                            }
-                except Exception:
-                    pass
-
-            return best_quote
         finally:
             session.close()
+
+        candidates = [trading_symbol] if trading_symbol else ["CRUDEOILM19NOV26FUT", "CRUDEOILM19OCT26FUT"]
+        best_quote = None
+        best_vol = -1
+
+        for sym in candidates:
+            url = f"https://api.groww.in/v1/live-data/quote?exchange=MCX&segment=COMMODITY&trading_symbol={sym}"
+            req = urllib.request.Request(url, headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "X-API-VERSION": "1.0",
+                "User-Agent": "Mozilla/5.0",
+            })
+            try:
+                with urllib.request.urlopen(req, timeout=3.5) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                if data.get("status") == "SUCCESS" and isinstance(data.get("payload"), dict):
+                    p = data["payload"]
+                    ltp = float(p.get("last_price") or 0)
+                    vol = int(p.get("volume") or 0)
+                    if ltp > 0 and vol > best_vol:
+                        best_vol = vol
+                        label = "19 Nov" if "NOV" in sym else "19 Oct" if "OCT" in sym else sym
+                        pct_val = float(p.get("day_change_perc") or 0)
+                        best_quote = {
+                            "instrument": "CRUDEOILMINI",
+                            "name": f"MCX Crude Oil Mini ({label})",
+                            "trading_symbol": sym,
+                            "exchange": "MCX",
+                            "segment": "COMMODITY",
+                            "last_price": ltp,
+                            "day_change": float(p.get("day_change") or 0),
+                            "percent_change": f"{pct_val:+.2f}%",
+                            "ohlc": p.get("ohlc") or {},
+                            "volume": vol,
+                            "open_interest": p.get("open_interest"),
+                            "unit": "₹/bbl",
+                            "retrieved_at": (retrieved_at or datetime.now(timezone.utc)).isoformat(),
+                            "source": f"GET /v1/live-data/quote ({sym})",
+                            "data_class": "UNVERIFIED_PROVIDER_DATA",
+                            "verification_status": "VERIFIED_STREAM",
+                            "limitations": [f"Live active contract {sym} directly from Groww Official Trade API."],
+                        }
+            except Exception:
+                pass
+
+        return best_quote
     except Exception as exc:
         logger.debug("Official Groww MCX quote failed, falling back to direct contract: %s", exc)
     return None
@@ -416,6 +416,8 @@ def parse_sectoral_indices(html: str | None = None, retrieved_at: datetime | Non
             data = json.loads(nxt.string)
             dto = data.get("props", {}).get("pageProps", {}).get("data", {}).get("aggregatedGlobalInstrumentDto", [])
             sym_map = {
+                "NIFTY": ("NIFTY", "NIFTY 50", "INDIAN_MARKET"),
+                "1": ("SENSEX", "BSE SENSEX", "INDIAN_MARKET"),
                 "NIFTYMETAL": ("NIFTYMETAL", "NIFTY Metal", "INDIAN_MARKET"),
                 "14": ("BANKEX", "BSE BANKEX", "INDIAN_MARKET"),
                 "NIFTYIT": ("NIFTYIT", "NIFTY IT", "INDIAN_MARKET"),
@@ -462,6 +464,8 @@ def parse_sectoral_indices(html: str | None = None, retrieved_at: datetime | Non
 
     found: dict[str, dict] = {}
     targets = {
+        "NIFTY 50": ("NIFTY", "NIFTY 50", "pts", "INDIAN_MARKET"),
+        "Bse Sensex": ("SENSEX", "BSE SENSEX", "pts", "INDIAN_MARKET"),
         "India Vix": ("VIX", "India VIX (Volatility Index)", "pts", "GLOBAL_MARKET"),
         "NIFTY Bank": ("BANKNIFTY", "NIFTY Bank", "pts", "INDIAN_MARKET"),
         "Bse Bankex": ("BANKEX", "BSE BANKEX", "pts", "INDIAN_MARKET"),

@@ -33,6 +33,8 @@ class AICompletionResult:
     error_code: str | None = None
     error_message: str | None = None
     fallback_used: bool = False
+    primary_error_code: str | None = None
+    primary_error_message: str | None = None
 
 
 class BaseAIModelProvider(Protocol):
@@ -59,10 +61,7 @@ class OpenAIModelProvider:
     def _resolve_api_key(self) -> str | None:
         if self._explicit_key:
             return self._explicit_key
-        env_key = os.environ.get("OPENAI_API_KEY")
-        if env_key:
-            return env_key
-        # Check database credentials store
+        # Check database credentials store first so operator UI settings and enable/disable toggle take precedence
         try:
             from app.db import get_session_factory
             from app.domain.tables import IntegrationCredential
@@ -72,13 +71,21 @@ class OpenAIModelProvider:
             session = get_session_factory()()
             try:
                 row = session.get(IntegrationCredential, "openai")
-                if row and row.ciphertext:
-                    secrets = decrypt_secrets(get_settings(), row.ciphertext)
-                    return secrets.get("api_key")
+                if row is not None:
+                    if row.enabled is False:
+                        return None
+                    if row.ciphertext:
+                        secrets = decrypt_secrets(get_settings(), row.ciphertext)
+                        db_key = (secrets.get("api_key") or "").strip()
+                        if db_key:
+                            return db_key
             finally:
                 session.close()
         except Exception:
             pass
+        env_key = (os.environ.get("OPENAI_API_KEY") or "").strip()
+        if env_key:
+            return env_key
         return None
 
     def generate(
@@ -97,17 +104,25 @@ class OpenAIModelProvider:
                 model=model,
                 text="",
                 error_code="BLOCKED_PENDING_CREDENTIALS",
-                error_message="OpenAI API key is missing or unconfigured.",
+                error_message="OpenAI API key is missing, unconfigured, or integration is disabled.",
             )
 
         start_time = time.monotonic()
-        payload = {
+        clean_model = (model or "").strip()
+        is_reasoning = clean_model.lower().startswith(("o1", "o3"))
+        payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "temperature": max(0.0, min(2.0, float(temperature))),
-            "max_tokens": int(max_tokens),
-            "response_format": {"type": "json_object"},
         }
+        if is_reasoning:
+            payload["max_completion_tokens"] = int(max_tokens)
+            if not clean_model.lower().startswith(("o1-mini", "o1-preview")):
+                payload["response_format"] = {"type": "json_object"}
+        else:
+            payload["temperature"] = max(0.0, min(2.0, float(temperature)))
+            payload["max_tokens"] = int(max_tokens)
+            payload["response_format"] = {"type": "json_object"}
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Accept": "application/json",
@@ -153,27 +168,94 @@ class OpenAIModelProvider:
                 error_message=err_msg,
             )
 
-        choices = body.get("choices") or []
-        raw_text = ""
-        if choices and isinstance(choices[0], dict):
-            raw_text = (choices[0].get("message") or {}).get("content") or ""
-
-        parsed_json = None
-        try:
-            parsed_json = json.loads(raw_text) if raw_text else None
-        except Exception:
-            pass
-
         usage = body.get("usage") or {}
+        p_tok = int(usage.get("prompt_tokens", 0) or 0)
+        c_tok = int(usage.get("completion_tokens", 0) or 0)
+        t_tok = int(usage.get("total_tokens", p_tok + c_tok) or 0)
+
+        choices = body.get("choices") or []
+        if not choices or not isinstance(choices[0], dict):
+            return AICompletionResult(
+                ok=False,
+                provider=self.name,
+                model=model,
+                text="",
+                prompt_tokens=p_tok,
+                completion_tokens=c_tok,
+                total_tokens=t_tok,
+                latency_ms=round(elapsed, 2),
+                error_code="EMPTY_OUTPUT",
+                error_message="OpenAI response contained no choices.",
+            )
+
+        if choices[0].get("finish_reason") == "length":
+            return AICompletionResult(
+                ok=False,
+                provider=self.name,
+                model=model,
+                text="",
+                prompt_tokens=p_tok,
+                completion_tokens=c_tok,
+                total_tokens=t_tok,
+                latency_ms=round(elapsed, 2),
+                error_code="TRUNCATED_OUTPUT",
+                error_message="OpenAI completion was truncated at token limit.",
+            )
+
+        raw_text = (choices[0].get("message") or {}).get("content") or ""
+        if not isinstance(raw_text, str) or not raw_text.strip():
+            return AICompletionResult(
+                ok=False,
+                provider=self.name,
+                model=model,
+                text="",
+                prompt_tokens=p_tok,
+                completion_tokens=c_tok,
+                total_tokens=t_tok,
+                latency_ms=round(elapsed, 2),
+                error_code="EMPTY_OUTPUT",
+                error_message="OpenAI completion content was empty.",
+            )
+
+        try:
+            parsed_json = json.loads(raw_text)
+        except Exception:
+            return AICompletionResult(
+                ok=False,
+                provider=self.name,
+                model=model,
+                text=raw_text,
+                prompt_tokens=p_tok,
+                completion_tokens=c_tok,
+                total_tokens=t_tok,
+                latency_ms=round(elapsed, 2),
+                error_code="MALFORMED_OUTPUT",
+                error_message="OpenAI completion content was not valid JSON.",
+            )
+
+        if not isinstance(parsed_json, dict):
+            return AICompletionResult(
+                ok=False,
+                provider=self.name,
+                model=model,
+                text=raw_text,
+                prompt_tokens=p_tok,
+                completion_tokens=c_tok,
+                total_tokens=t_tok,
+                latency_ms=round(elapsed, 2),
+                error_code="SCHEMA_MISMATCH",
+                error_message="OpenAI JSON output root must be a JSON object.",
+            )
+
         return AICompletionResult(
             ok=True,
             provider=self.name,
             model=model,
             text=raw_text,
             structured_data=parsed_json,
-            prompt_tokens=usage.get("prompt_tokens", 0),
-            completion_tokens=usage.get("completion_tokens", 0),
-            total_tokens=usage.get("total_tokens", 0),
+            prompt_tokens=p_tok,
+            completion_tokens=c_tok,
+            total_tokens=t_tok,
             latency_ms=round(elapsed, 2),
         )
 
@@ -188,9 +270,7 @@ class GeminiModelProvider:
     def _resolve_api_key(self) -> str | None:
         if self._explicit_key:
             return self._explicit_key
-        env_key = os.environ.get("GEMINI_API_KEY")
-        if env_key:
-            return env_key
+        # Check database credentials store first so operator UI settings and enable/disable toggle take precedence
         try:
             from app.db import get_session_factory
             from app.domain.tables import IntegrationCredential
@@ -200,13 +280,26 @@ class GeminiModelProvider:
             session = get_session_factory()()
             try:
                 row = session.get(IntegrationCredential, "gemini")
-                if row and row.ciphertext:
-                    secrets = decrypt_secrets(get_settings(), row.ciphertext)
-                    return secrets.get("api_key")
+                if row is not None:
+                    if row.enabled is False:
+                        return None
+                    if row.ciphertext:
+                        secrets = decrypt_secrets(get_settings(), row.ciphertext)
+                        db_key = (secrets.get("api_key") or "").strip()
+                        if db_key:
+                            return db_key
             finally:
                 session.close()
         except Exception:
             pass
+        env_key = (os.environ.get("GEMINI_API_KEY") or "").strip()
+        if env_key:
+            return env_key
+        env_keys = (os.environ.get("GEMINI_API_KEYS") or "").strip()
+        if env_keys:
+            first_key = [k.strip() for k in env_keys.split(",") if k.strip()]
+            if first_key:
+                return first_key[0]
         return None
 
     def generate(
@@ -225,7 +318,7 @@ class GeminiModelProvider:
                 model=model,
                 text="",
                 error_code="BLOCKED_PENDING_CREDENTIALS",
-                error_message="Gemini API key is missing or unconfigured.",
+                error_message="Gemini API key is missing, unconfigured, or integration is disabled.",
             )
 
         start_time = time.monotonic()
@@ -302,30 +395,128 @@ class GeminiModelProvider:
                 error_message=err_msg,
             )
 
-        candidates = body.get("candidates") or []
-        raw_text = ""
-        if candidates and isinstance(candidates[0], dict):
-            c_content = candidates[0].get("content") or {}
-            parts = c_content.get("parts") or []
-            if parts and isinstance(parts[0], dict):
-                raw_text = parts[0].get("text") or ""
-
-        parsed_json = None
-        try:
-            parsed_json = json.loads(raw_text) if raw_text else None
-        except Exception:
-            pass
-
         meta = body.get("usageMetadata") or {}
+        p_tok = int(meta.get("promptTokenCount", 0) or 0)
+        c_tok = int(meta.get("candidatesTokenCount", 0) or 0)
+        t_tok = int(meta.get("totalTokenCount", p_tok + c_tok) or 0)
+
+        prompt_feedback = body.get("promptFeedback") or {}
+        if isinstance(prompt_feedback, dict) and prompt_feedback.get("blockReason"):
+            return AICompletionResult(
+                ok=False,
+                provider=self.name,
+                model=model,
+                text="",
+                prompt_tokens=p_tok,
+                completion_tokens=c_tok,
+                total_tokens=t_tok,
+                latency_ms=round(elapsed, 2),
+                error_code="SAFETY_BLOCKED",
+                error_message=f"Gemini blocked prompt: {prompt_feedback.get('blockReason')}",
+            )
+
+        candidates = body.get("candidates") or []
+        if not candidates or not isinstance(candidates[0], dict):
+            return AICompletionResult(
+                ok=False,
+                provider=self.name,
+                model=model,
+                text="",
+                prompt_tokens=p_tok,
+                completion_tokens=c_tok,
+                total_tokens=t_tok,
+                latency_ms=round(elapsed, 2),
+                error_code="EMPTY_OUTPUT",
+                error_message="Gemini response contained no candidates.",
+            )
+
+        finish_reason = str(candidates[0].get("finishReason") or "").upper()
+        if finish_reason in {"SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII"}:
+            return AICompletionResult(
+                ok=False,
+                provider=self.name,
+                model=model,
+                text="",
+                prompt_tokens=p_tok,
+                completion_tokens=c_tok,
+                total_tokens=t_tok,
+                latency_ms=round(elapsed, 2),
+                error_code="SAFETY_BLOCKED",
+                error_message=f"Gemini candidate blocked with finishReason={finish_reason}.",
+            )
+        if finish_reason == "MAX_TOKENS":
+            return AICompletionResult(
+                ok=False,
+                provider=self.name,
+                model=model,
+                text="",
+                prompt_tokens=p_tok,
+                completion_tokens=c_tok,
+                total_tokens=t_tok,
+                latency_ms=round(elapsed, 2),
+                error_code="TRUNCATED_OUTPUT",
+                error_message="Gemini candidate truncated at maxOutputTokens.",
+            )
+
+        raw_text = ""
+        c_content = candidates[0].get("content") or {}
+        parts = c_content.get("parts") or []
+        if parts and isinstance(parts[0], dict):
+            raw_text = parts[0].get("text") or ""
+
+        if not isinstance(raw_text, str) or not raw_text.strip():
+            return AICompletionResult(
+                ok=False,
+                provider=self.name,
+                model=model,
+                text="",
+                prompt_tokens=p_tok,
+                completion_tokens=c_tok,
+                total_tokens=t_tok,
+                latency_ms=round(elapsed, 2),
+                error_code="EMPTY_OUTPUT",
+                error_message="Gemini candidate content was empty.",
+            )
+
+        try:
+            parsed_json = json.loads(raw_text)
+        except Exception:
+            return AICompletionResult(
+                ok=False,
+                provider=self.name,
+                model=model,
+                text=raw_text,
+                prompt_tokens=p_tok,
+                completion_tokens=c_tok,
+                total_tokens=t_tok,
+                latency_ms=round(elapsed, 2),
+                error_code="MALFORMED_OUTPUT",
+                error_message="Gemini completion content was not valid JSON.",
+            )
+
+        if not isinstance(parsed_json, dict):
+            return AICompletionResult(
+                ok=False,
+                provider=self.name,
+                model=model,
+                text=raw_text,
+                prompt_tokens=p_tok,
+                completion_tokens=c_tok,
+                total_tokens=t_tok,
+                latency_ms=round(elapsed, 2),
+                error_code="SCHEMA_MISMATCH",
+                error_message="Gemini JSON output root must be a JSON object.",
+            )
+
         return AICompletionResult(
             ok=True,
             provider=self.name,
             model=model,
             text=raw_text,
             structured_data=parsed_json,
-            prompt_tokens=meta.get("promptTokenCount", 0),
-            completion_tokens=meta.get("candidatesTokenCount", 0),
-            total_tokens=meta.get("totalTokenCount", 0),
+            prompt_tokens=p_tok,
+            completion_tokens=c_tok,
+            total_tokens=t_tok,
             latency_ms=round(elapsed, 2),
         )
 
@@ -398,4 +589,7 @@ class AIProviderRegistry:
             timeout=timeout,
         )
         fb_res.fallback_used = True
+        fb_res.primary_error_code = res.error_code
+        fb_res.primary_error_message = res.error_message
         return fb_res
+

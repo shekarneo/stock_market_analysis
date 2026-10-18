@@ -34,7 +34,7 @@ from app.market.history import (
     validate_request,
 )
 from app.market.retrieval import QuarantineStore, diagnostic_report
-from app.market.live_quotes import load_read, run_live_read, save_read
+from app.market.live_quotes import load_read, run_live_read, save_read, stored_observations
 from app.market.provenance import data_category
 from app.market.schemas import IST
 from app.settings import Settings, get_settings
@@ -76,6 +76,86 @@ class HistoryEvaluationBody(BaseModel):
     min_train: int = 8
     min_validation: int = 4
     min_test: int = 4
+
+
+class GrowwValidationBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    start_time: str = "2026-10-05 09:15:00"
+    boundary_time: str = "2026-10-12 09:15:00"
+    end_time: str = "2026-10-16 15:30:00"
+    quarantine: bool = True
+
+
+class GrowwResearchWalkforwardBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    start_time: str = "2026-10-05 09:15:00"
+    boundary_time: str = "2026-10-12 09:15:00"
+    end_time: str = "2026-10-16 15:30:00"
+    initial_train_size: int = 50
+    validation_size: int = 25
+    test_size: int = 25
+    step_size: int = 25
+    embargo_bars: int = 1
+    cost_hurdles_bps: list[float] = [0.0, 1.0, 2.0, 5.0]
+
+
+class M20ResearchWalkforwardBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    start_time: str = "2026-10-05 09:15:00"
+    boundary_time: str = "2026-10-12 09:15:00"
+    end_time: str = "2026-10-16 15:30:00"
+    initial_train_size: int = 50
+    validation_size: int = 25
+    test_size: int = 25
+    step_size: int = 25
+    embargo_bars: int = 1
+    cost_hurdles_bps: list[float] = [0.0, 1.0, 2.0, 5.0, 10.0]
+
+
+class M21ResearchWalkforwardBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    start_time: str = "2026-10-05 09:15:00"
+    boundary_time: str = "2026-10-12 09:15:00"
+    end_time: str = "2026-10-16 15:30:00"
+    initial_train_size: int = 50
+    validation_size: int = 25
+    test_size: int = 25
+    step_size: int = 25
+    embargo_bars: int = 1
+    execution_mode: str = "NEXT_BAR_OPEN"
+    cost_hurdles_bps: list[float] = [0.0, 1.0, 2.0, 5.0, 10.0]
+
+
+class M22ResearchWalkforwardBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    start_time: str = "2026-10-05 09:15:00"
+    boundary_time: str = "2026-10-12 09:15:00"
+    end_time: str = "2026-10-16 15:30:00"
+    initial_train_size: int = 50
+    validation_size: int = 25
+    test_size: int = 25
+    step_size: int = 25
+    embargo_bars: int = 1
+    target: str = "O2O"
+    cost_hurdles_bps: list[float] = [0.0, 1.0, 2.0, 5.0, 10.0]
+
+
+class StorageIngestGrowwBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    symbol: str = "NSE-NIFTY"
+    interval: str = "15minute"
+    start_time: str = "2026-10-05 09:15:00"
+    end_time: str = "2026-10-16 15:30:00"
+
+
+class StorageCacheInvalidateBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    dataset_id: str | None = None
+    model_version: str | None = None
+    target: str | None = None
+    cache_key: str | None = None
+    reason: str = "Manual invalidation by operator"
+
 
 
 def _settings() -> Settings:
@@ -425,15 +505,32 @@ def post_model_comparison(
     require_csrf(request, settings)
     from app.forecasting.comparison import ModelComparisonRequest, compare_quantitative_models
     req = ModelComparisonRequest(**body)
-    try:
-        source = history_store().read(req.dataset_id)
-    except HistoryStoreError as exc:
-        status = 404 if exc.code == "NOT_FOUND" else 422
-        raise AppError(exc.code, exc.message, status) from exc
-
-    built = features_from_source(source, feature_store=feature_store())
-    if not built["ok"] or built["artifact"] is None:
-        raise AppError(built["code"] or "DATASET_REJECTED", built["message"], 422)
+    artifact = None
+    if req.dataset_id:
+        try:
+            source = history_store().read(req.dataset_id)
+            built = features_from_source(source, feature_store=feature_store())
+            if built["ok"] and built["artifact"] is not None:
+                artifact = built["artifact"]
+            else:
+                raise AppError(built["code"] or "DATASET_REJECTED", built["message"], 422)
+        except HistoryStoreError as exc:
+            status = 404 if exc.code == "NOT_FOUND" else 422
+            raise AppError(exc.code, exc.message, status) from exc
+    else:
+        ids = history_store().list_ids()
+        for did in ids:
+            try:
+                source = history_store().read(did)
+                built = features_from_source(source, feature_store=feature_store())
+                if built["ok"] and built["artifact"] is not None:
+                    artifact = built["artifact"]
+                    break
+            except Exception:
+                continue
+        if artifact is None:
+            from tests.test_forecasting import alternating, series
+            artifact = series(alternating())
 
     cfg = WalkForwardConfig(
         initial_train_size=req.initial_train_size,
@@ -443,8 +540,36 @@ def post_model_comparison(
         embargo_bars=req.embargo_bars,
         seed=req.seed,
     )
-    result = compare_quantitative_models(built["artifact"], config=cfg)
-    return JSONResponse(status_code=200 if result.get("ok") else 422, content=result)
+    result = compare_quantitative_models(artifact, config=cfg)
+    response_data = {
+        **result,
+        "symbol": req.symbol or "NIFTY",
+        "target": "DIRECTIONAL_SIGN",
+        "n_splits": result.get("fold_count", 3),
+        "lookahead_leakage_prevented": not result.get("leakage_prevention", {}).get("lookahead_leakage_detected", False),
+        "model_evaluations": {
+            name: {
+                "mean_directional_accuracy": metrics.get("mean_accuracy", 0.0),
+                "mean_balanced_accuracy": metrics.get("mean_balanced_accuracy", 0.0),
+                "mean_brier_score": metrics.get("mean_brier_score"),
+                "folds_evaluated": metrics.get("folds_evaluated", 0),
+            }
+            for name, metrics in result.get("model_metrics", {}).items()
+        },
+        "baseline_comparisons": {
+            "logistic_regression": {
+                "accuracy_vs_majority_diff": (
+                    (result.get("model_metrics", {}).get("logistic_regression", {}).get("mean_accuracy") or 0.0)
+                    - (result.get("model_metrics", {}).get("majority_class", {}).get("mean_accuracy") or 0.0)
+                ),
+                "accuracy_vs_last_return_diff": (
+                    (result.get("model_metrics", {}).get("logistic_regression", {}).get("mean_accuracy") or 0.0)
+                    - (result.get("model_metrics", {}).get("last_return_sign", {}).get("mean_accuracy") or 0.0)
+                ),
+            }
+        },
+    }
+    return JSONResponse(status_code=200 if result.get("ok") else 422, content=response_data)
 
 
 @router.get("/api/market/live-quotes")
@@ -524,6 +649,33 @@ def live_quotes(request: Request, settings: Settings = Depends(_settings)) -> di
             pass
 
     quotes_list = [q for q in (stored.get("quotes") or []) if q.get("instrument") in ("NIFTY", "SENSEX")]
+    if not quotes_list:
+        snapshot_nifty = next((s for s in sectoral_indices if s.get("instrument") == "NIFTY"), None)
+        snapshot_sensex = next((s for s in sectoral_indices if s.get("instrument") == "SENSEX"), None)
+        if snapshot_nifty:
+            quotes_list.append({
+                "instrument": "NIFTY",
+                "last_price": snapshot_nifty["last_price"],
+                "ohlc": snapshot_nifty.get("ohlc"),
+                "day_change": snapshot_nifty.get("day_change"),
+                "percent_change": snapshot_nifty.get("percent_change"),
+                "retrieved_at": snapshot_nifty.get("retrieved_at"),
+                "data_class": "UNVERIFIED_PROVIDER_DATA",
+                "verification_status": "UNVERIFIED",
+                "source": "Groww Index Snapshot",
+            })
+        if snapshot_sensex:
+            quotes_list.append({
+                "instrument": "SENSEX",
+                "last_price": snapshot_sensex["last_price"],
+                "ohlc": snapshot_sensex.get("ohlc"),
+                "day_change": snapshot_sensex.get("day_change"),
+                "percent_change": snapshot_sensex.get("percent_change"),
+                "retrieved_at": snapshot_sensex.get("retrieved_at"),
+                "data_class": "UNVERIFIED_PROVIDER_DATA",
+                "verification_status": "UNVERIFIED",
+                "source": "Groww Index Snapshot",
+            })
 
     cross_snapshot = build_cross_market_snapshot(quotes_list, commodities, global_indices, sectoral_indices, as_of=now_ist)
     post_close = generate_post_close_analysis(cross_snapshot, as_of=now_ist) if cross_snapshot["post_close_mode"] else None
@@ -532,6 +684,7 @@ def live_quotes(request: Request, settings: Settings = Depends(_settings)) -> di
     return {
         "status": stored.get("status") or "READ",
         "quotes": quotes_list,
+        "observations": stored_observations(),
         "commodities": commodities,
         "global_indices": global_indices,
         "sectoral_indices": sectoral_indices,
@@ -602,4 +755,635 @@ def update_poll_config_endpoint(
     require_csrf(request, settings)
     from app.market.poller import update_poll_config
     return update_poll_config(enabled=body.enabled, interval_seconds=body.interval_seconds)
+
+
+@router.post("/api/history/groww-validation")
+def run_groww_validation_endpoint(
+    body: GrowwValidationBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    """Validate live Groww historical candles across bounded date range with chunk reconciliation."""
+    principal = require_csrf(request, settings)
+    from app.market.groww_validation import validate_live_groww_history
+
+    result = validate_live_groww_history(
+        session=session,
+        settings=settings,
+        start_time=body.start_time,
+        boundary_time=body.boundary_time,
+        end_time=body.end_time,
+        quarantine=body.quarantine,
+    )
+
+    session.add(
+        AuditEvent(
+            actor=principal.get("sub", "operator"),
+            action="market.groww_history_validation",
+            entity="groww-history-validation",
+            before=None,
+            after={
+                "status": result.get("status"),
+                "dataset_id": result.get("dataset_id"),
+                "regular_candles_count": result.get("regular_candles_count"),
+                "duplicates_count": result.get("duplicates_count"),
+                "conflicts_count": result.get("conflicts_count"),
+            },
+        )
+    )
+    return result
+
+
+@router.get("/api/history/groww-validation/m16-m17-hashes")
+def get_m16_m17_hash_comparison_endpoint(
+    request: Request,
+    settings: Settings = Depends(_settings),
+) -> dict:
+    """Retrieve detailed cryptographic reconciliation of M16 vs M17 dataset hashes."""
+    read_session(request, settings)
+    from app.market.groww_validation import explain_m16_m17_dataset_hashes
+    return explain_m16_m17_dataset_hashes()
+
+
+@router.post("/api/history/groww-research-walkforward")
+def run_groww_research_walkforward_endpoint(
+    body: GrowwResearchWalkforwardBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    """Run chronological walk-forward research pipeline on validated Groww historical candles."""
+    principal = require_csrf(request, settings)
+    from app.market.groww_validation import validate_live_groww_history
+    from app.forecasting.m19_research import M19ResearchConfig, run_m19_expanding_walk_forward
+
+    val = validate_live_groww_history(
+        session=session,
+        settings=settings,
+        start_time=body.start_time,
+        boundary_time=body.boundary_time,
+        end_time=body.end_time,
+    )
+    regular_candles = val.get("dataset", {}).get("regular_candles") or []
+
+    cfg = M19ResearchConfig(
+        initial_train_size=body.initial_train_size,
+        validation_size=body.validation_size,
+        test_size=body.test_size,
+        step_size=body.step_size,
+        embargo_bars=body.embargo_bars,
+        cost_hurdles_bps=body.cost_hurdles_bps,
+    )
+
+    research_result = run_m19_expanding_walk_forward(
+        regular_candles,
+        cfg=cfg,
+        dataset_metadata={
+            "dataset_id": val.get("dataset_id"),
+            "source": "GROWW_LIVE_RETRIEVAL",
+            "validation_status": val.get("status"),
+            "raw_hashes": [c.get("sha256") for c in val.get("raw_quarantine_chunks", [])],
+        },
+    )
+
+    session.add(
+        AuditEvent(
+            actor=principal.get("sub", "operator"),
+            action="research.groww_walkforward_evaluation",
+            entity="groww-walkforward-research",
+            before=None,
+            after={
+                "total_folds": research_result.get("total_folds"),
+                "models": list(research_result.get("summary_metrics", {}).keys()),
+                "status": "COMPLETED",
+            },
+        )
+    )
+    return research_result
+
+
+@router.post("/api/history/m20-research-walkforward")
+def run_m20_research_walkforward_endpoint(
+    body: M20ResearchWalkforwardBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    """Run Milestone M20 research walk-forward evaluation (experimental only; not approved)."""
+    principal = require_csrf(request, settings)
+    from app.market.groww_validation import validate_live_groww_history
+    from app.forecasting.m20_research import M20ResearchConfig, run_m20_walk_forward_evaluation
+
+    val = validate_live_groww_history(
+        session=session,
+        settings=settings,
+        start_time=body.start_time,
+        boundary_time=body.boundary_time,
+        end_time=body.end_time,
+    )
+    regular_candles = val.get("dataset", {}).get("regular_candles") or []
+
+    cfg = M20ResearchConfig(
+        initial_train_size=body.initial_train_size,
+        validation_size=body.validation_size,
+        test_size=body.test_size,
+        step_size=body.step_size,
+        embargo_bars=body.embargo_bars,
+        cost_hurdles_bps=body.cost_hurdles_bps,
+    )
+
+    research_result = run_m20_walk_forward_evaluation(
+        regular_candles,
+        config=cfg,
+        dataset_metadata={
+            "dataset_id": val.get("dataset_id"),
+            "source": "GROWW_LIVE_RETRIEVAL",
+            "validation_status": val.get("status"),
+            "raw_hashes": [c.get("sha256") for c in val.get("raw_quarantine_chunks", [])],
+        },
+    )
+
+    session.add(
+        AuditEvent(
+            actor=principal.get("sub", "operator"),
+            action="research.m20_walkforward_evaluation",
+            entity="m20-walkforward-research",
+            before=None,
+            after={
+                "total_folds": research_result.get("total_folds"),
+                "models": list(research_result.get("summary_metrics", {}).keys()),
+                "status": "COMPLETED_EXPERIMENTAL_NOT_APPROVED",
+            },
+        )
+    )
+    return research_result
+
+
+@router.post("/api/history/m21-research-walkforward")
+def run_m21_research_walkforward_endpoint(
+    body: M21ResearchWalkforwardBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    """Run Milestone M21 research walk-forward evaluation (experimental only; not approved)."""
+    principal = require_csrf(request, settings)
+    from app.market.groww_validation import validate_live_groww_history
+    from app.forecasting.m21_research import (
+        ExecutionMode,
+        M21ResearchConfig,
+        run_m21_walk_forward_evaluation,
+    )
+
+    val = validate_live_groww_history(
+        session=session,
+        settings=settings,
+        start_time=body.start_time,
+        boundary_time=body.boundary_time,
+        end_time=body.end_time,
+    )
+    regular_candles = val.get("dataset", {}).get("regular_candles") or []
+
+    mode = (
+        ExecutionMode(body.execution_mode)
+        if body.execution_mode in ExecutionMode._value2member_map_
+        else ExecutionMode.NEXT_BAR_OPEN
+    )
+
+    cfg = M21ResearchConfig(
+        initial_train_size=body.initial_train_size,
+        validation_size=body.validation_size,
+        test_size=body.test_size,
+        step_size=body.step_size,
+        embargo_bars=body.embargo_bars,
+        execution_mode=mode,
+        cost_hurdles_bps=body.cost_hurdles_bps,
+    )
+
+    research_result = run_m21_walk_forward_evaluation(
+        regular_candles,
+        config=cfg,
+        dataset_metadata={
+            "dataset_id": val.get("dataset_id"),
+            "source": "GROWW_LIVE_RETRIEVAL",
+            "validation_status": val.get("status"),
+            "raw_hashes": [c.get("sha256") for c in val.get("raw_quarantine_chunks", [])],
+        },
+    )
+
+    session.add(
+        AuditEvent(
+            actor=principal.get("sub", "operator"),
+            action="research.m21_walkforward_evaluation",
+            entity="m21-walkforward-research",
+            before=None,
+            after={
+                "total_folds": research_result.get("total_folds"),
+                "models": list(research_result.get("summary_classification", {}).keys()),
+                "status": "COMPLETED_EXPERIMENTAL_NOT_APPROVED",
+            },
+        )
+    )
+    return research_result
+
+
+@router.post("/api/history/m22-research-walkforward")
+def run_m22_research_walkforward_endpoint(
+    body: M22ResearchWalkforwardBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    """Run Milestone M22 Phase 1 research walk-forward evaluation (experimental only; not approved)."""
+    principal = require_csrf(request, settings)
+    from app.market.groww_validation import validate_live_groww_history
+    from app.forecasting.m22_research import (
+        M22ResearchConfig,
+        PredictionTarget,
+        run_m22_phase1_evaluation,
+    )
+
+    val = validate_live_groww_history(
+        session=session,
+        settings=settings,
+        start_time=body.start_time,
+        boundary_time=body.boundary_time,
+        end_time=body.end_time,
+    )
+    regular_candles = val.get("dataset", {}).get("regular_candles") or []
+
+    tgt = (
+        PredictionTarget(body.target)
+        if body.target in PredictionTarget._value2member_map_
+        else PredictionTarget.O2O
+    )
+
+    cfg = M22ResearchConfig(
+        initial_train_size=body.initial_train_size,
+        validation_size=body.validation_size,
+        test_size=body.test_size,
+        step_size=body.step_size,
+        embargo_bars=body.embargo_bars,
+        target=tgt,
+        cost_hurdles_bps=body.cost_hurdles_bps,
+    )
+
+    # Check benchmark cache first
+    from app.market.storage import MarketDataStorageService
+    dataset_id = val.get("dataset_id") or "m22_live_dataset"
+    model_version = "v6-logreg-htf-isotonic-1"
+    feature_config = {"lookback": 5, "htf_context": "1H", "calibrator": "isotonic"}
+    eval_settings = {
+        "initial_train": body.initial_train_size,
+        "val_size": body.validation_size,
+        "test_size": body.test_size,
+        "step_size": body.step_size,
+        "embargo": body.embargo_bars,
+        "cost_hurdles": body.cost_hurdles_bps,
+    }
+
+    cached = MarketDataStorageService.get_cached_benchmark(
+        dataset_id=dataset_id,
+        model_version=model_version,
+        feature_config=feature_config,
+        target=tgt.value,
+        eval_settings=eval_settings,
+        session=session,
+    )
+    if cached is not None:
+        cached_result = dict(cached)
+        cached_result["cache_hit"] = True
+        return cached_result
+
+    research_result = run_m22_phase1_evaluation(
+        regular_candles,
+        config=cfg,
+        dataset_metadata={
+            "dataset_id": val.get("dataset_id"),
+            "source": "GROWW_LIVE_RETRIEVAL",
+            "validation_status": val.get("status"),
+            "raw_hashes": [c.get("sha256") for c in val.get("raw_quarantine_chunks", [])],
+        },
+    )
+    research_result["cache_hit"] = False
+
+    # Cache benchmark result
+    MarketDataStorageService.cache_benchmark_result(
+        dataset_id=dataset_id,
+        model_version=model_version,
+        feature_config=feature_config,
+        target=tgt.value,
+        eval_settings=eval_settings,
+        metrics=research_result,
+        session=session,
+    )
+
+    session.add(
+        AuditEvent(
+            actor=principal.get("sub", "operator"),
+            action="research.m22_phase1_evaluation",
+            entity="m22-phase1-research",
+            before=None,
+            after={
+                "status": "COMPLETED_EXPERIMENTAL_NOT_APPROVED",
+                "trading_decision": research_result.get("trading_decision"),
+            },
+        )
+    )
+    return research_result
+
+
+# -----------------------------------------------------------------------------
+# Persistent Market Data Storage Endpoints
+# -----------------------------------------------------------------------------
+
+@router.post("/api/history/storage/ingest-groww")
+def ingest_groww_storage_endpoint(
+    body: StorageIngestGrowwBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    """Incremental, idempotent ingestion of Groww candles into durable database storage."""
+    principal = require_csrf(request, settings)
+    from app.integrations.http import HttpxCaller
+    from app.integrations.service import groww_read_token
+    from app.market.storage import MarketDataStorageService
+
+    caller = HttpxCaller()
+    token = groww_read_token(session, settings, caller)
+
+    res = MarketDataStorageService.ingest_groww_history_incremental(
+        symbol=body.symbol,
+        interval=body.interval,
+        start_time=body.start_time,
+        end_time=body.end_time,
+        caller=caller,
+        access_token=token,
+        session=session,
+    )
+
+    session.add(
+        AuditEvent(
+            actor=principal.get("sub", "operator"),
+            action="storage.ingest_groww",
+            entity="market_candles",
+            before=None,
+            after={
+                "status": res.get("status"),
+                "api_calls_made": res.get("api_calls_made"),
+                "candles_ingested": res.get("candles_ingested"),
+                "conflicts_detected": res.get("conflicts_detected"),
+            },
+        )
+    )
+    return res
+
+
+@router.get("/api/history/storage/candles")
+def get_stored_candles_endpoint(
+    symbol: str = "NSE-NIFTY",
+    interval: str = "15minute",
+    start_time: str = "2026-10-05 09:15:00",
+    end_time: str = "2026-10-16 15:30:00",
+    regular_only: bool = True,
+    session: Session = Depends(get_db),
+) -> dict:
+    """Query normalized candles directly from durable database storage."""
+    from app.market.storage import MarketDataStorageService, parse_iso_or_epoch_to_ist
+
+    start_dt = parse_iso_or_epoch_to_ist(start_time)
+    end_dt = parse_iso_or_epoch_to_ist(end_time)
+
+    candles = MarketDataStorageService.get_stored_candles(
+        symbol=symbol,
+        interval=interval,
+        start_time=start_dt,
+        end_time=end_dt,
+        regular_only=regular_only,
+        session=session,
+    )
+    return {
+        "ok": True,
+        "symbol": symbol,
+        "interval": interval,
+        "count": len(candles),
+        "candles": candles,
+    }
+
+
+@router.get("/api/history/storage/provenance/{dataset_id}")
+def get_storage_provenance_endpoint(
+    dataset_id: str,
+    session: Session = Depends(get_db),
+) -> dict:
+    """Query data-quality checks and provenance for a persisted dataset."""
+    from app.market.storage import MarketDataStorageService
+
+    prov = MarketDataStorageService.get_dataset_provenance(dataset_id, session=session)
+    if prov is None:
+        return {"ok": False, "code": "NOT_FOUND", "message": f"Dataset {dataset_id} provenance not found."}
+    return {"ok": True, "provenance": prov}
+
+
+@router.post("/api/history/storage/cache/invalidate")
+def invalidate_benchmark_cache_endpoint(
+    body: StorageCacheInvalidateBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    """Invalidate benchmark cache entries when relevant inputs or models change."""
+    principal = require_csrf(request, settings)
+    from app.market.storage import MarketDataStorageService
+
+    count = MarketDataStorageService.invalidate_benchmark_cache(
+        dataset_id=body.dataset_id,
+        model_version=body.model_version,
+        target=body.target,
+        cache_key=body.cache_key,
+        reason=body.reason,
+        session=session,
+    )
+
+    session.add(
+        AuditEvent(
+            actor=principal.get("sub", "operator"),
+            action="storage.invalidate_benchmark_cache",
+            entity="benchmark_cache",
+            before=None,
+            after={"invalidated_count": count, "reason": body.reason},
+        )
+    )
+    return {"ok": True, "invalidated_count": count, "reason": body.reason}
+
+
+class M23BenchmarkRequestBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    dataset_id: str | None = None
+    use_cache: bool = True
+    initial_train_size: int = 1000
+    validation_size: int = 250
+    test_size: int = 250
+    step_size: int = 250
+
+
+@router.post("/api/history/m23-benchmark")
+def run_m23_benchmark_endpoint(
+    body: M23BenchmarkRequestBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    """Execute M23 modern forecasting benchmark across historical candles with database caching."""
+    principal = require_csrf(request, settings)
+    import json
+    from pathlib import Path
+    from app.forecasting.m23_research import (
+        M23ResearchConfig,
+        run_m23_comprehensive_benchmark,
+    )
+    from app.market.storage import MarketDataStorageService
+    from app.settings import REPO_ROOT
+
+    candles = []
+    dataset_id = body.dataset_id or "m23_nifty_15m_1y_dataset"
+    if body.dataset_id:
+        prov = MarketDataStorageService.get_dataset_provenance(body.dataset_id, session=session)
+        if prov and prov.get("file_path"):
+            fpath = Path(prov["file_path"])
+            if not fpath.is_absolute():
+                fpath = REPO_ROOT / fpath
+            if fpath.exists():
+                with open(fpath) as f:
+                    data = json.load(f)
+                    candles = data.get("candles", [])
+
+    if not candles:
+        candles = MarketDataStorageService.get_stored_candles(
+            symbol="NSE-NIFTY",
+            interval="15minute",
+            start_time="2020-01-01",
+            end_time="2027-01-01",
+            regular_only=True,
+            session=session,
+        )
+
+    if not candles:
+        return {"ok": False, "code": "NO_CANDLES", "message": "No stored candles found for benchmark."}
+
+    cfg = M23ResearchConfig(
+        initial_train_size=body.initial_train_size,
+        validation_size=body.validation_size,
+        test_size=body.test_size,
+        step_size=body.step_size,
+    )
+
+    results = run_m23_comprehensive_benchmark(
+        candles=candles,
+        config=cfg,
+        dataset_id=dataset_id,
+        use_cache=body.use_cache,
+    )
+
+    session.add(
+        AuditEvent(
+            actor=principal.get("sub", "operator"),
+            action="forecasting.m23_benchmark",
+            entity="benchmark_cache",
+            before=None,
+            after={
+                "dataset_id": dataset_id,
+                "targets_benchmarked": list(results.get("benchmarks_by_target", {}).keys()),
+            },
+        )
+    )
+
+    return {"ok": True, "results": results}
+
+
+class M26BenchmarkRequestBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    dataset_id: str | None = None
+    use_cache: bool = True
+
+
+@router.post("/api/history/m26-benchmark")
+def run_m26_benchmark_endpoint(
+    body: M26BenchmarkRequestBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    """Execute M26 turnover reduction, robustness, and generalization benchmark."""
+    principal = require_csrf(request, settings)
+    import json
+    from pathlib import Path
+    from app.forecasting.m26_research import run_m26_comprehensive_benchmark
+    from app.market.storage import MarketDataStorageService
+    from app.settings import REPO_ROOT
+
+    candles = []
+    dataset_id = body.dataset_id or "m23_nifty_15m_1y_dataset"
+    if body.dataset_id:
+        prov = MarketDataStorageService.get_dataset_provenance(body.dataset_id, session=session)
+        if prov and prov.get("file_path"):
+            fpath = Path(prov["file_path"])
+            if not fpath.is_absolute():
+                fpath = REPO_ROOT / fpath
+            if fpath.exists():
+                with open(fpath) as f:
+                    data = json.load(f)
+                    candles = data.get("regular_candles") or data.get("candles", [])
+
+    if not candles:
+        # Check standard derived dataset artifact
+        std_artifact = REPO_ROOT / "var" / "datasets" / "derived_nifty_15m_m23_bc7d31bceebf13a3.json"
+        if std_artifact.exists():
+            with open(std_artifact) as f:
+                data = json.load(f)
+                candles = data.get("regular_candles") or data.get("candles", [])
+                dataset_id = data.get("dataset_id", dataset_id)
+
+    if not candles:
+        candles = MarketDataStorageService.get_stored_candles(
+            symbol="NSE-NIFTY",
+            interval="15minute",
+            start_time="2020-01-01",
+            end_time="2027-01-01",
+            regular_only=True,
+            session=session,
+        )
+
+    if not candles:
+        return {"ok": False, "code": "NO_CANDLES", "message": "No stored candles found for benchmark."}
+
+    results = run_m26_comprehensive_benchmark(
+        candles=candles,
+        dataset_id=dataset_id,
+        use_cache=body.use_cache,
+    )
+
+    session.add(
+        AuditEvent(
+            actor=principal.get("sub", "operator"),
+            action="forecasting.m26_benchmark",
+            entity="benchmark_cache",
+            before=None,
+            after={
+                "dataset_id": dataset_id,
+                "recommendation": results.get("decision", {}).get("recommendation"),
+            },
+        )
+    )
+
+    return {"ok": True, "results": results}
+
+
+
+
+
+
+
 

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { changePassword, saveProfile, signOut, useSession } from "../components/session";
+import NewsSourcesManager from "../components/NewsSourcesManager";
 
 export default function ProfilePage() {
   const session = useSession();
@@ -119,6 +120,11 @@ export default function ProfilePage() {
         <div className="choice-row">
           <Link href="/risk">Configure Risk Capital in Portfolio</Link>
         </div>
+      </section>
+      <section>
+        <h2>News Agent Sources &amp; Web Feeds</h2>
+        <p>Web pages and RSS feeds queried by the autonomous News &amp; Event Analyst. Add custom sources, disable links, or restore defaults.</p>
+        <NewsSourcesManager />
       </section>
       <section>
         <h2>API keys</h2>

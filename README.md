@@ -110,6 +110,13 @@ The web app also serves local research pages: Dashboard, Data, Analysis, Forecas
 
 `GET /api/research/status` requires a signed-in session. It reports the kill switch only when the row was read. A missing switch is not reported as off. Risk capital stays null until an operator sets it.
 
+## UI & Trading Desk Walkthrough
+
+A comprehensive, canonical walkthrough of every page, view mode, button, toggle, dropdown, metric card, and status indicator is maintained at:
+- **[`docs/UI_WALKTHROUGH.md`](docs/UI_WALKTHROUGH.md)**
+
+Whenever UI components in `apps/web` are updated, this document must be updated concurrently (enforced by `.agents/rules/ui-documentation.md` and `AGENTS.md`).
+
 Start the API and the desk with the commands in **Run the backend and the frontend**. `LIVE_ORDER_SERVER_FLAG` stays false. Do not set `PAPER_TRADING_ACTIVE`.
 
 ```bash

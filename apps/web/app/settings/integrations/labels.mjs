@@ -4,6 +4,23 @@ export function connectionLabel(lastTestOk) {
   return "Not Tested";
 }
 
+export function lifecycleLabel(state) {
+  if (state === "CONNECTED") return "Connected";
+  if (state === "CONNECTION_FAILED") return "Connection Failed";
+  if (state === "DISCONNECTED") return "Disconnected";
+  if (state === "EXPIRED_OR_REAUTH_REQUIRED") return "Token Expired (Reauth Required)";
+  if (state === "CONFIGURED") return "Configured (Not Tested)";
+  if (state === "TESTING") return "Testing Connection…";
+  return "Not Configured";
+}
+
+export function lifecycleKind(state) {
+  if (state === "CONNECTED") return "ok";
+  if (state === "CONNECTION_FAILED" || state === "EXPIRED_OR_REAUTH_REQUIRED") return "bad";
+  if (state === "CONFIGURED") return "wait";
+  return "idle";
+}
+
 export function credentialLabel(configured) {
   return configured ? "Credentials Saved" : "Credentials Missing";
 }

@@ -15,22 +15,27 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import time
 from datetime import datetime, timezone
 from typing import Any
 
-from app.analysis.agent_config import AgentRole, load_agent_system_config
+from app.analysis.agent_config import AgentRole, SingleAgentConfig, load_agent_system_config
 from app.analysis.ai_providers import AIProviderRegistry
+from app.analysis.consensus_engine import evaluate_multi_agent_consensus
 from app.analysis.schema import AgentOutput
 from app.analysis.state import AnalysisState
 
 log = logging.getLogger("imm.agents")
+
+VALID_BIASES = {"BULLISH", "BEARISH", "NEUTRAL", "MIXED", "UNKNOWN"}
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _get_agent_cfg(role: AgentRole):
+def _get_agent_cfg(role: AgentRole) -> SingleAgentConfig | None:
     sys_cfg = load_agent_system_config()
     return sys_cfg.agents.get(role.value)
 
@@ -42,6 +47,248 @@ def _safe_float(val: Any) -> float | None:
         return None
 
 
+def _skipped_output(role_name: str, display_name: str, cfg: SingleAgentConfig | None) -> AgentOutput:
+    return AgentOutput(
+        agent_id=role_name,
+        role=role_name,
+        display_name=display_name,
+        status="SKIPPED",
+        provider="skipped",
+        model="none",
+        execution_mode="SKIPPED",
+        llm_attempted=False,
+        llm_succeeded=False,
+        fallback_used=False,
+        configured_provider=cfg.provider if cfg else None,
+        configured_model=cfg.model if cfg else None,
+        findings=["Agent disabled in configuration."],
+        limitations=["Skipped by configuration."],
+        timestamp=_now_iso(),
+    )
+
+
+def _should_invoke_llm(state: AnalysisState, cfg: SingleAgentConfig) -> bool:
+    """Invoke AIProviderRegistry only when explicitly requested or when custom/mock providers are registered."""
+    if state.get("enable_agent_llm") is True:
+        return True
+    if os.environ.get("ENABLE_AGENT_LLM", "").strip() in {"1", "true", "TRUE", "yes"}:
+        return True
+    p_name = (cfg.provider or "").lower().strip()
+    fb_name = (cfg.fallback_provider or "").lower().strip()
+    if p_name in AIProviderRegistry._providers or (fb_name and fb_name in AIProviderRegistry._providers):
+        return True
+    return False
+
+
+def _finalize_agent_output(
+    *,
+    role_name: str,
+    display_name: str,
+    cfg: SingleAgentConfig,
+    state: AnalysisState,
+    t0: float,
+    findings: list[str],
+    directional_bias: str,
+    confidence: float | None,
+    evidence_references: list[str],
+    missing_evidence: list[str],
+    limitations: list[str],
+    default_status: str = "SUCCESS",
+    lock_bias: bool = False,
+) -> AgentOutput:
+    det_latency_ms = max(0.01, round((time.perf_counter() - t0) * 1000, 2))
+    clean_refs = [r for r in evidence_references if r]
+    clean_missing = [m for m in missing_evidence if m]
+    clean_limits = list(limitations)
+    clean_findings = list(findings)
+    clean_bias = directional_bias if directional_bias in VALID_BIASES else "UNKNOWN"
+
+    if not _should_invoke_llm(state, cfg):
+        return AgentOutput(
+            agent_id=role_name,
+            role=role_name,
+            display_name=display_name,
+            status=default_status,  # type: ignore[arg-type]
+            provider="deterministic_rule",
+            model="v6_rule_engine",
+            execution_mode="DETERMINISTIC_RULE",
+            llm_attempted=False,
+            llm_succeeded=False,
+            fallback_used=False,
+            configured_provider=cfg.provider,
+            configured_model=cfg.model,
+            findings=clean_findings,
+            directional_bias=clean_bias,  # type: ignore[arg-type]
+            confidence=confidence,
+            evidence_references=clean_refs,
+            missing_evidence=clean_missing,
+            limitations=clean_limits,
+            latency_ms=det_latency_ms,
+            token_usage=None,
+            timestamp=_now_iso(),
+        )
+
+    system_prompt = (
+        f"You are the {display_name} ({role_name}) in a strict fail-closed institutional trading system. "
+        f"{cfg.description} "
+        "Respond strictly with a JSON object containing keys: "
+        "'findings' (list of concise strings), 'directional_bias' ('BULLISH'|'BEARISH'|'NEUTRAL'|'MIXED'|'UNKNOWN'), "
+        "'confidence' (number between 0.0 and 1.0 or null), and 'limitations' (list of strings). "
+        "Never fabricate market prices, option Greeks, or override safety gates."
+    )
+    user_payload = {
+        "role": role_name,
+        "deterministic_findings": clean_findings,
+        "deterministic_directional_bias": clean_bias,
+        "evidence_references": clean_refs,
+        "missing_evidence": clean_missing,
+        "limitations": clean_limits,
+    }
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": json.dumps(user_payload)},
+    ]
+
+    try:
+        res = AIProviderRegistry.generate_with_fallback(
+            primary_provider=cfg.provider,
+            primary_model=cfg.model,
+            messages=messages,
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+            timeout=cfg.timeout_seconds,
+            fallback_provider=cfg.fallback_provider,
+            fallback_model=cfg.fallback_model,
+        )
+    except Exception as exc:
+        return AgentOutput(
+            agent_id=role_name,
+            role=role_name,
+            display_name=display_name,
+            status="PARTIAL",
+            provider="deterministic_fallback",
+            model="v6_rule_engine",
+            execution_mode="DETERMINISTIC_FALLBACK_ON_LLM_ERROR",
+            llm_attempted=True,
+            llm_succeeded=False,
+            fallback_used=True,
+            configured_provider=cfg.provider,
+            configured_model=cfg.model,
+            findings=clean_findings,
+            directional_bias=clean_bias,  # type: ignore[arg-type]
+            confidence=confidence,
+            evidence_references=clean_refs,
+            missing_evidence=clean_missing,
+            limitations=clean_limits + ["LLM provider invocation raised an exception; using deterministic rule baseline."],
+            errors=[f"PROVIDER_EXCEPTION: {exc.__class__.__name__}: {str(exc)[:160]}"],
+            latency_ms=round((time.perf_counter() - t0) * 1000, 2),
+            token_usage=None,
+            timestamp=_now_iso(),
+        )
+
+    if not res.ok or not isinstance(res.structured_data, dict):
+        err_code = res.error_code or "INVALID_STRUCTURED_OUTPUT"
+        err_msg = res.error_message or "Provider did not return a structured JSON object."
+        errors_list = [f"{err_code}: {err_msg}"]
+        if res.primary_error_code:
+            errors_list.insert(0, f"PRIMARY_{res.primary_error_code}: {res.primary_error_message}")
+        return AgentOutput(
+            agent_id=role_name,
+            role=role_name,
+            display_name=display_name,
+            status="PARTIAL",
+            provider="deterministic_fallback",
+            model="v6_rule_engine",
+            execution_mode="DETERMINISTIC_FALLBACK_ON_LLM_ERROR",
+            llm_attempted=True,
+            llm_succeeded=False,
+            fallback_used=True,
+            configured_provider=cfg.provider,
+            configured_model=cfg.model,
+            findings=clean_findings,
+            directional_bias=clean_bias,  # type: ignore[arg-type]
+            confidence=confidence,
+            evidence_references=clean_refs,
+            missing_evidence=clean_missing,
+            limitations=clean_limits + [f"LLM call failed ({err_code}); preserved deterministic baseline findings."],
+            errors=errors_list,
+            latency_ms=max(det_latency_ms, float(res.latency_ms or 0.0)),
+            token_usage={
+                "prompt_tokens": int(res.prompt_tokens or 0),
+                "completion_tokens": int(res.completion_tokens or 0),
+                "total_tokens": int(res.total_tokens or 0),
+            }
+            if (res.prompt_tokens or res.completion_tokens or res.total_tokens)
+            else None,
+            timestamp=_now_iso(),
+        )
+
+    sdata = res.structured_data
+    llm_findings_raw = sdata.get("findings")
+    if isinstance(llm_findings_raw, list):
+        llm_findings = [str(item).strip() for item in llm_findings_raw if str(item).strip()]
+        # Preserve mandatory deterministic findings while appending validated LLM synthesis
+        for lf in llm_findings:
+            if lf not in clean_findings:
+                clean_findings.append(lf)
+
+    if not lock_bias:
+        cand_bias = str(sdata.get("directional_bias") or "").upper().strip()
+        if cand_bias in VALID_BIASES:
+            clean_bias = cand_bias
+
+    cand_conf = _safe_float(sdata.get("confidence"))
+    if cand_conf is not None and 0.0 <= cand_conf <= 1.0 and not lock_bias:
+        confidence = round(cand_conf, 4)
+
+    llm_limits = sdata.get("limitations")
+    if isinstance(llm_limits, list):
+        for lim in llm_limits:
+            s_lim = str(lim).strip()
+            if s_lim and s_lim not in clean_limits:
+                clean_limits.append(s_lim)
+
+    if res.fallback_used and res.primary_error_code:
+        clean_limits.append(
+            f"Primary provider {cfg.provider}/{cfg.model} failed ({res.primary_error_code}); "
+            f"executed fallback {res.provider}/{res.model}."
+        )
+
+    prov_obj = AIProviderRegistry._providers.get((res.provider or "").lower().strip())
+    is_mock = bool(getattr(prov_obj, "is_mock", False))
+    exec_mode = "MOCK_LLM" if is_mock else ("LLM_FALLBACK" if res.fallback_used else "LLM")
+    final_status = "FALLBACK_USED" if res.fallback_used else default_status
+
+    return AgentOutput(
+        agent_id=role_name,
+        role=role_name,
+        display_name=display_name,
+        status=final_status,  # type: ignore[arg-type]
+        provider=res.provider,
+        model=res.model,
+        execution_mode=exec_mode,  # type: ignore[arg-type]
+        llm_attempted=True,
+        llm_succeeded=True,
+        fallback_used=bool(res.fallback_used),
+        configured_provider=cfg.provider,
+        configured_model=cfg.model,
+        findings=clean_findings,
+        directional_bias=clean_bias,  # type: ignore[arg-type]
+        confidence=confidence,
+        evidence_references=clean_refs,
+        missing_evidence=clean_missing,
+        limitations=clean_limits,
+        errors=[],
+        latency_ms=max(det_latency_ms, float(res.latency_ms or 0.0)),
+        token_usage={
+            "prompt_tokens": int(res.prompt_tokens or 0),
+            "completion_tokens": int(res.completion_tokens or 0),
+            "total_tokens": int(res.total_tokens or 0),
+        },
+        timestamp=_now_iso(),
+    )
+
+
 # ==============================================================================
 # 1. MARKET DATA ANALYST
 # ==============================================================================
@@ -50,22 +297,13 @@ def market_data_analyst_node(state: AnalysisState) -> dict:
 
     MUST NOT declare data verified unless underlying verification evidence supports it.
     """
+    t0 = time.perf_counter()
     cfg = _get_agent_cfg(AgentRole.MARKET_DATA)
     role_name = AgentRole.MARKET_DATA.value
     agent_outputs = dict(state.get("agent_outputs") or {})
 
     if not cfg or not cfg.enabled:
-        out = AgentOutput(
-            agent_id=role_name,
-            role=role_name,
-            display_name="Market Data Analyst",
-            status="SKIPPED",
-            provider=cfg.provider if cfg else "openai",
-            model=cfg.model if cfg else "gpt-4o-mini",
-            findings=["Agent disabled in configuration."],
-            limitations=["Skipped by configuration."],
-            timestamp=_now_iso(),
-        )
+        out = _skipped_output(role_name, "Market Data Analyst", cfg)
         agent_outputs[role_name] = out.model_dump()
         return {"agent_outputs": agent_outputs}
 
@@ -94,20 +332,19 @@ def market_data_analyst_node(state: AnalysisState) -> dict:
         "External multi-broker cross-reconciliation is pending.",
     ]
 
-    out = AgentOutput(
-        agent_id=role_name,
-        role=role_name,
+    out = _finalize_agent_output(
+        role_name=role_name,
         display_name="Market Data Analyst",
-        status="SUCCESS",
-        provider=cfg.provider,
-        model=cfg.model,
+        cfg=cfg,
+        state=state,
+        t0=t0,
         findings=findings,
         directional_bias="NEUTRAL",
         confidence=None,
         evidence_references=[row.get("evidence_id") for row in evidence[:5] if row.get("evidence_id")],
         missing_evidence=missing_info,
         limitations=limitations,
-        timestamp=_now_iso(),
+        lock_bias=True,
     )
     agent_outputs[role_name] = out.model_dump()
     return {"agent_outputs": agent_outputs}
@@ -121,22 +358,13 @@ def technical_analyst_node(state: AnalysisState) -> dict:
 
     Deterministic indicator calculation with structured interpretation.
     """
+    t0 = time.perf_counter()
     cfg = _get_agent_cfg(AgentRole.TECHNICAL)
     role_name = AgentRole.TECHNICAL.value
     agent_outputs = dict(state.get("agent_outputs") or {})
 
     if not cfg or not cfg.enabled:
-        out = AgentOutput(
-            agent_id=role_name,
-            role=role_name,
-            display_name="Technical Analyst",
-            status="SKIPPED",
-            provider=cfg.provider if cfg else "google",
-            model=cfg.model if cfg else "gemini-1.5-pro",
-            findings=["Agent disabled in configuration."],
-            limitations=["Skipped by configuration."],
-            timestamp=_now_iso(),
-        )
+        out = _skipped_output(role_name, "Technical Analyst", cfg)
         agent_outputs[role_name] = out.model_dump()
         return {"agent_outputs": agent_outputs}
 
@@ -156,35 +384,36 @@ def technical_analyst_node(state: AnalysisState) -> dict:
 
     findings: list[str] = []
     directional_bias = "UNKNOWN"
+
     if len(prices) >= 2:
         ret = (prices[-1] - prices[0]) / prices[0]
         findings.append(f"Technical window return: {ret * 100:.2f}% across {len(prices)} bars.")
-        if ret > 0.001:
-            directional_bias = "BULLISH"
-            findings.append("Short-term momentum indicates upward price continuation.")
-        elif ret < -0.001:
-            directional_bias = "BEARISH"
-            findings.append("Short-term momentum indicates downward price continuation.")
-        else:
+
+        # Evaluate trend strength and regime
+        if abs(ret) < 0.001:
             directional_bias = "NEUTRAL"
-            findings.append("Price action is range-bound without clear directional momentum.")
+            findings.append("Market regime: SIDEWAYS_CONSOLIDATION. Price action is range-bound without clear trend.")
+        elif ret >= 0.001:
+            directional_bias = "BULLISH"
+            findings.append("Market regime: TRENDING_BULL. Short-term momentum indicates upward price continuation.")
+        else:
+            directional_bias = "BEARISH"
+            findings.append("Market regime: TRENDING_BEAR. Short-term momentum indicates downward price continuation.")
     else:
         findings.append("Insufficient consecutive price observations for reliable deterministic indicator calculations.")
 
-    out = AgentOutput(
-        agent_id=role_name,
-        role=role_name,
+    out = _finalize_agent_output(
+        role_name=role_name,
         display_name="Technical Analyst",
-        status="SUCCESS",
-        provider=cfg.provider,
-        model=cfg.model,
+        cfg=cfg,
+        state=state,
+        t0=t0,
         findings=findings,
         directional_bias=directional_bias,
         confidence=None,
         evidence_references=[e.get("evidence_id") for e in tech_evidence if e.get("evidence_id")],
         missing_evidence=[],
         limitations=["Calculated on available historical/quarantined bars only."],
-        timestamp=_now_iso(),
     )
     agent_outputs[role_name] = out.model_dump()
     return {"agent_outputs": agent_outputs}
@@ -198,22 +427,13 @@ def global_macro_analyst_node(state: AnalysisState) -> dict:
 
     Explicitly reports missing or stale feeds.
     """
+    t0 = time.perf_counter()
     cfg = _get_agent_cfg(AgentRole.GLOBAL_MACRO)
     role_name = AgentRole.GLOBAL_MACRO.value
     agent_outputs = dict(state.get("agent_outputs") or {})
 
     if not cfg or not cfg.enabled:
-        out = AgentOutput(
-            agent_id=role_name,
-            role=role_name,
-            display_name="Global and Macro Analyst",
-            status="SKIPPED",
-            provider=cfg.provider if cfg else "openai",
-            model=cfg.model if cfg else "gpt-4o-mini",
-            findings=["Agent disabled in configuration."],
-            limitations=["Skipped by configuration."],
-            timestamp=_now_iso(),
-        )
+        out = _skipped_output(role_name, "Global and Macro Analyst", cfg)
         agent_outputs[role_name] = out.model_dump()
         return {"agent_outputs": agent_outputs}
 
@@ -233,20 +453,18 @@ def global_macro_analyst_node(state: AnalysisState) -> dict:
     if missing_instruments:
         findings.append(f"Missing macro/global data feeds: {', '.join(missing_instruments)}.")
 
-    out = AgentOutput(
-        agent_id=role_name,
-        role=role_name,
+    out = _finalize_agent_output(
+        role_name=role_name,
         display_name="Global and Macro Analyst",
-        status="SUCCESS",
-        provider=cfg.provider,
-        model=cfg.model,
+        cfg=cfg,
+        state=state,
+        t0=t0,
         findings=findings,
         directional_bias="UNKNOWN",
         confidence=None,
         evidence_references=[e.get("evidence_id") for e in macro_evidence if e.get("evidence_id")],
         missing_evidence=missing_instruments,
         limitations=["Macro signals are unverified for cross-market correlation."],
-        timestamp=_now_iso(),
     )
     agent_outputs[role_name] = out.model_dump()
     return {"agent_outputs": agent_outputs}
@@ -261,22 +479,13 @@ def news_event_analyst_node(state: AnalysisState) -> dict:
     Distinguishes confirmed facts, reported claims, interpretations, unverified info.
     Enforces point-in-time publication constraints.
     """
+    t0 = time.perf_counter()
     cfg = _get_agent_cfg(AgentRole.NEWS_EVENT)
     role_name = AgentRole.NEWS_EVENT.value
     agent_outputs = dict(state.get("agent_outputs") or {})
 
     if not cfg or not cfg.enabled:
-        out = AgentOutput(
-            agent_id=role_name,
-            role=role_name,
-            display_name="News and Event Analyst",
-            status="SKIPPED",
-            provider=cfg.provider if cfg else "google",
-            model=cfg.model if cfg else "gemini-1.5-pro",
-            findings=["Agent disabled in configuration."],
-            limitations=["Skipped by configuration."],
-            timestamp=_now_iso(),
-        )
+        out = _skipped_output(role_name, "News and Event Analyst", cfg)
         agent_outputs[role_name] = out.model_dump()
         return {"agent_outputs": agent_outputs}
 
@@ -289,23 +498,28 @@ def news_event_analyst_node(state: AnalysisState) -> dict:
     findings = [
         f"Evaluated {len(news_items)} news items ({len(facts)} confirmed facts, {len(claims)} reported claims).",
     ]
+    categories = [e.get("event_category") for e in news_items if e.get("event_category")]
+    if categories:
+        cat_counts = {c: categories.count(c) for c in set(categories)}
+        cat_summary = ", ".join(f"{k} ({v})" for k, v in sorted(cat_counts.items()))
+        findings.append(f"Geopolitical and policy categories detected: {cat_summary}.")
+    else:
+        findings.append("No active geopolitical, sanctions, or central bank event categories detected in current headline set.")
     if not news_items:
         findings.append("No news items stored on state for the evaluation window.")
 
-    out = AgentOutput(
-        agent_id=role_name,
-        role=role_name,
+    out = _finalize_agent_output(
+        role_name=role_name,
         display_name="News and Event Analyst",
-        status="SUCCESS",
-        provider=cfg.provider,
-        model=cfg.model,
+        cfg=cfg,
+        state=state,
+        t0=t0,
         findings=findings,
         directional_bias="UNKNOWN",
         confidence=None,
         evidence_references=[e.get("evidence_id") for e in news_items if e.get("evidence_id")],
-        missing_evidence=["Live news feed unconfigured" if not news_items else ""],
+        missing_evidence=["Live news feed unconfigured"] if not news_items else [],
         limitations=["Strict point-in-time timestamp gating enforced."],
-        timestamp=_now_iso(),
     )
     agent_outputs[role_name] = out.model_dump()
     return {"agent_outputs": agent_outputs}
@@ -320,22 +534,13 @@ def options_analyst_node(state: AnalysisState) -> dict:
     DOES NOT fabricate option chain values, PCR, IV, or Greeks.
     Returns explicit unavailable status when data is missing.
     """
+    t0 = time.perf_counter()
     cfg = _get_agent_cfg(AgentRole.OPTIONS)
     role_name = AgentRole.OPTIONS.value
     agent_outputs = dict(state.get("agent_outputs") or {})
 
     if not cfg or not cfg.enabled:
-        out = AgentOutput(
-            agent_id=role_name,
-            role=role_name,
-            display_name="Options Analyst",
-            status="SKIPPED",
-            provider=cfg.provider if cfg else "openai",
-            model=cfg.model if cfg else "gpt-4o-mini",
-            findings=["Agent disabled in configuration."],
-            limitations=["Skipped by configuration."],
-            timestamp=_now_iso(),
-        )
+        out = _skipped_output(role_name, "Options Analyst", cfg)
         agent_outputs[role_name] = out.model_dump()
         return {"agent_outputs": agent_outputs}
 
@@ -343,36 +548,58 @@ def options_analyst_node(state: AnalysisState) -> dict:
     opt_evidence = [e for e in evidence if e.get("category") == "DERIVATIVES"]
 
     if not opt_evidence:
-        out = AgentOutput(
-            agent_id=role_name,
-            role=role_name,
+        out = _finalize_agent_output(
+            role_name=role_name,
             display_name="Options Analyst",
-            status="PARTIAL",
-            provider=cfg.provider,
-            model=cfg.model,
+            cfg=cfg,
+            state=state,
+            t0=t0,
             findings=["No verified options or derivatives feed is configured. PCR, IV, and Greeks are withheld."],
             directional_bias="UNKNOWN",
             confidence=None,
             evidence_references=[],
             missing_evidence=["Options Chain (PCR, Max Pain, Implied Volatility)"],
             limitations=["Fabrication of derivatives data is strictly prohibited by safety invariants."],
-            timestamp=_now_iso(),
+            default_status="PARTIAL",
+            lock_bias=True,
         )
     else:
-        out = AgentOutput(
-            agent_id=role_name,
-            role=role_name,
+        findings = [f"Evaluated {len(opt_evidence)} verified derivatives items."]
+        directional_bias = "NEUTRAL"
+        confidence = None
+
+        # Check for structured option quotes (M39)
+        valid_quotes = [e for e in opt_evidence if "strike" in e and "option_type" in e]
+        if valid_quotes:
+            try:
+                from app.options.m39_options_analytics import analyze_options_chain
+                chain_summary = analyze_options_chain(
+                    quotes=valid_quotes,
+                    forward_price=float(valid_quotes[0].get("forward_price", 25000.0)),
+                    time_years=float(valid_quotes[0].get("time_years", 7.0 / 365.0)),
+                    symbol=str(valid_quotes[0].get("instrument", "NIFTY")),
+                )
+                findings.append(
+                    f"Options PCR(OI): {chain_summary.pcr_oi:.2f}, PCR(Vol): {chain_summary.pcr_volume:.2f}, "
+                    f"Max Pain Strike: {chain_summary.max_pain_strike:.0f}, ATM IV: {chain_summary.atm_iv * 100:.1f}%."
+                )
+                directional_bias = chain_summary.directional_sentiment
+                confidence = chain_summary.sentiment_confidence
+            except Exception as exc:
+                findings.append(f"Options chain parsing returned: {exc.__class__.__name__}.")
+
+        out = _finalize_agent_output(
+            role_name=role_name,
             display_name="Options Analyst",
-            status="SUCCESS",
-            provider=cfg.provider,
-            model=cfg.model,
-            findings=[f"Evaluated {len(opt_evidence)} verified derivatives items."],
-            directional_bias="NEUTRAL",
-            confidence=None,
+            cfg=cfg,
+            state=state,
+            t0=t0,
+            findings=findings,
+            directional_bias=directional_bias,
+            confidence=confidence,
             evidence_references=[e.get("evidence_id") for e in opt_evidence if e.get("evidence_id")],
             missing_evidence=[],
             limitations=["Options data subject to liquidity and strike coverage constraints."],
-            timestamp=_now_iso(),
         )
 
     agent_outputs[role_name] = out.model_dump()
@@ -387,22 +614,13 @@ def quant_forecast_analyst_node(state: AnalysisState) -> dict:
 
     Reports model identity, evaluation evidence, probability estimates, uncertainty.
     """
+    t0 = time.perf_counter()
     cfg = _get_agent_cfg(AgentRole.QUANT_FORECAST)
     role_name = AgentRole.QUANT_FORECAST.value
     agent_outputs = dict(state.get("agent_outputs") or {})
 
     if not cfg or not cfg.enabled:
-        out = AgentOutput(
-            agent_id=role_name,
-            role=role_name,
-            display_name="Quantitative Forecast Analyst",
-            status="SKIPPED",
-            provider=cfg.provider if cfg else "openai",
-            model=cfg.model if cfg else "gpt-4o-mini",
-            findings=["Agent disabled in configuration."],
-            limitations=["Skipped by configuration."],
-            timestamp=_now_iso(),
-        )
+        out = _skipped_output(role_name, "Quantitative Forecast Analyst", cfg)
         agent_outputs[role_name] = out.model_dump()
         return {"agent_outputs": agent_outputs}
 
@@ -423,7 +641,8 @@ def quant_forecast_analyst_node(state: AnalysisState) -> dict:
                 p_up = f.get("probability_up")
                 direction = f.get("direction")
                 m_ver = f.get("model_version")
-                findings.append(f"Model {m_ver} on {inst}: direction={direction}, P(up)={p_up:.3f} if p_up else N/A.")
+                p_str = f"{p_up:.3f}" if p_up is not None else "N/A"
+                findings.append(f"Model {m_ver} on {inst}: direction={direction}, P(up)={p_str}.")
                 if direction in {"UP", "BULLISH"}:
                     directional_bias = "BULLISH"
                 elif direction in {"DOWN", "BEARISH"}:
@@ -433,20 +652,18 @@ def quant_forecast_analyst_node(state: AnalysisState) -> dict:
     except Exception as exc:
         findings.append(f"Quantitative forecast evaluation returned: {exc.__class__.__name__}.")
 
-    out = AgentOutput(
-        agent_id=role_name,
-        role=role_name,
+    out = _finalize_agent_output(
+        role_name=role_name,
         display_name="Quantitative Forecast Analyst",
-        status="SUCCESS",
-        provider=cfg.provider,
-        model=cfg.model,
+        cfg=cfg,
+        state=state,
+        t0=t0,
         findings=findings,
         directional_bias=directional_bias,
         confidence=None,
         evidence_references=[],
         missing_evidence=[],
         limitations=limitations,
-        timestamp=_now_iso(),
     )
     agent_outputs[role_name] = out.model_dump()
     return {"agent_outputs": agent_outputs}
@@ -460,29 +677,19 @@ def risk_uncertainty_analyst_node(state: AnalysisState) -> dict:
 
     Cross-analyzes all upstream agents and flags irreconcilable conflicts.
     """
+    t0 = time.perf_counter()
     cfg = _get_agent_cfg(AgentRole.RISK_UNCERTAINTY)
     role_name = AgentRole.RISK_UNCERTAINTY.value
     agent_outputs = dict(state.get("agent_outputs") or {})
 
     if not cfg or not cfg.enabled:
-        out = AgentOutput(
-            agent_id=role_name,
-            role=role_name,
-            display_name="Risk and Uncertainty Analyst",
-            status="SKIPPED",
-            provider=cfg.provider if cfg else "openai",
-            model=cfg.model if cfg else "gpt-4o-mini",
-            findings=["Agent disabled in configuration."],
-            limitations=["Skipped by configuration."],
-            timestamp=_now_iso(),
-        )
+        out = _skipped_output(role_name, "Risk and Uncertainty Analyst", cfg)
         agent_outputs[role_name] = out.model_dump()
         return {"agent_outputs": agent_outputs}
 
     # Collect biases and findings across previous agents
     biases = {}
     missing_all = list(state.get("missing") or [])
-    conflicts_all = list(state.get("conflicts") or [])
 
     for r_key, agent_data in agent_outputs.items():
         if isinstance(agent_data, dict):
@@ -499,25 +706,41 @@ def risk_uncertainty_analyst_node(state: AnalysisState) -> dict:
     else:
         findings.append("No active directional conflict between reporting specialist agents.")
 
+    # Check for sideways consolidation regime in technical analyst output
+    tech_out = agent_outputs.get(AgentRole.TECHNICAL.value) or {}
+    tech_findings = " ".join(tech_out.get("findings") or [])
+    is_sideways = "SIDEWAYS_CONSOLIDATION" in tech_findings
+    if is_sideways:
+        findings.append("RISK VETO: Market is in sideways consolidation regime (M28 filter). Mandating NO_TRADE.")
+
+    # Quantitative Consensus & Uncertainty Gating (M38)
+    consensus_eval = evaluate_multi_agent_consensus(agent_outputs, state)
+    findings.append(
+        f"Consensus directional score: {consensus_eval.consensus_score:+.2f}, "
+        f"Epistemic uncertainty: {consensus_eval.epistemic_uncertainty:.2f}, "
+        f"Disagreement index: {consensus_eval.disagreement_index:.2f}."
+    )
+    if consensus_eval.vetoes:
+        findings.append(f"Active risk vetoes asserted: {consensus_eval.vetoes}.")
+
     if missing_all:
         findings.append(f"Unresolved missing upstream data items: {missing_all}.")
 
     findings.append("Enforcing safety gate: live_trading_enabled remains False; forecast_ready remains False.")
 
-    out = AgentOutput(
-        agent_id=role_name,
-        role=role_name,
+    out = _finalize_agent_output(
+        role_name=role_name,
         display_name="Risk and Uncertainty Analyst",
-        status="SUCCESS",
-        provider=cfg.provider,
-        model=cfg.model,
+        cfg=cfg,
+        state=state,
+        t0=t0,
         findings=findings,
-        directional_bias="MIXED" if has_conflict else "NEUTRAL",
+        directional_bias="MIXED" if has_conflict else ("NEUTRAL" if is_sideways else "NEUTRAL"),
         confidence=None,
         evidence_references=[],
         missing_evidence=missing_all,
-        limitations=["Risk analysis vetoes any directional trade when required evidence is missing."],
-        timestamp=_now_iso(),
+        limitations=["Risk analysis vetoes any directional trade when required evidence is missing or market is sideways."],
+        lock_bias=True,
     )
     agent_outputs[role_name] = out.model_dump()
     return {"agent_outputs": agent_outputs}
@@ -532,6 +755,7 @@ def final_decision_agent_node(state: AnalysisState) -> dict:
     MUST NOT invent evidence, silently resolve material conflicts, or override safety gates.
     MANDATES NO_TRADE when required evidence or approvals are missing.
     """
+    t0 = time.perf_counter()
     cfg = _get_agent_cfg(AgentRole.FINAL_DECISION)
     role_name = AgentRole.FINAL_DECISION.value
     agent_outputs = dict(state.get("agent_outputs") or {})
@@ -549,45 +773,80 @@ def final_decision_agent_node(state: AnalysisState) -> dict:
         "LIVE_ROUTING_DISABLED",
     ]
 
+    # Check risk and technical signals
+    risk_out = agent_outputs.get(AgentRole.RISK_UNCERTAINTY.value) or {}
+    risk_findings = " ".join(risk_out.get("findings") or []).upper()
+    tech_out = agent_outputs.get(AgentRole.TECHNICAL.value) or {}
+    tech_findings = " ".join(tech_out.get("findings") or []).upper()
+
+    if "SIDEWAYS_CONSOLIDATION" in risk_findings or "SIDEWAYS CONSOLIDATION" in risk_findings or "SIDEWAYS_CONSOLIDATION" in tech_findings:
+        reason_codes.append("REGIME_SIDEWAYS_CONSOLIDATION")
+    if "CONFLICT DETECTED" in risk_findings:
+        reason_codes.append("SPECIALIST_BIAS_CONFLICT")
+
+    # Evaluate dynamic multi-agent consensus (M38)
+    consensus_eval = evaluate_multi_agent_consensus(agent_outputs, state)
+    for rc in consensus_eval.reason_codes:
+        if rc not in reason_codes:
+            reason_codes.append(rc)
+
     findings = [
         "Mandatory safety invariants strictly enforced.",
-        "Decision: NO_TRADE. Reason: Historical data unverified independently and live trading disabled.",
+        "Decision: NO_TRADE. Reason: Historical data unverified independently, live trading disabled, and safety gates active.",
     ]
+    if "REGIME_SIDEWAYS_CONSOLIDATION" in reason_codes:
+        findings.append("Consolidation filter active: Market is in sideways range; directional trades suppressed.")
+    if "EXCESSIVE_EPISTEMIC_UNCERTAINTY" in reason_codes:
+        findings.append(f"Uncertainty veto active: Epistemic uncertainty {consensus_eval.epistemic_uncertainty:.2f} exceeds tolerance threshold.")
 
-    out = AgentOutput(
-        agent_id=role_name,
-        role=role_name,
-        display_name="Final Decision Agent",
-        status="SUCCESS",
-        provider=cfg.provider if cfg else "openai",
-        model=cfg.model if cfg else "gpt-4o",
-        findings=findings,
-        directional_bias="NEUTRAL",
-        confidence=None,
-        evidence_references=[],
-        missing_evidence=[],
-        limitations=[
-            "forecast_ready = False",
-            "real_market_data_verified = False",
-            "paper_approved = False",
-            "live_approved = False",
-            "live_broker_routing_enabled = False",
-        ],
-        timestamp=_now_iso(),
-    )
+    if not cfg or not cfg.enabled:
+        out = _skipped_output(role_name, "Final Decision Agent", cfg)
+    else:
+        out = _finalize_agent_output(
+            role_name=role_name,
+            display_name="Final Decision Agent",
+            cfg=cfg,
+            state=state,
+            t0=t0,
+            findings=findings,
+            directional_bias="NEUTRAL",
+            confidence=None,
+            evidence_references=[],
+            missing_evidence=[],
+            limitations=[
+                "forecast_ready = False",
+                "real_market_data_verified = False",
+                "paper_approved = False",
+                "live_approved = False",
+                "live_broker_routing_enabled = False",
+            ],
+            lock_bias=True,
+        )
     agent_outputs[role_name] = out.model_dump()
 
     # Update state report
     report = dict(state.get("report") or {})
     report["decision"] = decision
-    report["reason_codes"] = reason_codes
+    report["reason_codes"] = sorted(list(set(reason_codes)))
     report["agent_outputs"] = agent_outputs
     report["forecast_ready"] = forecast_ready
     report["paper_approved"] = paper_approved
     report["live_approved"] = live_approved
     report["real_market_data_verified"] = real_market_data_verified
+    report["consensus"] = {
+        "consensus_score": consensus_eval.consensus_score,
+        "disagreement_index": consensus_eval.disagreement_index,
+        "epistemic_uncertainty": consensus_eval.epistemic_uncertainty,
+        "active_specialist_count": consensus_eval.active_specialist_count,
+        "total_effective_weight": consensus_eval.total_effective_weight,
+        "directional_recommendation": consensus_eval.directional_recommendation,
+        "vetoes": consensus_eval.vetoes,
+        "reason_codes": consensus_eval.reason_codes,
+        "specialist_scores": consensus_eval.specialist_scores,
+    }
 
     return {
         "agent_outputs": agent_outputs,
         "report": report,
     }
+

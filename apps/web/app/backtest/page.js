@@ -3,14 +3,24 @@
 import { useState } from "react";
 
 import ResearchBoard, { csrf } from "../components/ResearchBoard";
+import InstrumentSelector from "../components/InstrumentSelector";
+import InstrumentBacktestCard from "../components/InstrumentBacktestCard";
+import V6MultiAssetCard from "../components/V6MultiAssetCard";
 
 export default function BacktestPage() {
   return (
     <ResearchBoard
-      title="Walk-forward"
-      lede="A synthetic walk-forward run is research. It is not out-of-sample market performance and it does not approve a model."
+      title="Walk-forward & Multi-Asset Research"
+      lede="Independent instrument-level evaluation, higher-timeframe swing resampling, 19-fold walk-forward cross-validation, statutory friction accounting, and factor attribution."
     >
-      {() => <Runner />}
+      {() => (
+        <>
+          <InstrumentSelector />
+          <InstrumentBacktestCard />
+          <V6MultiAssetCard />
+          <Runner />
+        </>
+      )}
     </ResearchBoard>
   );
 }

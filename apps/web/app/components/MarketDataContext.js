@@ -3,7 +3,77 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { csrfToken as csrf } from "./session";
 
+export const INSTRUMENT_CONFIGS = {
+  NIFTY: {
+    id: "NIFTY",
+    name: "NIFTY 50",
+    symbol: "NSE:NIFTY50-INDEX",
+    growwSymbol: "NSE-NIFTY",
+    exchange: "NSE",
+    segment: "NSE_CASH",
+    lotSize: 25,
+    strikeStep: 50,
+    session: "09:15 - 15:30 IST",
+    sessionType: "NSE Regular Session",
+    dataSource: "Groww Trade API / Quarantined Storage",
+    dataFreshness: "Live / M15 Verified",
+    availableHistory: "6,227 M15 Candles (2026-04-16 to 2026-10-14)",
+    forecastHorizons: ["15m (HTF Resampled)", "1D Daily Swing"],
+    validationStatus: "VERIFIED_RESEARCH_DATASET",
+    modelsValidated: ["Logistic Regression", "Persistence Baseline", "Regime-Gated HTF LightGBM"],
+    optionsSupported: true,
+    optionsNote: "Full NSE Option Chain with continuous Black-76 Greeks & PCR Surface",
+    frictionBps: 2.0,
+  },
+  SENSEX: {
+    id: "SENSEX",
+    name: "BSE SENSEX",
+    symbol: "BSE:SENSEX-INDEX",
+    growwSymbol: "BSE-SENSEX",
+    exchange: "BSE",
+    segment: "BSE_CASH",
+    lotSize: 20,
+    strikeStep: 100,
+    session: "09:15 - 15:30 IST",
+    sessionType: "BSE Regular Session",
+    dataSource: "BSE Cash Feed / Groww LTP",
+    dataFreshness: "Live LTP (Historical Ingestion Pending)",
+    availableHistory: "Live Quotes / LTP (No persistent 15m dataset ingested)",
+    forecastHorizons: ["15m (Experimental)", "1D Daily Swing"],
+    validationStatus: "INDEPENDENT_PROVENANCE_REQUIRED",
+    modelsValidated: [],
+    optionsSupported: true,
+    optionsNote: "BSE Weekly/Monthly Option Contracts (Lot 20, Step 100) with Black-76 Greeks",
+    frictionBps: 2.0,
+  },
+  CRUDEOILMINI: {
+    id: "CRUDEOILMINI",
+    name: "CRUDEOIL MINI",
+    symbol: "MCX:CRUDEOILM-FUT",
+    growwSymbol: null,
+    exchange: "MCX",
+    segment: "MCX_COMMODITY",
+    lotSize: 10,
+    strikeStep: 50,
+    session: "09:00 - 23:30 IST (23:55 winter)",
+    sessionType: "MCX Extended Commodity Session",
+    dataSource: "MCX Real-time Feed / International Benchmark Proxies",
+    dataFreshness: "Commodity Snapshot (Groww MCX feed unavailable)",
+    availableHistory: "International Benchmarks (Brent/WTI). MCX historical candles not supplied by Groww.",
+    forecastHorizons: ["15m Commodity Swing", "Evening Session Multi-Hour"],
+    validationStatus: "DATA_FEED_GAP_REPORTED",
+    modelsValidated: [],
+    optionsSupported: false,
+    optionsNote: "Options Analytics DISABLED (MCX Options on Futures feed unavailable via Groww API)",
+    frictionBps: 3.5,
+  },
+};
+
 const MarketDataContext = createContext({
+  selectedInstrument: "NIFTY",
+  setSelectedInstrument: () => {},
+  instrumentConfig: INSTRUMENT_CONFIGS.NIFTY,
+  supportedInstruments: Object.values(INSTRUMENT_CONFIGS),
   spots: {},
   quotes: [],
   commodities: [],
@@ -18,19 +88,21 @@ const MarketDataContext = createContext({
 });
 
 export function MarketDataProvider({ children }) {
+  const [selectedInstrument, setSelectedInstrument] = useState("NIFTY");
+  const [instrumentsCatalog, setInstrumentsCatalog] = useState(Object.values(INSTRUMENT_CONFIGS));
   const [data, setData] = useState(null);
   const [pollConfig, setPollConfig] = useState({ enabled: true, interval_seconds: 15, status: "RUNNING" });
   const [isRefreshing, setIsRefreshing] = useState(false);
   const timerRef = useRef(null);
 
-  // Parse unified spot map across all instruments
+  // Parse unified spot map across all instruments from live or cached observations
   const spots = {};
-  const quotes = data?.quotes || [];
+  const rawQuotes = data?.quotes || [];
   const commodities = data?.commodities || [];
   const globalIndices = data?.global_indices || [];
   const sectoralIndices = data?.sectoral_indices || [];
 
-  for (const q of quotes) {
+  for (const q of rawQuotes) {
     if (q.instrument && q.last_price != null) {
       spots[q.instrument] = Number(q.last_price);
     }
@@ -39,11 +111,29 @@ export function MarketDataProvider({ children }) {
   for (const c of commodities) {
     if (c.instrument && c.last_price != null) {
       spots[c.instrument] = Number(c.last_price);
-      if (c.instrument === "CRUDEMINI" && !spots["CRUDEOILMINI"]) {
-        spots["CRUDEOILMINI"] = Number(c.last_price);
-      }
-      if (c.instrument === "CRUDEOILMINI" && !spots["CRUDEMINI"]) {
-        spots["CRUDEMINI"] = Number(c.last_price);
+      if (c.instrument === "CRUDEMINI") spots["CRUDEOILMINI"] = Number(c.last_price);
+      if (c.instrument === "CRUDEOILMINI") spots["CRUDEMINI"] = Number(c.last_price);
+    }
+  }
+
+  for (const s of sectoralIndices) {
+    if (s.instrument && s.last_price != null) {
+      spots[s.instrument] = Number(s.last_price);
+    }
+  }
+
+  const indianEquities = data?.cross_market_snapshot?.indian_equities || [];
+  for (const eq of indianEquities) {
+    if (eq.instrument && eq.price != null) {
+      spots[eq.instrument] = Number(eq.price);
+    }
+  }
+
+  const observations = data?.observations || [];
+  if (rawQuotes.length === 0 && observations.length > 0) {
+    for (const obs of observations) {
+      if (obs.instrument && obs.last_price != null && spots[obs.instrument] == null) {
+        spots[obs.instrument] = Number(obs.last_price);
       }
     }
   }
@@ -53,6 +143,20 @@ export function MarketDataProvider({ children }) {
     spots["CRUDEMINI"] = spots["CRUDEOILMINI"];
   } else if (spots["CRUDEMINI"] != null && spots["CRUDEOILMINI"] == null) {
     spots["CRUDEOILMINI"] = spots["CRUDEMINI"];
+  }
+
+  let quotes = rawQuotes;
+  if (quotes.length === 0 && observations.length > 0) {
+    quotes = observations.map((o) => ({
+      instrument: o.instrument,
+      last_price: o.last_price,
+      ohlc: o.ohlc,
+      retrieved_at: o.retrieved_at,
+      event_timestamp: o.observed_at,
+      data_class: "CACHED_STALE",
+      source: o.source_name || "Cached Snapshot",
+      stale: true,
+    }));
   }
 
   const fetchLiveQuotes = useCallback(async () => {
@@ -138,7 +242,31 @@ export function MarketDataProvider({ children }) {
     };
   }, [pollConfig.enabled, pollConfig.interval_seconds, fetchLiveQuotes]);
 
+  // Fetch live instruments catalog from backend API
+  useEffect(() => {
+    async function loadCatalog() {
+      try {
+        const res = await fetch("/api/forecasting/instruments");
+        if (res.ok) {
+          const body = await res.json();
+          if (body.instruments && Array.isArray(body.instruments)) {
+            setInstrumentsCatalog(body.instruments);
+          }
+        }
+      } catch {
+        // Fallback to static catalog
+      }
+    }
+    loadCatalog();
+  }, []);
+
+  const currentConfig = instrumentsCatalog.find((c) => c.id === selectedInstrument) || INSTRUMENT_CONFIGS[selectedInstrument] || INSTRUMENT_CONFIGS.NIFTY;
+
   const value = {
+    selectedInstrument,
+    setSelectedInstrument,
+    instrumentConfig: currentConfig,
+    supportedInstruments: instrumentsCatalog,
     spots,
     quotes,
     commodities,

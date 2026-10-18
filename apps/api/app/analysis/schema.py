@@ -129,6 +129,7 @@ class AnalysisReport(BaseModel):
     real_market_data_verified: bool = False
     agent_outputs: dict = Field(default_factory=dict)
     reason_codes: list[str] = Field(default_factory=list)
+    consensus: dict = Field(default_factory=dict)
 
     def model_post_init(self, _context: object) -> None:
         object.__setattr__(self, "forecast_ready", False)
@@ -147,6 +148,19 @@ class AgentOutput(BaseModel):
     status: Literal["SUCCESS", "PARTIAL", "FAILED", "SKIPPED", "FALLBACK_USED"]
     provider: str
     model: str
+    execution_mode: Literal[
+        "LLM",
+        "LLM_FALLBACK",
+        "MOCK_LLM",
+        "DETERMINISTIC_RULE",
+        "DETERMINISTIC_FALLBACK_ON_LLM_ERROR",
+        "SKIPPED",
+    ] = "DETERMINISTIC_RULE"
+    llm_attempted: bool = False
+    llm_succeeded: bool = False
+    fallback_used: bool = False
+    configured_provider: str | None = None
+    configured_model: str | None = None
     config_version: str = "v6.18.0"
     findings: list[str] = Field(default_factory=list)
     directional_bias: Literal["BULLISH", "BEARISH", "NEUTRAL", "MIXED", "UNKNOWN"] = "UNKNOWN"
@@ -158,3 +172,4 @@ class AgentOutput(BaseModel):
     latency_ms: float = 0.0
     token_usage: dict[str, int] | None = None
     timestamp: str | None = None
+

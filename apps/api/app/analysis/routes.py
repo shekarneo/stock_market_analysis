@@ -121,6 +121,7 @@ def get_agents_config(request: Request, settings: Settings = Depends(_settings))
 
 
 @router.put("/api/analysis/agents/config")
+@router.post("/api/analysis/agents/config")
 def put_agents_config(
     request: Request,
     body: dict,
@@ -166,3 +167,32 @@ def post_agents_reset(
         )
     )
     return saved.model_dump()
+
+
+@router.get("/api/analysis/forecast-accuracy")
+def get_forecast_accuracy(
+    request: Request,
+    settings: Settings = Depends(_settings),
+) -> dict:
+    from app.auth import read_session
+    read_session(request, settings)
+    from app.analysis.outcome_tracker import compute_forecast_accuracy_summary, get_forecast_records
+    records = get_forecast_records()
+    summary = compute_forecast_accuracy_summary(records)
+    summary["forecasts"] = records[-50:]  # Latest 50 records
+    return summary
+
+
+@router.post("/api/analysis/forecast-accuracy/evaluate")
+def post_evaluate_forecasts(
+    request: Request,
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    from app.analysis.outcome_tracker import compute_forecast_accuracy_summary, evaluate_pending_forecasts
+    from app.market.live_quotes import stored_observations
+    obs = stored_observations()
+    eval_res = evaluate_pending_forecasts(obs, min_elapsed_seconds=0)
+    summary = compute_forecast_accuracy_summary()
+    summary["evaluation_result"] = eval_res
+    return summary

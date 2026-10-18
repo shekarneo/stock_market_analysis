@@ -58,6 +58,7 @@ export default function WatchlistPage() {
   const [filter, setFilter] = useState("ALL");
   const [auto, setAuto] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
   const timer = useRef(null);
   const prevRetrievedAt = useRef(null);
 
@@ -144,6 +145,22 @@ export default function WatchlistPage() {
         <button type="button" className="primary" onClick={refreshAndEvaluate} disabled={busy}>
           {busy ? "Checking…" : "Refresh quotes & check outcomes"}
         </button>
+        <button
+          type="button"
+          onClick={() => setShowAddForm(!showAddForm)}
+          style={{
+            fontSize: "0.85rem",
+            padding: "6px 14px",
+            background: showAddForm ? "rgba(56, 189, 248, 0.2)" : "var(--card-subtle, #131c31)",
+            color: "#38bdf8",
+            border: "1px solid rgba(56, 189, 248, 0.4)",
+            borderRadius: "6px",
+            cursor: "pointer",
+            fontWeight: 600,
+          }}
+        >
+          {showAddForm ? "✕ Cancel Add" : "+ Add Contract / Suggestion"}
+        </button>
         {items.length > 0 ? (
           <button
             type="button"
@@ -158,6 +175,16 @@ export default function WatchlistPage() {
           <span>Auto-check every 60s (keep this tab open)</span>
         </label>
       </div>
+
+      {showAddForm && (
+        <AddSuggestionCard
+          spots={spots}
+          onSuccess={() => {
+            setShowAddForm(false);
+            load();
+          }}
+        />
+      )}
 
       {phase === "error" ? <p className="error" role="alert">{error}</p> : null}
 
@@ -246,8 +273,16 @@ export default function WatchlistPage() {
                 return (
                   <tr key={i.suggestion_id} style={{ borderBottom: "1px solid var(--line, #f1f5f9)" }}>
                     <td>
-                      <strong style={{ color: i.option_type === "CE" ? "#137333" : "#c5221f" }}>{i.contract}</strong>
-                      <small style={{ display: "block", color: "var(--muted)" }}>{i.direction === "UP" ? "▲ needs spot up" : "▼ needs spot down"} · {i.data_class || "—"}</small>
+                      <a
+                        href={`/dashboard?instrument=${encodeURIComponent(i.instrument)}`}
+                        style={{ textDecoration: "none", color: i.option_type === "CE" ? "#137333" : "#c5221f" }}
+                        title="View instrument details on Trade Desk"
+                      >
+                        <strong>{i.contract}</strong> ↗
+                      </a>
+                      <small style={{ display: "block", color: "var(--muted)" }}>
+                        {i.direction === "UP" ? "▲ needs spot up" : "▼ needs spot down"} · {i.data_class || "—"} · <a href={`/analysis?instrument=${encodeURIComponent(i.instrument)}`} style={{ color: "#38bdf8", textDecoration: "none" }}>Analysis</a>
+                      </small>
                     </td>
                     <td>
                       <span style={{ background: s.bg, color: s.fg, padding: "2px 8px", borderRadius: "10px", fontSize: "0.75rem", fontWeight: 600, whiteSpace: "nowrap" }}>
@@ -330,3 +365,184 @@ function Stat({ label, value, sub, color, strong }) {
     </div>
   );
 }
+
+function AddSuggestionCard({ spots, onSuccess }) {
+  const [instrument, setInstrument] = useState("NIFTY");
+  const [optionType, setOptionType] = useState("CE");
+  const [contract, setContract] = useState("NIFTY 23200 CE");
+  const [entrySpot, setEntrySpot] = useState(spots["NIFTY"] || 23146.15);
+  const [targetPoints, setTargetPoints] = useState(50);
+  const [stopLossPoints, setStopLossPoints] = useState(25);
+  const [entryPremium, setEntryPremium] = useState(120);
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState("");
+
+  const handleInstrumentChange = (inst) => {
+    setInstrument(inst);
+    const sp = spots[inst] || (inst === "NIFTY" ? 23146.15 : inst === "SENSEX" ? 74729.27 : 9388.0);
+    setEntrySpot(sp);
+    if (inst === "NIFTY") {
+      setContract(`NIFTY ${Math.round(sp / 50) * 50} ${optionType}`);
+      setTargetPoints(50);
+      setStopLossPoints(25);
+    } else if (inst === "SENSEX") {
+      setContract(`SENSEX ${Math.round(sp / 100) * 100} ${optionType}`);
+      setTargetPoints(150);
+      setStopLossPoints(75);
+    } else {
+      setContract(`CRUDEMINI ${Math.round(sp / 50) * 50} ${optionType}`);
+      setTargetPoints(40);
+      setStopLossPoints(20);
+    }
+  };
+
+  const handleOptionTypeChange = (ot) => {
+    setOptionType(ot);
+    const sp = Number(entrySpot) || 23000;
+    const base = instrument === "NIFTY" ? 50 : (instrument === "SENSEX" ? 100 : 50);
+    setContract(`${instrument} ${Math.round(sp / base) * base} ${ot}`);
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setFormError("");
+    try {
+      const res = await fetch("/api/watchlist", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": csrf(),
+        },
+        body: JSON.stringify({
+          instrument,
+          contract: contract.trim(),
+          option_type: optionType,
+          call: "BUY",
+          entry_spot: Number(entrySpot),
+          target_points: Number(targetPoints),
+          stop_loss_points: Number(stopLossPoints),
+          model_premiums: { entry: Number(entryPremium) || 100.0 },
+          data_class: "UNVERIFIED_PROVIDER_DATA",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.detail || `Error (${res.status})`);
+      onSuccess();
+    } catch (err) {
+      setFormError(err.message || String(err));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div style={{
+      background: "var(--card-subtle, #131c31)",
+      border: "1px solid rgba(56, 189, 248, 0.4)",
+      borderRadius: "10px",
+      padding: "16px",
+      marginBottom: "20px",
+    }}>
+      <h3 style={{ margin: "0 0 12px", fontSize: "1rem", color: "#38bdf8" }}>
+        + Add Instrument Contract to Watchlist
+      </h3>
+      {formError && <p className="error" style={{ marginBottom: "10px" }}>{formError}</p>}
+      <form onSubmit={handleSubmit} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "10px", alignItems: "flex-end" }}>
+        <label style={{ fontSize: "0.8rem", color: "var(--muted)", display: "flex", flexDirection: "column", gap: "4px" }}>
+          Instrument
+          <select
+            value={instrument}
+            onChange={(e) => handleInstrumentChange(e.target.value)}
+            style={{ padding: "6px 8px", borderRadius: "6px", border: "1px solid var(--line)" }}
+          >
+            <option value="NIFTY">NIFTY 50</option>
+            <option value="SENSEX">SENSEX</option>
+            <option value="CRUDEMINI">CRUDEOIL MINI</option>
+          </select>
+        </label>
+
+        <label style={{ fontSize: "0.8rem", color: "var(--muted)", display: "flex", flexDirection: "column", gap: "4px" }}>
+          Option Type
+          <select
+            value={optionType}
+            onChange={(e) => handleOptionTypeChange(e.target.value)}
+            style={{ padding: "6px 8px", borderRadius: "6px", border: "1px solid var(--line)" }}
+          >
+            <option value="CE">Call (CE - Up)</option>
+            <option value="PE">Put (PE - Down)</option>
+          </select>
+        </label>
+
+        <label style={{ fontSize: "0.8rem", color: "var(--muted)", display: "flex", flexDirection: "column", gap: "4px" }}>
+          Contract Symbol
+          <input
+            value={contract}
+            onChange={(e) => setContract(e.target.value)}
+            required
+            style={{ padding: "6px 8px", borderRadius: "6px", border: "1px solid var(--line)" }}
+          />
+        </label>
+
+        <label style={{ fontSize: "0.8rem", color: "var(--muted)", display: "flex", flexDirection: "column", gap: "4px" }}>
+          Entry Spot (₹)
+          <input
+            type="number"
+            step="any"
+            value={entrySpot}
+            onChange={(e) => setEntrySpot(e.target.value)}
+            required
+            style={{ padding: "6px 8px", borderRadius: "6px", border: "1px solid var(--line)" }}
+          />
+        </label>
+
+        <label style={{ fontSize: "0.8rem", color: "var(--muted)", display: "flex", flexDirection: "column", gap: "4px" }}>
+          Target Points (pts)
+          <input
+            type="number"
+            step="any"
+            value={targetPoints}
+            onChange={(e) => setTargetPoints(e.target.value)}
+            required
+            style={{ padding: "6px 8px", borderRadius: "6px", border: "1px solid var(--line)" }}
+          />
+        </label>
+
+        <label style={{ fontSize: "0.8rem", color: "var(--muted)", display: "flex", flexDirection: "column", gap: "4px" }}>
+          Stop Loss (pts)
+          <input
+            type="number"
+            step="any"
+            value={stopLossPoints}
+            onChange={(e) => setStopLossPoints(e.target.value)}
+            required
+            style={{ padding: "6px 8px", borderRadius: "6px", border: "1px solid var(--line)" }}
+          />
+        </label>
+
+        <label style={{ fontSize: "0.8rem", color: "var(--muted)", display: "flex", flexDirection: "column", gap: "4px" }}>
+          Est. Prem. (₹)
+          <input
+            type="number"
+            step="any"
+            value={entryPremium}
+            onChange={(e) => setEntryPremium(e.target.value)}
+            style={{ padding: "6px 8px", borderRadius: "6px", border: "1px solid var(--line)" }}
+          />
+        </label>
+
+        <div>
+          <button
+            type="submit"
+            disabled={submitting}
+            className="primary"
+            style={{ padding: "7px 16px", borderRadius: "6px", width: "100%", fontWeight: 600 }}
+          >
+            {submitting ? "Adding…" : "Save to Watchlist"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+

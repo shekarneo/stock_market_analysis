@@ -6,6 +6,7 @@ import ResearchBoard, { csrf } from "../components/ResearchBoard";
 import ReadState from "../components/ReadState";
 import { useRead } from "../components/useRead";
 import { useMarketData } from "../components/MarketDataContext";
+import V6OptionsGreeksCard from "../components/V6OptionsGreeksCard";
 import { flagLabel } from "../research/status.mjs";
 import { valueText } from "../research/present.mjs";
 
@@ -27,10 +28,11 @@ function Workstation() {
   const [side, setSide] = useState("CE");
   const [structure, setStructure] = useState("single");
   const [candidatePrefill, setCandidatePrefill] = useState(null);
-  const { liveData } = useMarketData();
+  const { liveData, quotes } = useMarketData();
 
   return (
     <>
+      <V6OptionsGreeksCard liveQuotes={quotes || liveData?.quotes || []} />
       <Strategy
         underlying={underlying}
         onUnderlying={setUnderlying}

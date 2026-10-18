@@ -163,6 +163,9 @@ def _risk_intent(body: dict) -> dict:
         "session_date": body.get("session_date"),
         "master": body.get("master"),
         "entry_plan": _entry_plan(body.get("entry_plan")),
+        "execution_context": body.get("execution_context"),
+        "experimental": body.get("experimental") or (body.get("execution_context") == "EXPERIMENTAL"),
+        "side": body.get("side", "BUY"),
     }
 
 
@@ -181,19 +184,20 @@ def _finish(
     recovery: bool = False,
     presented_body_hash: str | None = None,
     evaluator_inputs: dict | None = None,
+    simulated_fill: dict | None = None,
 ) -> dict:
     stored = None if intent_id is None else _stored_request(session, intent_id)
     lineage = stored.get("lineage") if isinstance(stored, dict) else None
     result = {
-        "ok": False,
+        "ok": code == "SIMULATED_FILL_APPLIED",
         "completed": True,
         "code": code,
         "reasons": reasons,
         "state": state,
         "intent_id": intent_id,
-        "decision": "NO_TRADE" if risk is None else risk["decision"],
+        "decision": "TRADE" if code == "SIMULATED_FILL_APPLIED" else ("NO_TRADE" if risk is None else risk["decision"]),
         "risk_result": None if risk is None else risk["result"],
-        "simulated_fill": None,
+        "simulated_fill": simulated_fill,
         "fill": None,
         "order_created": False,
         "broker_called": False,
@@ -204,7 +208,7 @@ def _finish(
         "code": code,
         "reasons": list(reasons),
         "state": state,
-        "simulated_fill": None,
+        "simulated_fill": simulated_fill,
         "broker_called": False,
         "fill": None,
         "order_created": False,
@@ -265,8 +269,152 @@ def _recover(session: Session, actor: str, intent_id: str, snapshot: dict, state
     return _evaluate_stored(session, actor, intent_id, stored, recovery=True)
 
 
+def calculate_indian_regulatory_charges(*, side: str, price: Decimal, quantity: Decimal, charges_per_lot: Decimal | None = None, lot_size: Decimal | None = None) -> dict:
+    """Calculate Indian regulatory and exchange charges for options trading on NSE."""
+    turnover = (price * quantity).quantize(Decimal("0.01"))
+    brokerage = Decimal("20.00")
+    # STT: 0.1% on sell side premium turnover
+    stt = (turnover * Decimal("0.001")).quantize(Decimal("0.01")) if side.upper() == "SELL" else Decimal("0.00")
+    # Stamp duty: 0.003% on buy side premium turnover
+    stamp_duty = (turnover * Decimal("0.00003")).quantize(Decimal("0.01")) if side.upper() == "BUY" else Decimal("0.00")
+    # Exchange transaction charges: 0.05% of premium turnover
+    exchange_charges = (turnover * Decimal("0.0005")).quantize(Decimal("0.01"))
+    # SEBI turnover charge: 10 per crore (0.0001%)
+    sebi_charges = (turnover * Decimal("0.000001")).quantize(Decimal("0.01"))
+    # GST: 18% on (brokerage + exchange_charges + sebi_charges)
+    gst = ((brokerage + exchange_charges + sebi_charges) * Decimal("0.18")).quantize(Decimal("0.01"))
+    statutory_total = (brokerage + stt + stamp_duty + exchange_charges + sebi_charges + gst).quantize(Decimal("0.01"))
+    if charges_per_lot is not None and lot_size is not None and lot_size > 0:
+        lots = (quantity / lot_size).quantize(Decimal("1"))
+        fallback_total = (charges_per_lot * lots).quantize(Decimal("0.01"))
+        total = max(statutory_total, fallback_total)
+    else:
+        total = statutory_total
+    return {
+        "brokerage": str(brokerage),
+        "stt": str(stt),
+        "stamp_duty": str(stamp_duty),
+        "exchange_charges": str(exchange_charges),
+        "sebi_charges": str(sebi_charges),
+        "gst": str(gst),
+        "total_charges_inr": str(total),
+    }
+
+
+def _execute_simulated_paper_trade(
+    session: Session,
+    actor: str,
+    intent_id: str,
+    snapshot: dict,
+    risk: dict,
+    occurred_at: datetime,
+    *,
+    recovery: bool,
+    evaluator_inputs: dict | None,
+    risk_config: object,
+) -> dict:
+    from app.domain.tables import PaperAccountEvent
+    from app.execution.paper import current_state, transition
+
+    intent = snapshot["risk_intent"]
+    side = intent.get("side", "BUY")
+    bid = intent.get("bid")
+    ask = intent.get("ask")
+    haircut = "half_spread"
+    priced = simulated_execution_price(side=side, bid=bid, ask=ask, haircut=haircut, extra_tick_penalty=False)
+    fill_price = Decimal(str(priced["price"])) if priced.get("price") is not None else (Decimal(str(ask)) if side == "BUY" else Decimal(str(bid)))
+    lot_size = Decimal(str(intent.get("lot_size") or "65"))
+    quantity = lot_size
+
+    charges_info = calculate_indian_regulatory_charges(
+        side=side,
+        price=fill_price,
+        quantity=quantity,
+        charges_per_lot=Decimal(str(intent["charges_per_lot"])) if intent.get("charges_per_lot") else None,
+        lot_size=lot_size,
+    )
+    total_charges = Decimal(charges_info["total_charges_inr"])
+
+    state = current_state(session, intent_id)
+    if state == "PROPOSED":
+        transition(session, intent_id, "RISK_APPROVED", occurred_at=occurred_at, reason="EXPERIMENTAL_RISK_PASSED", risk_passed=True, experimental=True)
+        transition(session, intent_id, "SUBMITTED", occurred_at=occurred_at, reason="EXPERIMENTAL_SUBMISSION", experimental=True)
+        transition(session, intent_id, "PENDING", occurred_at=occurred_at, reason="EXPERIMENTAL_PENDING", experimental=True)
+        transition(session, intent_id, "FILLED", occurred_at=occurred_at, reason="SIMULATED_FILL_APPLIED", experimental=True)
+        state = "FILLED"
+    elif state != "FILLED":
+        if state == "SUBMITTED":
+            transition(session, intent_id, "PENDING", occurred_at=occurred_at, reason="EXPERIMENTAL_PENDING", experimental=True)
+            transition(session, intent_id, "FILLED", occurred_at=occurred_at, reason="SIMULATED_FILL_APPLIED", experimental=True)
+        elif state == "PENDING":
+            transition(session, intent_id, "FILLED", occurred_at=occurred_at, reason="SIMULATED_FILL_APPLIED", experimental=True)
+        state = "FILLED"
+
+    sim_fill = {
+        "event_id": f"sim-fill-{intent_id}",
+        "intent_id": intent_id,
+        "side": side,
+        "underlying": intent.get("underlying"),
+        "expiry": intent.get("expiry"),
+        "strike": intent.get("strike"),
+        "option_type": intent.get("option_type"),
+        "quantity": str(quantity),
+        "price": str(fill_price),
+        "charges_inr": str(total_charges),
+        "slippage_inr": "0.05",
+        "charges_breakdown": charges_info,
+        "execution_context": "EXPERIMENTAL",
+        "data_provenance": "EXPERIMENTAL_UNVERIFIED_DATA",
+        "live_broker_routed": False,
+        "live_order_calls": 0,
+        "occurred_at": occurred_at.isoformat(),
+    }
+
+    capital = Decimal(str(getattr(risk_config, "risk_capital_inr", None) or "1000000"))
+    existing_event = session.get(PaperAccountEvent, f"sim-fill-{intent_id}")
+    if existing_event is None:
+        cost = (fill_price * quantity) + total_charges if side == "BUY" else -(fill_price * quantity) + total_charges
+        session.add(
+            PaperAccountEvent(
+                event_id=f"sim-fill-{intent_id}",
+                event_type="FILL",
+                occurred_at=occurred_at,
+                intent_id=intent_id,
+                source="SIMULATION",
+                body_hash=snapshot.get("body_hash", "0" * 64),
+                opening_cash_inr=capital,
+                quantity=quantity,
+                price=fill_price,
+                charges_inr=total_charges,
+                payload=sim_fill,
+                effect={
+                    "applied_fill_ids": [f"sim-fill-{intent_id}"],
+                    "cash_inr": str(capital - cost),
+                    "position_qty": str(quantity),
+                },
+                ledger_applied=False,
+                broker_confirmed=False,
+            )
+        )
+
+    return _finish(
+        session,
+        actor,
+        intent_id,
+        "SIMULATED_FILL_APPLIED",
+        [],
+        state=state,
+        risk=risk,
+        decision_attempt=True,
+        duplicate_request=recovery,
+        recovery=recovery,
+        evaluator_inputs=evaluator_inputs,
+        simulated_fill=sim_fill,
+    )
+
+
 def _evaluate_stored(session: Session, actor: str, intent_id: str, snapshot: dict, *, recovery: bool) -> dict:
-    """Re-run the risk gates from the stored request, then veto. Never fills."""
+    """Re-run the risk gates from the stored request, then veto or apply simulated fill."""
     lock_intent(session, intent_id)
     occurred_at = _clock_from_snapshot(snapshot)
     if occurred_at is None or not isinstance(snapshot.get("risk_intent"), dict):
@@ -287,6 +435,14 @@ def _evaluate_stored(session: Session, actor: str, intent_id: str, snapshot: dic
     lock_ops_row(session)
     _lock_decision_session(session, snapshot)
     risk_config = load_defaults(REPO_ROOT / "config" / "defaults.yaml").risk
+    if risk_config.risk_capital_inr is None:
+        try:
+            from app.config.store import current_config
+            db_risk = current_config(session).risk
+            if db_risk.risk_capital_inr is not None:
+                risk_config = db_risk
+        except Exception:
+            pass
     consumed = _consumed_risk(risk_config)
     try:
         risk = evaluate(snapshot["risk_intent"], session=session, config=risk_config, calendar=None, as_of=occurred_at)
@@ -304,6 +460,18 @@ def _evaluate_stored(session: Session, actor: str, intent_id: str, snapshot: dic
             recovery=recovery,
         )
     if risk["passed"]:
+        if snapshot.get("risk_intent", {}).get("execution_context") == "EXPERIMENTAL":
+            return _execute_simulated_paper_trade(
+                session,
+                actor,
+                intent_id,
+                snapshot,
+                risk,
+                occurred_at,
+                recovery=recovery,
+                evaluator_inputs=consumed,
+                risk_config=risk_config,
+            )
         return _finish(
             session,
             actor,
@@ -721,3 +889,168 @@ def _decimal(value: object) -> Decimal | None:
     if not number.is_finite():
         return None
     return number
+
+
+def close_paper_position(
+    session: Session,
+    intent_id: str,
+    *,
+    exit_price: Decimal | float | str | None = None,
+    exit_quote: dict | None = None,
+    reason: str = "OPERATOR_EXIT",
+    occurred_at: datetime | None = None,
+    actor: str = "paper",
+) -> dict:
+    """Close an open paper position, compute statutory friction and net realized P&L,
+    and persist the exit transitions and account event.
+
+    Idempotent: Repeating with the same intent_id returns the existing closed event
+    without double-counting P&L or duplicating database rows.
+    """
+    from app.domain.tables import PaperAccountEvent, PaperTransition
+    from app.execution.paper import current_state, transition
+
+    # 1. Check idempotency: if already closed, return existing exit record
+    existing_exit = session.get(PaperAccountEvent, f"sim-exit-{intent_id}")
+    if existing_exit is not None:
+        payload = existing_exit.payload or {}
+        return {
+            "ok": True,
+            "status": "ALREADY_CLOSED",
+            "intent_id": intent_id,
+            "exit_fill": payload,
+            "realized_pnl_inr": float(payload.get("realized_pnl_inr", 0.0)),
+            "net_realized_pnl_inr": float(payload.get("net_realized_pnl_inr", 0.0)),
+            "exit_charges_inr": float(payload.get("charges_inr", 0.0)),
+            "duplicate": True,
+        }
+
+    # 2. Retrieve entry event
+    entry_event = session.get(PaperAccountEvent, f"sim-fill-{intent_id}")
+    if entry_event is None:
+        return {
+            "ok": False,
+            "status": "POSITION_NOT_FOUND",
+            "message": f"No open paper position found for intent {intent_id}.",
+        }
+
+    entry_payload = entry_event.payload or {}
+    entry_price = Decimal(str(entry_payload.get("price") or entry_event.price or "0.0"))
+    quantity = Decimal(str(entry_payload.get("quantity") or entry_event.quantity or "65"))
+    entry_charges = Decimal(str(entry_payload.get("charges_inr") or entry_event.charges_inr or "0.0"))
+    entry_side = entry_payload.get("side", "BUY")
+    underlying = entry_payload.get("underlying", "NIFTY")
+    lot_size = Decimal(str(entry_payload.get("charges_breakdown", {}).get("lot_size") or "65"))
+
+    # Determine exit side: if bought, exit is SELL; if sold, exit is BUY
+    exit_side = "SELL" if entry_side == "BUY" else "BUY"
+
+    # 3. Determine exit price
+    exit_dt = occurred_at or datetime.now(timezone.utc)
+    if exit_price is not None:
+        final_exit_price = Decimal(str(exit_price))
+    elif exit_quote and (exit_quote.get("bid") is not None or exit_quote.get("ask") is not None):
+        bid = exit_quote.get("bid")
+        ask = exit_quote.get("ask")
+        haircut = "half_spread"
+        priced = simulated_execution_price(side=exit_side, bid=bid, ask=ask, haircut=haircut, extra_tick_penalty=False)
+        final_exit_price = Decimal(str(priced["price"])) if priced.get("price") is not None else (Decimal(str(bid)) if exit_side == "SELL" else Decimal(str(ask)))
+    else:
+        final_exit_price = entry_price
+
+    # 4. Calculate Indian regulatory exit charges
+    exit_charges_info = calculate_indian_regulatory_charges(
+        side=exit_side,
+        price=final_exit_price,
+        quantity=quantity,
+        charges_per_lot=Decimal("25.00"),
+        lot_size=lot_size,
+    )
+    exit_charges_total = Decimal(exit_charges_info["total_charges_inr"])
+
+    # 5. Compute P&L
+    if entry_side == "BUY":
+        gross_pnl = (final_exit_price - entry_price) * quantity
+    else:
+        gross_pnl = (entry_price - final_exit_price) * quantity
+
+    total_charges = entry_charges + exit_charges_total
+    net_realized_pnl = gross_pnl - total_charges
+
+    # 6. Apply state transitions: FILLED -> EXIT_PENDING -> CLOSED
+    curr = current_state(session, intent_id)
+    if curr == "FILLED":
+        transition(session, intent_id, "EXIT_PENDING", occurred_at=exit_dt, reason=reason, experimental=True)
+        transition(session, intent_id, "CLOSED", occurred_at=exit_dt, reason=f"EXIT_FILLED_{reason}", experimental=True)
+    elif curr == "EXIT_PENDING":
+        transition(session, intent_id, "CLOSED", occurred_at=exit_dt, reason=f"EXIT_FILLED_{reason}", experimental=True)
+
+    # 7. Persist exit PaperAccountEvent
+    capital = entry_event.opening_cash_inr or Decimal("1000000.00")
+    exit_payload = {
+        "event_id": f"sim-exit-{intent_id}",
+        "intent_id": intent_id,
+        "side": exit_side,
+        "entry_side": entry_side,
+        "underlying": underlying,
+        "expiry": entry_payload.get("expiry"),
+        "strike": entry_payload.get("strike"),
+        "option_type": entry_payload.get("option_type"),
+        "contract": entry_payload.get("contract") or f"{underlying} {entry_payload.get('strike')} {entry_payload.get('option_type')}",
+        "quantity": str(quantity),
+        "entry_price": str(entry_price),
+        "exit_price": str(final_exit_price),
+        "entry_charges_inr": str(entry_charges),
+        "charges_inr": str(exit_charges_total),
+        "total_charges_inr": str(total_charges),
+        "gross_pnl_inr": float(gross_pnl),
+        "realized_pnl_inr": float(net_realized_pnl),
+        "net_realized_pnl_inr": float(net_realized_pnl),
+        "charges_breakdown": exit_charges_info,
+        "exit_reason": reason,
+        "execution_context": "EXPERIMENTAL",
+        "data_provenance": "EXPERIMENTAL_UNVERIFIED_DATA",
+        "live_broker_routed": False,
+        "live_order_calls": 0,
+        "occurred_at": exit_dt.isoformat(),
+    }
+
+    exit_event = PaperAccountEvent(
+        event_id=f"sim-exit-{intent_id}",
+        event_type="FILL",
+        occurred_at=exit_dt,
+        intent_id=intent_id,
+        source="SIMULATION",
+        body_hash=entry_event.body_hash,
+        opening_cash_inr=capital,
+        quantity=quantity,
+        price=final_exit_price,
+        charges_inr=exit_charges_total,
+        payload=exit_payload,
+        effect={
+            "applied_fill_ids": [f"sim-exit-{intent_id}"],
+            "cash_inr": str(capital + net_realized_pnl),
+            "position_qty": "0",
+            "realized_pnl_inr": str(net_realized_pnl),
+        },
+        ledger_applied=False,
+        broker_confirmed=False,
+    )
+    session.add(exit_event)
+    session.commit()
+
+    return {
+        "ok": True,
+        "status": "POSITION_CLOSED",
+        "intent_id": intent_id,
+        "entry_price": float(entry_price),
+        "exit_price": float(final_exit_price),
+        "entry_charges_inr": float(entry_charges),
+        "exit_charges_inr": float(exit_charges_total),
+        "total_charges_inr": float(total_charges),
+        "gross_pnl_inr": float(gross_pnl),
+        "realized_pnl_inr": float(net_realized_pnl),
+        "net_realized_pnl_inr": float(net_realized_pnl),
+        "exit_fill": exit_payload,
+        "duplicate": False,
+    }

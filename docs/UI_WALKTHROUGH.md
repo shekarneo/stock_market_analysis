@@ -1,0 +1,803 @@
+# India Market Master (IMM) V6 — Comprehensive UI Walkthrough & Option Reference
+
+> **Document Status**: Complete & Canonical  
+> **Last Synchronized**: October 2026 (IMM V6 Architecture)  
+> **Maintenance Invariant**: Whenever any page, component, navigation link, form field, button, toggle, or metric inside `apps/web/` is modified, added, or relocated, this document **must** be updated concurrently (enforced by `.agents/rules/ui-documentation.md` and `AGENTS.md`).
+
+---
+
+## Table of Contents
+1. [Platform Architecture & Layout Overview](#1-platform-architecture--layout-overview)
+2. [Global Persistent Shell & Controls](#2-global-persistent-shell--controls)
+3. [Authentication & Operator Identity](#3-authentication--operator-identity)
+4. [Primary Trading Desk Pages](#4-primary-trading-desk-pages)
+   - [4.1 Overview Desk (`/dashboard`)](#41-overview-desk-dashboard)
+   - [4.2 Multi-Agent Analysis Desk (`/analysis`)](#42-multi-agent-analysis-desk-analysis)
+   - [4.3 Live & Auto Trading Desk (`/live`)](#43-live--auto-trading-desk-live)
+   - [4.4 Watchlist & Accuracy Desk (`/watchlist`)](#44-watchlist--accuracy-desk-watchlist)
+   - [4.5 Multi-Horizon Forecast Desk (`/forecast`)](#45-multi-horizon-forecast-desk-forecast)
+   - [4.6 Options Strategy & Greeks Desk (`/options`)](#46-options-strategy--greeks-desk-options)
+   - [4.7 Positions, Risk & Capital Allocation (`/risk`)](#47-positions-risk--capital-allocation-risk)
+   - [4.8 System Architecture & Paper Readiness Audit (`/system`)](#48-system-architecture--paper-readiness-audit-system)
+5. [Tools & Diagnostics Pages](#5-tools--diagnostics-pages)
+   - [5.1 Historical Market Data & Quarantine (`/history`)](#51-historical-market-data--quarantine-history)
+   - [5.2 Model Studio & Benchmarking (`/studio`)](#52-model-studio--benchmarking-studio)
+   - [5.3 Walk-Forward Backtesting (`/backtest`)](#53-walk-forward-backtesting-backtest)
+   - [5.4 Model Registry & Governance (`/registry`)](#54-model-registry--governance-registry)
+   - [5.5 Paper Trading Book & Replay (`/paper`)](#55-paper-trading-book--replay-paper)
+   - [5.6 Account & Operator Profile (`/settings`)](#56-account--operator-profile-settings)
+   - [5.7 API Keys & Broker Integrations (`/integrations` & `/settings/integrations`)](#57-api-keys--broker-integrations-integrations--settingsintegrations)
+6. [Global Status Badges, Indicators & Glossary](#6-global-status-badges-indicators--glossary)
+7. [UI Maintenance Protocol for Developers and Agents](#7-ui-maintenance-protocol-for-developers-and-agents)
+
+---
+
+## 1. Platform Architecture & Layout Overview
+
+**India Market Master (IMM)** is an autonomous, quantitative forecasting and options trading desk engineered specifically for the Indian financial markets.
+
+### Supported Tradable Instruments
+1. **NIFTY 50 (`NIFTY`)**: National Stock Exchange of India (NSE) benchmark equity index (50 large-cap stocks; lot size 75; strike interval 50 pts).
+2. **BSE SENSEX (`SENSEX`)**: Bombay Stock Exchange (BSE) benchmark equity index (30 blue-chip stocks; lot size 20; strike interval 100 pts).
+3. **CRUDEOIL MINI (`CRUDEOILMINI` / `CRUDEMINI`)**: Multi Commodity Exchange of India (MCX) energy commodity future/option contract (lot size 10 bbl; strike interval 50 pts).
+
+### Design System & Layout Rules
+- **Color Palette**: Dark theme using tailored CSS variables (`--bg: #090d16`, `--card: #0f172a`, `--card-subtle: #131c31`, `--line: rgba(255, 255, 255, 0.08)`, `--ink: #f8fafc`, `--accent: #38bdf8`).
+- **Two-Column Responsive Grid**: Left rail navigation (`240px` fixed desktop) + Main workspace canvas (`min-width: 0`).
+- **Sticky Live Sync Bar**: Top header (`z-index: 100`) sticky across all pages for constant real-time market synchronization.
+
+---
+
+## 2. Global Persistent Shell & Controls
+
+The Shell wraps every page in the application.
+
+### 2.1 Top Global Market Sync Bar
+Located at the top of the canvas on all screens:
+- **Market Session Indicator**:
+  - `🟢 NSE/BSE LIVE SESSION`: Displayed when current IST time is between 09:15 AM and 03:30 PM on non-holiday weekdays.
+  - `⚡ MCX LIVE · EQUITY CLOSED`: Displayed when Indian equity markets have closed, but MCX commodity trading is open (09:00 AM – 11:30 PM IST).
+  - `🌙 MARKETS CLOSED (POST-CLOSE CONTEXT)`: Displayed when all domestic exchanges are closed; indicates that metrics represent post-close settlement prices.
+- **Compact Instrument Selector (`<InstrumentSelector compact />`)**:
+  - Horizontal pill buttons for `NIFTY 50`, `BSE SENSEX`, and `CRUDEOIL MINI`.
+  - Shows real-time Last Traded Price (LTP) with currency formatting (e.g., `₹23,146.15`).
+  - Clicking any pill immediately switches the global active instrument across all components on the current page.
+- **Sync Status**: Displays the exact Indian Standard Time of the most recent backend data sync (e.g., `Synced 09:15 pm IST`).
+- **Auto-fetch Dropdown (`#poll-interval-select`)**:
+  - Controls how frequently the frontend polls the backend `/api/market/live` endpoint:
+    - `Every 15s (Fast)`: Recommended during active trading hours for rapid quotes.
+    - `Every 30s`: Standard real-time intraday monitoring.
+    - `Every 1 min`: Balanced default interval for standard research.
+    - `Every 2 mins`: Low-overhead background monitoring.
+    - `Every 5 mins`: Minimal network activity.
+    - `Paused`: Completely disables automated background polling.
+- **`↻ Fetch Now` Button**:
+  - Immediately triggers an on-demand quote retrieval from the Groww API backend and updates all open pages without reloading.
+  - Displays `↻ Syncing…` while the request is in flight.
+
+### 2.2 Left Sidebar Navigation Rail
+- **Brand Header**: `IMM` gradient mark + **India Market Master** title + subtitle.
+- **Section `TRADE`** (8 primary operational destinations):
+  1. `Overview`: High-level tape, order ticket, and market summary.
+  2. `Analysis`: 12-agent consensus desk, scenarios, and Greek matrices.
+  3. `Live & Auto Trading`: Live bot execution matrix, order book, and real-time risk controls.
+  4. `Watchlist & Accuracy`: Historical tracking of suggestions against live spot moves.
+  5. `Forecast`: Multi-horizon directional probability distributions and registered models.
+  6. `Options`: Interactive strike matrix, Black-Scholes Greeks, and spread strategies.
+  7. `Positions & Capital`: Ledger capital allocation, risk limits, and gate blockers.
+  8. `System`: Health checks, 8-gate readiness audit, and data provenance.
+- **Section `TOOLS`** (7 secondary diagnostics & engineering tools):
+  - **Collapsible Toggle**: Click `Tools Show (7) ▾` to expand; click `Tools Hide ▴` to collapse.
+  - Automatically expands if navigating directly to a tool page.
+  - When expanded, reveals:
+    1. `Market data` (`/history`): Historical imports, candle inspection, and quarantine.
+    2. `Model studio` (`/studio`): Model versioning, hyperparameter analysis, and comparisons.
+    3. `Walk-forward` (`/backtest`): 19-fold walk-forward validation and factor attribution.
+    4. `Registry` (`/registry`): Model execution slots and promotion governance.
+    5. `Paper book` (`/paper`): Simulated execution logs and audit intent replay.
+    6. `Account` (`/settings`): Operator profile, display name, and password change.
+    7. `API keys` (`/settings/integrations` & `/integrations`): Broker and LLM credential configuration, connection testing, and lifecycle management.
+- **Rail Footer**:
+  - Signed-in user identity: Shows display name or username.
+  - `Log out` button: Clears session cookie and redirects to `/`.
+  - Regulatory safety note: *"The book is standing aside. This desk shows the call and does not send an order."*
+
+### 2.3 ResearchBoard Safety & Execution Status Strip (`<StatusStrip />`)
+Located immediately beneath the page header across trading desks (`/dashboard`, `/risk`, `/system`, etc.):
+- **`Experimental paper`**: Displays `Enabled` (green) when the runtime mode is `PAPER`, virtual risk controls (`risk_capital_inr > 0`, position limits, trade risk fraction, daily loss fraction) are configured, and the kill switch is disarmed. Displays `Blocked` if virtual controls are missing.
+- **`Forecast evaluation`**: Displays `Active` (green) confirming that 12-agent consensus generation, multi-horizon probabilistic forecasts, and post-horizon outcome scoring are operational.
+- **`Data verification`**: Displays `Unverified` (honest provenance label confirming experimental inputs without vendor certification) or `Verified`.
+- **`Live broker`**: Displays `Locked` (muted gray) confirming fail-closed execution safety where live broker routing is strictly disarmed (`live_order_calls = 0`).
+- **`Kill switch`**: Displays `OFF` (normal operational state) or `ON` (immediate fail-closed emergency circuit breaker).
+- **`Simulated fills`**: Displays `None persisted` or `Persisted` tracking whether simulated virtual executions have been journaled in `PaperAccountEvent`.
+
+---
+
+## 3. Authentication & Operator Identity
+
+### 3.1 Sign In Page (`/`)
+- **Purpose**: Authenticates the operator into the trading system.
+- **Security Architecture**: Single-operator design; session token saved in secure HTTP-only cookie with CSRF protection (`imm_csrf`).
+- **Form Controls**:
+  - `Username`: Required only if an operator account has been created in the SQLite database.
+  - `Password`: Salty PBKDF2 verification against database or fallback local environment password.
+  - `Sign in` button: Submits credentials; disabled while busy or password is empty.
+  - `Create the operator account` link: Visible only if no operator account exists yet.
+  - `Signed in` state view: Displays welcome card with buttons to `Open the desk` (`/dashboard`), view `Account` (`/settings`), or `Log out`.
+
+### 3.2 Create Account Page (`/signup`)
+- **Purpose**: First-time initialization of the local operator credentials in SQLite.
+- **Options & Controls**:
+  - `Username`: Must be at least 3 characters.
+  - `Display name`: Human-readable name used across the UI.
+  - `Password`: Minimum 8 characters; salted with PBKDF2 before storage.
+  - `Confirm password`: Validated for strict match with password.
+  - `Create account` button: Creates operator profile and redirects to `/settings`.
+  - Lock Constraint: Once created, this page permanently closes (`The operator account already exists.`).
+
+---
+
+## 4. Primary Trading Desk Pages
+
+### 4.1 Overview Desk (`/dashboard`)
+- **Purpose**: The central morning-to-evening cockpit providing an executive snapshot of the market tape, current desk recommendation, live quotes, and active blockers.
+- **Components & Options**:
+  1. **Session Ribbon**:
+     - Visual badge indicating current posture (`Standing aside`, `NO TRADE`).
+     - Dynamic Context Message:
+       - When experimental paper trading is enabled: explains that experimental paper execution is active with virtual risk controls, but consensus forecast indicates neutral conditions so the ticket stands aside.
+       - When experimental paper trading is blocked: explains that virtual risk controls (capital, max positions, loss limits) must be configured.
+  2. **Instrument Selector (`<InstrumentSelector />`)**:
+     - Global selector card showing detailed metadata for the selected instrument:
+       - Real-time exchange source (NSE / BSE / MCX).
+       - Active trading hours (e.g., `09:15 AM – 03:30 PM IST`).
+       - Data freshness status (`LIVE` or `CLOSED_SESSION_VALID`).
+       - Supported forecast horizons (`1h`, `4h`, `1d`, `5d`).
+       - Model validation status (`Paper Ready` / `Validation Required`).
+  3. **Multi-Instrument Overview Card (`<MultiInstrumentOverviewCard />`)**:
+     - 3-card comparison grid for NIFTY 50, SENSEX, and CRUDEOIL MINI.
+     - Displays Spot LTP, Day Change (pts & %), Session Phase, and 52-week High/Low boundaries.
+  4. **Instrument Forecast Card (`<InstrumentForecastCard />`)**:
+     - Multi-horizon directional forecasts (1-hour, 4-hour, 1-day, 5-day).
+     - Calibrated Up/Down probabilities, expected return (basis points), and model lineage.
+  5. **Trade Ticket (`<TradeTicket />`)**:
+     - Order ticket layout showing current recommendation (`STAND ASIDE`).
+     - Live Spot ticker reference showing current Groww LTP and daily OHLC (Open, High, Low, Close).
+     - Metadata list: Side, Structure, Size, Expected Net, Paper Capital, and Paper Book status (`Enabled` / `Blocked`).
+     - **Signal Status Callout Box**:
+       - Displays `No eligible paper trade — Consensus forecast indicates neutral market conditions (standing aside). No trade signal qualifies under virtual risk filters.` when paper trading is enabled without an active directional edge.
+       - Displays `Paper execution blocked — Virtual account controls require configuration (risk capital, position limits, loss fraction).` when virtual controls are missing.
+     - **Blocker List (`<BlockerList />`)**: Shows active gate blockers. When experimental paper execution is enabled, filters out production model approval gates and shows only active experimental blockers.
+  6. **Tape Snapshot (`<Snapshot />`)**:
+     - Live market tape featuring 10 domestic and global benchmarks: NIFTY, SENSEX, CRUDE OIL, INDIA VIX, S&P 500, NASDAQ, DOW JONES, US VIX, BRENT, USD/INR.
+     - Live Feed Table: Underlying, Last Price, Origin (`Groww Live`), Class (`LIVE FEED`), Quality (`GOOD`), and Event Time.
+     - Collapsible Synthetic Baseline: Archive of synthetic test fixtures used for offline compliance testing.
+  7. **Live Quotes Reader (`<LiveQuotes />`)**:
+     - Direct inspection of raw quotes retrieved from Groww with domestic indices, MCX commodities, global benchmarks, and sectoral/volatility prints.
+     - `Read Groww quotes` button: Re-triggers synchronous Groww quote fetch.
+  8. **Desk Summary (`<DeskSummary />`)**:
+     - Verified Market News: Headlines ingested from Economic Times and financial feeds.
+     - Volatility & Breadth: Current India VIX level and sectoral index performance.
+     - Multi-Agent Consensus: Summary of stage 1–4 synthesis.
+     - Book Posture: Final risk call.
+  9. **Quarantine Ledger (`<Quarantine />`)**:
+     - Table of any candle files quarantined due to invalid timestamp formatting, clock drift, or empty payloads.
+
+---
+
+### 4.2 Multi-Agent Analysis Desk (`/analysis`)
+- **Purpose**: Deep institutional analysis synthesizing technical regimes, order flows, macro indicators, and Bayesian uncertainty gates across 12 specialized agents.
+- **Top Controls**:
+  - `<InstrumentSelector compact={true} />`: Switch between NIFTY 50, SENSEX, and CRUDEOIL MINI.
+  - **5-Tab View Switcher** (eliminates endless vertical scrolling):
+    1. `🤖 Multi-Agent Decision Desk & Signals` (Default): Shows `V6Desk` with the core trade call and agent breakdown.
+    2. `🧠 Institutional Intelligence Hub & Greeks`: Shows `V6IntelligenceHub` with correlation matrices and Greek radar.
+    3. `📈 Multi-Horizon Statistical Forecasts`: Shows `InstrumentForecastCard` with quantitative probability models.
+    4. `📰 News Agent Web Feeds`: Shows `NewsSourcesManager` to configure, enable/disable, add, or delete web feeds scraped by the News Sentiment Agent.
+    5. `📄 Expanded View`: Displays all sections stacked sequentially.
+
+#### Tab 1: Multi-Agent Decision Desk (`V6Desk`)
+- **Collapsible Market Ticker Strip**:
+  - Defaults to collapsed (`Show Market Tickers (15) ▾`) to save screen space.
+  - When expanded, shows 15+ live quotes (NIFTY, BANKNIFTY, SENSEX, CRUDE, GOLD, VIX, US Indices).
+  - Includes `Refresh Groww live quotes` button.
+- **Executive System Health & Engine Status Ribbon (4-Column Deck)**:
+  - `Market Quotes Feed`: Connection state (🟢 Live Active / 🟡 Polling), active quotes count, polling interval, and public Groww LTP reader status. Clarifies that this reads domestic public/cached market index snapshots and commodities, distinct from private broker trading authentication.
+  - `Specialist Agents`: Status (🟢 12 Online), deterministic quant consensus engine mode, news item count.
+  - `AI Commentary`: In-loop state (🟢 In-Loop with LLM commentary / ⚪ Standby with Zero-Hallucination Deterministic Quant Core). Clarifies that specialist multi-agent analysis runs mathematical and technical quant rules deterministically without requiring an LLM.
+  - `ML Forecasting`: Models ready count (🟢 Models Ready / 🟡 Fitted Active), model architecture, probability engines.
+- **Institutional Desk Verdict Hero Banner**:
+  - High-impact horizontal banner spanning the full desk width with accent color coding (Amber for Caution/Stand Aside, Emerald for Bullish Buy, Crimson for Bearish Sell).
+  - Consensus Signal Badge (e.g., `⚠️ NO TRADE / CAUTION`, `🟢 STRONG_BUY_CE`, `🔴 STRONG_BUY_PE`).
+  - Allocation Tag: `Deadband Gated` or `Active Allocation`.
+  - Meta-Chips: Recommended Horizon (e.g., `Intraday`), Forecast Models approved count, Statistical Probabilities status, and Quant Fusion enablement.
+  - Macro & Market Regime Pills: Displays volatility regime (`🛡️ Normal Volatility`) and risk limits clearance (`✓ Risk Limits Clear`).
+- **Command Toolbar & Analysis Launcher**:
+  - Quick Presets: `🇮🇳 All Indices (3)`, `🛢️ MCX Commodities (8)`, `🌐 All Markets (15)`, and `Clear`.
+  - Granular Instrument Selector Chips: Select individual indices (NIFTY, SENSEX), MCX commodities (Crude Mini, Gold Mini, Silver Mini, NG Mini), and global benchmarks.
+  - Execution Options: `⚡ Combine ML Forecast with Agent Consensus (Quant Fusion)` toggle and `Include model commentary` toggle.
+  - Primary CTA: `Run analysis (X Selected)` button with live execution feedback.
+- **5 Inner Desk Navigation Tabs**:
+  1. `🎯 Trade Decisions & Options`: Real spot-based option picks (ATM/OTM/ITM), strike targets, stop losses, and agent consensus.
+  2. `🤖 12 Specialist Agents`: The 12 quantitative specialist agents structured across 4 sequential analytical stages.
+  3. `📋 Master Dossier & Pipeline (Stages 0–14)`: Institutional audit dossier containing 4 sub-tabs:
+     - `V6 Master Dossier (Stages 0–14)`: Granular stage-by-stage cards covering Data Quality, Executive View, Global Macro, Fresh News, Geopolitics, Energy & FX, NIFTY Spot, SENSEX Spot, VIX & Sectors, Options Chain & OI, Price Confirmation, Quantitative Forecasts, Scenario Calibration, Contrarian Scan, and Final Verdict.
+     - `Pipeline Stages (19)`: Complete tabular audit of all 19 pipeline nodes, displaying stage number, stage name, status pill badge, and explicit audit justification detail.
+     - `Contradictions & Red Team`: Explicit contrarian challenges comparing macro narratives against price actions and technical order flows.
+     - `Raw Observations`: Inspection table of all raw ingested telemetry rows, timestamps, data classes, SHA-256 hashes, and verification provenance.
+  4. `📰 Headlines & News Wire`: Real-time news sentiment items with an embedded `⚙ Configure Feeds & Web Pages` collapsible drawer for `<NewsSourcesManager />`.
+  5. `🛡️ Risk & Contradictions`: Expected Net Payoff, statutory friction breakdown (STT, exchange turnover, GST, SEBI charges, stamp duty, slippage buffer), hard risk limits, and fail-closed safety gates.
+- **Trade Recommendation Card**:
+  - Recommended Contract (e.g., `NIFTY 23200 CE 24-OCT`).
+  - Entry Spot & Estimated Premium.
+  - Target Spot & Target Premium.
+  - Stop Loss Spot & Stop Loss Premium.
+  - Risk/Reward Ratio (e.g., `1 : 2.4`).
+- **12 Specialist Agent Cards**:
+  - Stage 1: News Sentiment Agent, Macro Regime Agent, Foreign Flow (FII/DII) Agent.
+  - Stage 2: Order Flow & Microstructure Agent, Volatility & Skew Agent, Intermarket Commodity Agent.
+  - Stage 3: Trend & Momentum Agent, Mean Reversion Agent, Multi-Timeframe Resampling Agent.
+  - Stage 4: Bayesian Uncertainty Gate, Expected Net Payoff Agent, Hard Risk Limit Engine.
+- **Interactive Scenario Simulator**:
+  - Allows operator to adjust spot sliders and implied volatility shocks to simulate portfolio payoffs under simulated market gaps.
+
+#### Tab 2: Institutional Intelligence Hub (`V6IntelligenceHub`)
+- Cross-market correlation heatmaps between Indian Equities, MCX Commodities, US Benchmarks, and USD/INR.
+- Institutional Sentiment Gauge synthesizing domestic news feeds.
+- Greeks Sensitivity Surface (Delta, Gamma, Theta, Vega across varying expiries).
+
+#### Tab 3: Multi-Horizon Statistical Forecasts (`InstrumentForecastCard`)
+- Multi-horizon quantitative forecast distribution across M15, H1, H4, and D1 timeframes.
+- Displays return distributions, directional probability, and calibration metrics (Brier Score).
+
+#### Tab 4: News Agent Web Feeds (`NewsSourcesManager`)
+- **Purpose**: Gives operators granular control over which external web portals and RSS feeds the News Sentiment Agent reads for market intelligence.
+- **Top Metrics & Global Controls**:
+  - `Feed Count Badge`: Displays current active feeds versus total configured (e.g., `5/5 Active`).
+  - `+ Add Feed Link` button: Toggles the inline custom link addition form.
+  - `↺ Reset Defaults` button: Reverts the feed configuration back to the 5 baseline financial feeds (Economic Times, Mint, Business Standard, The Hindu, Moneycontrol) and reenables all. Requires explicit confirmation dialog.
+  - `↻ Fetch Live Articles Now` button: Triggers immediate multi-source RSS scraping and article ingestion across all active feeds, refreshing sentiment scores in real-time.
+- **Add Feed Link Form**:
+  - `Feed / Publication Name` input (e.g., `Reuters India Equities`): Human-readable source label.
+  - `Web / RSS Feed URL` input: Full URL (must begin with `http://` or `https://`). Server validates domain and enforces SSRF blocking against private/internal loopback addresses.
+  - `Save Feed` button: Submits feed to API, saves to `data/news_sources.json`, and records audit event.
+  - `Cancel` button: Closes the form without saving.
+- **Feed Source Cards**:
+  - `Source Name & Badge`: Displays feed name and type tag (`Default Feed` or `Custom Feed`).
+  - `Feed URL Link`: Shows feed endpoint with an external link icon opening in a new tab.
+  - `Article Health & Count`: Shows number of articles parsed during the most recent scrape cycle (e.g., `12 articles`).
+  - `Enable / Disable Toggle` button (`✓ Enabled` in vibrant emerald / `○ Disabled` in muted gray): Allows temporarily suspending ingestion from a specific publication without deleting its link configuration.
+  - `Remove Feed` button (`🗑 Remove`): Deletes custom feeds (with confirmation dialog). Default feeds can be disabled but not permanently removed to protect baseline system integrity.
+- **Notification & Error Banners**:
+  - Displays instant visual feedback toasts when feeds are enabled/disabled, added, deleted, reset, or when scraping fails.
+
+---
+
+### 4.3 Live & Auto Trading Desk (`/live`)
+- **Purpose**: Autonomous algorithmic execution desk, automated trade suggestions, live paper/broker order management, and active risk monitoring.
+- **Components & Controls**:
+
+#### 1. Cross-Market Session Ribbon
+- Real-time exchange status for NSE/BSE (09:15 AM – 03:30 PM IST) and MCX (09:00 AM – 11:30 PM IST).
+- Shows live freshness tag (`LIVE` or `CLOSED_SESSION_VALID`) and countdown to next session open.
+
+#### 2. Live Control Station
+- **`Auto-Trading Master Switch` (Toggle Button)**:
+  - Turns autonomous trading engine ON (`● AUTO-TRADING ON`, green) or OFF (`○ AUTO-TRADING OFF`, subtle gray).
+  - **State Persistence**: The enabled/disabled state is persisted to browser `localStorage` under `imm_auto_trading_enabled` and hydrated automatically on page load/refresh. When enabled, refreshing the page keeps Auto-Trading active without turning off.
+  - When ON, eligible high-conviction breakout signals from multi-agent analysis are automatically evaluated and enrolled in the Watchlist/execution pipeline upon quote polling.
+- **`Auto-Add to Watchlist` (Toggle Checkbox)**:
+  - When checked, new algorithmic trade suggestions are automatically enrolled in the outcome accuracy tracker.
+  - State persisted in `localStorage` under `imm_auto_add_watchlist`.
+- **`Execution Mode` Switcher**:
+  - `PAPER` (Default): All orders are routed to the simulated ledger with realistic slippage and statutory STT/GST friction.
+  - `LIVE`: Routes orders to actual broker API.
+  - **State Persistence**: Current mode is stored under `imm_execution_mode` in `localStorage`.
+  - **Fail-Closed Confirmation Modal**: Switching to `LIVE` triggers a modal requiring explicit confirmation. Live orders remain permanently locked if Kill Switch is engaged.
+- **`🛑 KILL SWITCH` / `🔄 Reset Kill Switch` Button**:
+  - Emergency circuit breaker: Immediately halts all automated trading, forces `imm_auto_trading_enabled` to `false` in `localStorage`, cancels open pending orders, and blocks new order generation.
+  - Displays red warning banner when tripped: *"Engine locked by operator. Open orders squared off. Reset to resume."*
+- **Risk Threshold Controls**:
+  - `Max Lots per Trade`: Limits position size (default: 1 lot; persisted in `imm_max_lots`).
+  - `Daily Loss Threshold (₹)`: Hard loss cap (default: ₹5,000; persisted in `imm_daily_loss_limit`); if cumulative daily loss reaches this limit, the Kill Switch trips automatically.
+- **`Auto-Evaluate against live spot price` (Toggle)**:
+  - Automatically re-evaluates all open positions whenever a fresh Groww quote is polled (persisted in `imm_auto_evaluate`).
+- **`🔄 Fetch Groww Live Data & Refresh Signals` Button**:
+  - Pulls live spot prices and recalculates signals across all instruments.
+
+#### 3. Tradable Underlyings Bot Matrix
+- 3 dedicated execution cards for **NIFTY 50**, **BSE SENSEX**, and **CRUDEOIL MINI**.
+- Each card displays:
+  - Real-time Spot LTP and change.
+  - Trading session hours and market state.
+  - Multi-Agent Signal badge (`STRONG_BUY_CE`, `BUY_CE`, `WAIT`, `BUY_PE`, `STRONG_BUY_PE`).
+  - Directional Confidence Score (%) and primary drivers.
+  - Option trade pick with strike, expiry, target spot, stop-loss spot, and estimated premium.
+  - **`+ Add to Watchlist` Button**: Enrolls the trade in the accuracy tracker.
+  - **`⚡ Execute Trade Now` Button**: Submits the order to the active execution mode (Paper or Live).
+
+#### 4. Live Watchlist & Active Order Book
+- **Status Filter Tabs**: `ALL`, `OPEN`, `TARGET_HIT`, `SL_HIT`, `EXPIRED`.
+- **View Source Switcher**: `Watchlist Suggestions` vs `Live/Paper Orders`.
+- **Performance Summary Cards**:
+  - `Win Rate (%)`: Percentage of closed trades where target was hit before stop-loss.
+  - `Total Signals`: Total suggestions recorded.
+  - `Target Hits`: Successful trades that reached target price.
+  - `SL Hits`: Trades that breached stop loss.
+  - `Realized P&L (₹)`: Total closed profit/loss.
+  - `Running P&L (₹)`: Mark-to-market unrealized profit/loss calculated from live spot prices.
+- **Orders Table**:
+  - Columns: Underlying, Contract, Entry Spot, Target Spot, Stop Loss Spot, Current Spot, Model Premiums (Entry, Running LTP, Target, Stop Loss), P&L (%), Status Badge, and Actions (`Exit` / `Cancel`).
+  - **Orders Persistence**: Active and squared-off simulated broker orders are persisted in `localStorage` under `imm_live_simulated_orders`, allowing order logs, entry prices, and running P&L to survive page reloads until explicitly cleared via `Clear Orders`.
+
+---
+
+### 4.4 Watchlist & Accuracy Desk (`/watchlist`)
+- **Purpose**: Independent, objective tracking and scoring of algorithmic suggestions against actual market spot prices reported by Groww.
+- **Evaluation Rules**:
+  - `Target hit`: Spot touched or exceeded target level while position was open.
+  - `SL hit`: Spot touched or breached stop-loss level.
+  - `Expired`: Neither target nor stop was hit before session close (15:30 IST for equities; 23:30 IST for commodities).
+  - Note: Option premiums are theoretical estimates and are not used for scoring; evaluations are 100% spot-driven to prevent pricing distortion.
+- **Top Action Controls**:
+  - `Refresh quotes & check outcomes` button: Pulls current spot prices and re-scores all open suggestions against fresh market prints.
+  - `+ Add Contract / Suggestion` button: Toggles the interactive inline contract creation card (`<AddSuggestionCard />`).
+  - `Clear Watchlist` button: Prompts operator for confirmation and purges all suggestions.
+  - `Auto-check every 60s` checkbox: Keeps a 60-second polling timer running in the browser tab.
+- **Interactive Add Suggestion Card (`<AddSuggestionCard />`)**:
+  - `Instrument` dropdown: Select from `NIFTY 50`, `SENSEX`, or `CRUDEOIL MINI`. Automatically updates default strike and step sizes.
+  - `Option Type` dropdown: Select `CE (Call - Up)` or `PE (Put - Down)`.
+  - `Contract Symbol` text input: Editable contract descriptor (e.g., `NIFTY 23200 CE`).
+  - `Entry Spot (₹)` numeric input: Pre-filled with live underlying spot price.
+  - `Target Points (pts)` numeric input: Default 50 pts (NIFTY), 150 pts (SENSEX), or 40 pts (CRUDEOILMINI).
+  - `Stop Loss (pts)` numeric input: Default 25 pts (NIFTY), 75 pts (SENSEX), or 20 pts (CRUDEOILMINI).
+  - `Est. Prem. (₹)` numeric input: Theoretical entry option premium (default ₹120.00).
+  - `Save to Watchlist` button: Submits `POST /api/watchlist` and refreshes the table upon success.
+- **Accuracy Metric Cards**:
+  - `Hit rate`: Percentage of decided trades where target was reached prior to stop-loss (`Targets / (Targets + SL)`).
+  - `Target hit`: Absolute count of target-resolved suggestions.
+  - `SL hit`: Absolute count of stop-loss resolved suggestions.
+  - `Open`: Number of active suggestions being monitored against incoming spot quotes.
+  - `Expired`: Suggestions that expired at session close without touching target or stop.
+  - `CE / up hit rate`: Win rate specific to Call options / bullish underlying moves.
+  - `PE / down hit rate`: Win rate specific to Put options / bearish underlying moves.
+- **Status Filter Buttons**:
+  - Filter by lifecycle status: `All`, `Open`, `Target hit`, `SL hit`, `Expired`, `Cancelled`.
+- **Interactive Suggestions Table**:
+  - `Contract`: Clickable link navigating directly to `/dashboard?instrument=...` with sub-link to `/analysis`. Displays option direction tag and data class.
+  - `Status`: Color-coded pill (`Open`, `Target hit`, `SL hit`, `Expired`, `Cancelled`).
+  - `Prem. Entry`: Theoretical entry option premium and lot size.
+  - `Running Prem.`: Real-time estimated option premium modeled on live spot delta, showing color-coded running gain/loss percentage.
+  - `Prem. Target` & `Prem. SL`: Target (+40%) and Stop-Loss (-25%) premium estimates.
+  - `Spot Entry`, `Spot Target`, `Spot SL`: Underlying spot boundary levels.
+  - `Last Spot`: Most recent observed spot price with total checks count and time.
+  - `Best / Worst`: Maximum favorable and maximum adverse spot excursions observed.
+  - `Saved` & `Resolves`: Creation timestamp, expiry time, and resolution price.
+  - `Cancel` button: Available on `OPEN` suggestions to manually abort tracking.
+
+---
+
+### 4.5 Multi-Horizon Forecast Desk (`/forecast`)
+- **Purpose**: Quantitative multi-horizon forecasting, directional probabilities, and empirical out-of-sample calibration tracking.
+- **Components & Controls**:
+  - `<InstrumentSelector />`: Select primary underlying to inspect.
+  - `<InstrumentForecastCard />`: Displays forecast cards for 1-hour, 4-hour, 1-day, and 5-day horizons with calibrated probabilities and expected return.
+  - **Forecast Accuracy & Out-of-Sample Calibration Hub (`<ForecastAccuracyHub />`)**:
+    - `Evaluate Pending Outcomes` action button: Triggers `POST /api/analysis/forecast-accuracy/evaluate` to score pending forecasts whose horizon has elapsed against incoming quotes without look-ahead bias.
+    - **Calibration Status Banner**:
+      - Status badge: Displays `CALIBRATED_RESEARCH` (green) if sample size $\ge 30$ and Brier Skill Score $> 0$, or `UNCALIBRATED` (amber) if preliminary sample or negative skill score.
+      - Reason message: Clear textual explanation of statistical significance and empirical edge.
+      - Sample summary: Shows total scored outcomes and pending outcomes awaiting subsequent bar close.
+    - **Metric Cards Grid**:
+      - `Directional Win Rate`: Percentage of predictions where realized direction matched hypothesis.
+      - `Mean Brier Score`: Average squared error $\frac{1}{N}\sum (\hat{p}_i - y_i)^2$.
+      - `Prior Baseline Brier Score`: Canonical empirical benchmark ($0.2503$).
+      - `Brier Skill Score (BSS)`: Relative improvement over prior baseline $1 - (\text{Brier} / \text{Brier}_{\text{prior}})$.
+      - `Log Loss (Cross-Entropy)`: Logarithmic probabilistic loss.
+    - **Accuracy by Instrument Grid**:
+      - Dedicated cards for `NIFTY`, `SENSEX`, and `CRUDEOILMINI` showing total forecasts, directional accuracy %, and Brier score.
+    - **Forecast-versus-Actual History Table**:
+      - `Analysis / Time`: Timestamp in IST and short analysis run UUID.
+      - `Instrument`: Tradable asset symbol.
+      - `Predicted`: Hypothesized direction (`BULLISH` / `BEARISH`).
+      - `Prob (Up)`: Model-estimated probability of upward move.
+      - `Prior Spot`: Underlying spot price at forecast creation time.
+      - `Subsequent Spot`: Realized underlying close price post-horizon.
+      - `Realized Ret`: Realized percentage move of underlying.
+      - `Outcome`: Color-coded indicator: `✓ Correct (BULLISH/BEARISH)`, `✗ Incorrect`, or `⏳ Horizon pending`.
+      - `Brier`: Individual squared prediction error.
+      - `Status`: `SCORED` or `PENDING` pill.
+  - **Approved Forecasts Section**: Lists all active models approved for production forecasting.
+  - **Registered Models Table**: Lineage, training dataset ID, checksum, and safety flags.
+  - **Experiments Section**: Holdout and walk-forward experiment tables.
+
+---
+
+### 4.6 Options Strategy & Greeks Desk (`/options`)
+- **Purpose**: Deep option chain pricing, Greeks modeling (Black-Scholes-Merton), and multi-leg spread strategy formulation.
+- **Interactive Workstation Controls**:
+  - `Underlying`: Dropdown or buttons to select `NIFTY`, `SENSEX`, or `CRUDEOILMINI`.
+  - `Side`: Toggle between `CE` (Calls) and `PE` (Puts).
+  - `Structure`: Choose between `Single leg` (Outright Option), `Bull call spread`, or `Bear put spread`.
+- **Live Options Greeks Card (`<V6OptionsGreeksCard />`)**:
+  - Real-time calculations for Delta ($\Delta$), Gamma ($\Gamma$), Theta ($\Theta$), Vega ($\mathcal{V}$), Implied Volatility (IV), and Put-Call Ratio (PCR).
+- **Live Option Strike Matrix**:
+  - Automatically identifies real-time At-The-Money (ATM) strike based on live Groww spot.
+  - Shows 5 key strike levels: ATM, ITM 1, ITM 2, OTM 1, OTM 2.
+  - Displays strike, option type, moneyness tag, theoretical premium estimate, and lot size.
+  - `Select Strike` button: Prefills the research order ticket.
+- **Decision Record & Expected Value**:
+  - Computes Expected Net ($EV$) after subtracting bid-ask spread and statutory friction.
+  - Displays risk veto status from the risk engine.
+
+---
+
+### 4.7 Positions, Risk & Capital Allocation (`/risk`)
+- **Purpose**: Hard financial risk control, portfolio capital allocation, and enforcement of safety gates.
+- **Portfolio Metric Grid**:
+  - `Capital`: Allocated risk capital in INR (e.g., `₹50,000.00`).
+  - `Utilisation`: Percentage of capital currently committed to margin/premiums.
+  - `Open positions`: Number of active contracts held.
+  - `Session P&L`: Cumulative session profit or loss.
+- **Capital Configuration Form (`<CapitalConfig />`)**:
+  - `Allocated Risk Capital (INR)` input: Set allocated trading capital.
+  - `Save capital allocation` button: Persists capital to configuration; immediately clears the `MISSING_RISK_CAPITAL` blocker across all desks.
+  - `Clear capital allocation` button: Resets capital to `null` (engaging safety stand-aside).
+- **Limits & Safety Flags**:
+  - Displays state of Kill Switch, Paper Trading, Live Trading, Forecast Approval, Paper Approval, Live Approval, and Market Data Verification.
+  - **Missing Prerequisites Blocker List**: Displays list of active pipeline blockers preventing live trading.
+
+---
+
+### 4.8 System Architecture & Paper Readiness Audit (`/system`)
+- **Purpose**: Operational health verification, data provenance audit, and statutory 8-Gate Paper Readiness certification.
+- **System Health Strip**:
+  - Reports API server status (`HEALTHY`), SQLite database connectivity (`CONNECTED`), Operating Mode, Live Orders lock status (`LOCKED`), and Kill Switch state (`NORMAL (ARMED)`).
+- **Instrument Data Health Card (`<InstrumentDataHealthCard />`)**:
+  - Verifies data provenance for the selected instrument.
+  - Checks candle boundary alignment, holiday calendars, clock drift, and quarantine logs.
+- **V6 8-Gate Paper Readiness Certification Card (`<V6ReadinessAuditCard />`)**:
+  - Displays the 8 mandatory gates required for algorithmic trading:
+    1. Gate 1: Real Market Data Provenance (Groww/Exchange verified).
+    2. Gate 2: Invariant Checksums & Boundary Validation.
+    3. Gate 3: 19-Fold Walk-Forward Cross-Validation.
+    4. Gate 4: Statutory Friction & Slippage Accounting.
+    5. Gate 5: 12-Agent Deterministic Consensus.
+    6. Gate 6: Risk Budget & Hard Loss Limit Enforcement.
+    7. Gate 7: Fail-Closed Kill Switch & Emergency Stop.
+    8. Gate 8: Execution Isolation (Simulation vs Live Broker).
+- **Diagnostics Section**: Quick navigation links to secondary diagnostic tools.
+
+---
+
+## 5. Tools & Diagnostics Pages
+
+Accessible via the collapsible `Tools Show (7) ▾` toggle in the left navigation rail.
+
+### 5.1 Historical Market Data & Quarantine (`/history`)
+- **Purpose**: Management of historical OHLCV candle datasets, multi-provider reconciliation, and inspection of quarantined data files.
+- **Historical Import Form**:
+  - `Provider`: Select `groww` or `upstox`.
+  - `Instrument`: `NIFTY`, `SENSEX`, or `CRUDEOILMINI`.
+  - `Interval`: `M1` (1-min), `M5` (5-min), `M15` (15-min), `H1` (1-hour), `D1` (Daily).
+  - `Start Date` & `End Date`: Date pickers.
+  - `Submit Import` button: Ingests candle data and validates boundaries.
+- **Cross-Provider Reconciliation Form**:
+  - Compares historical prints between Provider A and Provider B within a specified tolerance (pts) to identify data errors.
+- **Interactive Candle Chart (`<InstrumentHistoricalChart />`)**:
+  - Canvas chart for reviewing ingested OHLCV bars.
+- **Quarantined Records Table**:
+  - Displays candle files rejected due to timestamp ambiguity or data gaps.
+
+---
+
+### 5.2 Model Studio & Benchmarking (`/studio`)
+- **Purpose**: Quantitative machine learning laboratory for model training, feature weight inspection, and cross-model benchmarking.
+- **Registered Models & Experiment Registry**:
+  - Browse trained models (Logistic L2, LightGBM, Persistence, Random Forest).
+  - `Register Experiment` button: Promotes an experiment to registered model status.
+- **Model Details Inspector**:
+  - View model hyperparameters, training dataset checksums, and feature importance scores.
+- **Side-by-Side Model Comparison Tool**:
+  - Select any two models using checkboxes.
+  - Click `Compare Selected Models` to view side-by-side AUC-ROC, Brier Score, Sharpe ratio, and calibration curves.
+- **Research Selection**:
+  - Designates an active research model for offline forecasting.
+
+---
+
+### 5.3 Walk-Forward Backtesting (`/backtest`)
+- **Purpose**: Rigorous 19-fold walk-forward cross-validation, higher-timeframe swing resampling, and factor attribution.
+- **Evaluation Runner**:
+  - `Instrument`: `NIFTY 50`, `SENSEX`, or `CRUDE OIL MINI`.
+  - `Provider`: Choose between `Synthetic Quiet-Day Fixture` (compliance testing) or `Historical Ingested Dataset` (real market validation).
+  - `Run walk-forward evaluation` button: Executes out-of-sample backtest.
+- **Walk-Forward Performance Metrics Card (`<InstrumentBacktestCard />`)**:
+  - Net Sharpe Ratio, Max Drawdown %, Win Rate %, Profit Factor, Annualized Return.
+  - Transaction Costs Breakdown: STT (Securities Transaction Tax), Exchange Turnover Fees, GST, and Stamp Duty.
+- **Factor Attribution Card (`<V6MultiAssetCard />`)**:
+  - Decomposes strategy returns into Market Beta, Momentum, Volatility Regime, and Mean Reversion factors.
+
+---
+
+### 5.4 Model Registry & Governance (`/registry`)
+- **Purpose**: Enforces formal regulatory separation between research models, paper trading, and live deployment.
+- **Model Slots**:
+  - `Paper Trading Slot`: Displays active model authorized for simulated trading (or `None (NOT_AVAILABLE)`).
+  - `Live Trading Slot`: Displays active model for live orders (`Permanently Locked` in current build).
+- **Governance Gates**:
+  - Real-time audit flags: `Forecast Ready`, `Paper Approved`, `Live Approved`, `Market Data Verified`.
+- **Raw Technical JSON**: Inspect full registry state payload.
+
+---
+
+### 5.5 Paper Trading Simulation Desk (`/paper`)
+- **Purpose**: Zero-risk simulated execution environment modeling discrete Indian statutory charges, half-spread tick slippage, Half-Kelly position sizing, and sub-millisecond audit trails without live broker interaction. Strictly segregates the active live-data paper trading account from historical walk-forward replay benchmarks.
+- **Operational Safeguards Ribbon**:
+  - `Operational Mode: PAPER`: Explains active virtual trading environment where real capital remains locked behind hardware/software kill switches. Fills are virtual only.
+  - `LIVE BROKER LOCKED`: Prominent red badge confirming that real broker routing is disabled.
+- **Section 1: Current Live Paper Trading Account (Actual)**:
+  - `Source: Live Database Ledger` badge: Connects to `GET /api/paper/account` querying actual execution ledger tables (`PaperAccountEvent`, `RiskSession`).
+  - `Realized Net P&L`: Shows current session's actual realized profit/loss in INR (default `₹0.00`). Color-coded green (positive), red (negative), or neutral.
+  - `Open Positions`: Count of currently open virtual lots/positions (default `0`).
+  - `Executed Trades`: Total number of live virtual orders filled in the current session (default `0`), with live Win Rate %.
+  - `Total Statutory Fees`: Real accumulated Indian statutory friction (STT, NSE, SEBI, GST) from live paper executions (default `₹0.00`).
+  - **Honest Zero State Card (`📭 No Live Paper Trades Executed Yet`)**:
+    - Displayed when `Executed Trades === 0`.
+    - Explicitly informs the operator that no virtual orders have been placed or filled during the session, and that realized P&L, win rate, and profit factor remain at zero rather than fabricating or inheriting historical backtest figures.
+  - **Live Executed Trades Table**:
+    - Displayed when live fills exist. Columns: `ID`, `Symbol`, `Side` (`BUY`/`SELL`), `Price`, `Charges`, and `Net P&L`.
+- **Section 2: Historical Simulation Benchmark (M42 Historical Replay)**:
+  - `HISTORICAL BENCHMARK` amber badge: Distinctly identifies this section as archival research performance across historical swing bars, **not** the current paper account's P&L.
+  - `Inspect Benchmark Trades (67) / Collapse Benchmark` button: Collapsible drawer toggling the detailed historical replay records.
+  - **Benchmark Portfolio Cards**:
+    - `Ending Virtual Capital`: Final simulated capital (₹10,44,626.76) vs initial seed capital (₹10,00,000.00).
+    - `Net Realized P&L`: Total net strategy profit (+₹44,626.76) and Net ROI percentage (+4.46%).
+    - `Gross P&L vs Friction`: Compares gross price gain (₹60,311.00) against total friction (₹34,706.09).
+    - `Win Rate & Profit Factor`: Strategy win rate (56.72%), profit factor (1.46), and maximum peak-to-trough drawdown (1.35%).
+  - **Indian Statutory Charges & Slippage Breakdown Box**:
+    - `STT`: Securities Transaction Tax (0.10% on SELL options premium turnover; 0.02% on SELL futures turnover).
+    - `NSE Txn`: NSE Exchange Turnover charges (0.03503% on options turnover).
+    - `SEBI Turnover`: SEBI regulatory turnover charges (0.0001% / ₹10 per crore).
+    - `Brokerage`: Institutional discount brokerage ($\min(₹20.00, 0.05\% \times \text{turnover})$).
+    - `GST (18%)`: 18% tax on sum of (Brokerage + Exchange Fees + SEBI charges).
+    - `Stamp Duty`: 0.003% on BUY options premium turnover.
+    - `Tick Slippage`: Discrete 0.05 INR exchange tick alignment and half-spread impact penalty.
+    - `Total Charges`: Combined statutory regulatory fees deducted from strategy P&L.
+  - **Dynamic Volatility-Parity Asset Allocation Cards**:
+    - Dedicated performance cards for `NIFTY` (lot size 25, regime consensus gated) and `BANKNIFTY` (lot size 15, structural deadband filtered) showing trade count, winning/losing breakdown, win rate %, net P&L, profit factor, and inverse-volatility allocation weights.
+  - **Simulated Trade History Table**:
+    - Asset Filter Buttons: `ALL`, `NIFTY`, `BANKNIFTY`.
+    - Outcome Filter Buttons: `ALL`, `WIN`, `LOSS`.
+    - Columns:
+      - `ID`: Unique simulated execution trade ID.
+      - `Contract`: Underlying symbol / contract descriptor.
+      - `Side`: Color-coded `BUY` (green) or `SELL` (red).
+      - `Lots/Qty`: Integer lot sizing and total contract quantity.
+      - `Entry Price`: Execution price at entry including half-spread haircut.
+      - `Exit Price`: Execution price at exit.
+      - `Statutory Fees`: Sum of all Indian statutory charges for entry and exit.
+      - `Slippage`: Half-spread and tick penalty in INR.
+      - `Net P&L`: Profit or loss after all charges and slippage (color-coded).
+      - `ROI`: Return on trade capital percentage.
+- **Intent Audit & Decision Replay Tool**:
+  - `Intent ID` text input: Query any specific trade intent identifier.
+  - `Read stored decision` button: Replays the exact decision path of the trading engine, verifying fill state, simulated fill status, expected net, snapshot conflict, paper trading active status, missing fields, and reason codes.
+
+---
+
+### 5.6 Account & Operator Profile (`/settings`)
+- **Purpose**: Operator profile settings, session management, and credential updates.
+- **Operator Card**:
+  - Username, database storage status, account creation date, and last login timestamp.
+- **Profile Configuration Form**:
+  - `Display name` input: Change operator display name.
+  - `Timezone` input: Default `Asia/Kolkata`.
+  - `Save profile` button: Persists profile changes.
+- **Password Change Form**:
+  - `Current password` input.
+  - `New password` input (minimum 8 characters).
+  - `Change password` button: Re-hashes password with fresh salt.
+- **Sign Out**: Ends operator session and clears cookies.
+- **News Agent Sources & Web Feeds (`<NewsSourcesManager />`)**:
+  - Embedded feed configuration panel allowing operators to review, toggle, add, remove, and refresh News Sentiment Agent feeds globally from the Settings dashboard without navigating to the Analysis Desk.
+
+---
+
+### 5.7 API Keys & Broker Integrations (`/integrations` & `/settings/integrations`)
+- **Purpose**: Comprehensive credential management, lifecycle state tracking, real provider connection verification, separate capability reporting (authentication vs market data vs model lookup), live dynamic model discovery, LangGraph AI multi-agent configuration, and read-only chronological diagnostics.
+- **URL Routing**: Both `/integrations` and `/settings/integrations` map to the same unified API Integrations interface.
+- **Top Summary Strip**:
+  - `Live Trading Badge`: Displays fail-closed status (`LOCKED` / `FAIL_CLOSED`).
+  - `Provider Enablement Status Badges`: Real-time pill indicators (`Enabled` in green, `Disabled` in amber) for Groww, Kite, Upstox, Angel One, OpenAI, and Gemini.
+- **Lifecycle States & Badges**:
+  Each provider displays its canonical integration lifecycle status:
+  - `Connected` (Green pill, `ok`): Provider credentials are valid, enabled, and the live connection test succeeded.
+  - `Configured (Not Tested)` (Amber pill, `wait`): Credentials have been saved in encrypted storage but a live test has not yet run. Saving credentials does NOT automatically mark a provider connected.
+  - `Connection Failed` (Red pill, `bad`): A connection test was attempted but the provider returned an authentication, rate limit, quota, or network error.
+  - `Token Expired (Reauth Required)` (Red pill, `bad`): The provider's stored session token has passed its expiration deadline and requires re-authentication.
+  - `Disconnected` (Gray pill, `idle`): The operator has explicitly disconnected the provider. Background synchronization and live calls are stopped while saved credentials remain safely encrypted for future reconnection.
+  - `Not Configured` (Gray pill, `idle`): No credentials or API keys have been saved for this provider.
+- **Capability Badges**:
+  Capabilities are reported separately from raw HTTP connection:
+  - `Auth: Verified / Failed / Not Tested`: Proves operator authentication and account profile access (e.g., Groww margin balance read).
+  - `Market Data: Verified / Failed / Not Tested`: Proves real market-data access for trading instruments (e.g., Groww live quote lookup).
+  - `Model: Verified / Failed / Not Tested`: Proves AI model availability and token validation (OpenAI / Gemini model lookups).
+  - `Historical Candles: Verified / Unverified / Not Tested`: Proves historical candle ingestion and quarantine integrity.
+- **Last Error Banner**:
+  - Whenever a test connection fails, an inline callout (`⚠️ Last Error: <message>`) appears directly on the provider card highlighting the exact reason returned by the provider (e.g. invalid TOTP seed, rate limit, model not found, expired session) without exposing secret keys.
+- **Provider Card Action Buttons**:
+  - `Configure`: Opens the provider configuration modal to edit credentials, auth method, model, or label.
+  - `Test Connection`: Executes a real provider-specific test request. Auto-enables the integration if currently disabled and reports separate authentication and market data capability results.
+  - `Disconnect`: Available when the provider is active/enabled. Disconnects the provider immediately, invalidates derived access tokens, stops background synchronization, and marks the provider as `Disconnected` while preserving all saved credentials for later reconnection.
+  - `Connect`: Available when a configured provider is disconnected. Re-enables the integration and prepares it for synchronization using already stored credentials.
+  - `Remove`: Available when credentials exist. Triggers an explicit confirmation modal before permanently deleting stored secrets.
+  - `Diagnostics`: Available on Groww. Scrolls down to the historical diagnostics runner.
+- **Disconnect vs. Remove Configuration Distinction**:
+  - **Disconnect**: Halts active usage and market data synchronization without deleting saved credentials. Used when temporarily pausing sync, avoiding API quota depletion, or during market closed hours.
+  - **Remove Configuration**: Destructive operation that permanently deletes stored credentials, API keys, and derivation tokens from the encrypted vault. Requires explicit double confirmation in a dedicated confirmation dialog.
+- **Supported Providers & Cards**:
+  1. **Groww Direct API**: Real-time quotes, historical candles, and order placement.
+     - `Configure`: Opens Groww modal.
+     - `Test Connection`: Makes authenticated calls to `GET /v1/margins/detail/user` (authentication) and `GET /v1/live-data/quote` (market data access). Reports authentication success and market-data access separately. Handles RFC 6238 TOTP clock drift with automatic $\pm 30\text{s}$ time-step skew retry.
+     - `Disconnect`: Halts active quotes, revokes derived JWT tokens, and preserves TOTP/API secrets.
+     - `Connect`: Re-enables Groww without requiring re-entry of secrets.
+     - `Remove`: Opens permanent deletion confirmation dialog.
+     - `Diagnostics`: Scrolls directly to the historical candle diagnostic suite.
+     - `Facts`: Displays Last test result/timestamp, and Token expiry in IST.
+     - `TOTP Auto-Renewal`: For `API key and TOTP`, tokens auto-renew seamlessly every morning at 06:00 AM IST using the stored TOTP secret.
+  2. **Zerodha Kite Connect**: Kite Connect v3 REST API for external data and secondary execution.
+     - `Configure`: Opens Zerodha Kite configuration modal.
+     - `Test Connection`: Tests `GET /user/profile`.
+     - `Disconnect` / `Connect`: Toggles active usage while retaining Kite API Key and Access Token.
+     - `Remove`: Confirmation dialog to delete stored Kite credentials.
+     - `Facts`: Displays Last test result/timestamp, and Rate limit (3 req/s).
+  3. **Upstox API**: Upstox v2 API for cross-provider market data and bhavcopy reconciliation.
+     - `Configure`: Opens Upstox configuration modal.
+     - `Test Connection`: Tests `GET /v2/user/profile`.
+     - `Disconnect` / `Connect`: Toggles active usage while retaining Upstox Access Token.
+     - `Remove`: Confirmation dialog to delete stored Upstox credentials.
+     - `Facts`: Displays Last test result/timestamp, and Rate limit (5 req/s).
+  4. **Angel One SmartAPI**: SmartAPI REST backup market data feed.
+     - `Configure`: Opens Angel One configuration modal.
+     - `Test Connection`: Tests `GET /rest/secure/angelbroking/user/v1/getProfile`.
+     - `Disconnect` / `Connect`: Toggles active usage while retaining Angel One API Key, Client Code, and JWT.
+     - `Remove`: Confirmation dialog to delete stored Angel One credentials.
+     - `Facts`: Displays Last test result/timestamp, and Rate limit (3 req/s).
+  5. **OpenAI API**: Advanced LLM reasoning, code analysis, and specialist multi-agent commentary.
+     - `Configure`: Opens OpenAI configuration modal.
+     - `Test Connection`: Tests `GET /v1/models/{model}` using API key. Accurately distinguishes authentication, quota/billing, and rate limit errors.
+     - `Disconnect` / `Connect`: Halts OpenAI agent invocations while keeping the API key stored.
+     - `Remove`: Confirmation dialog to delete stored OpenAI API key.
+     - `Facts`: Displays Last test result/timestamp, and Selected Model ID.
+  6. **Google Gemini API**: Quantitative reasoning, long context analysis, and multimodal processing.
+     - `Configure`: Opens Google Gemini configuration modal.
+     - `Test Connection`: Tests `GET /v1beta/models/{model}` using API key. Accurately distinguishes authentication failure, model unavailability, and quota exhaustion.
+     - `Disconnect` / `Connect`: Halts Gemini agent invocations while keeping the API key stored.
+     - `Remove`: Confirmation dialog to delete stored Gemini API key.
+     - `Facts`: Displays Last test result/timestamp, and Selected Model ID.
+  7. **INDmoney Reference Evaluation**:
+     - Status: `BLOCKED_NOT_PERMITTED` (Rose Red pill).
+     - Informational card documenting lack of official public API and ToS restrictions against reverse-engineering.
+  8. **NSE Official Reference Evaluation**:
+     - Status: `LIMITED_TO_DAILY_PUBLIC_REPORTS` (Amber Yellow pill).
+     - Informational card documenting that official NSE portal data is strictly limited to end-of-day reports (Bhavcopy CSVs), with commercial licensing required for tick feeds.
+- **Modal Dialog Functionalities**:
+  - `Disconnect vs Remove Explanation Notice`: Clear visual callout in every modal explaining that Disconnect retains credentials for reconnection while Remove erases keys.
+  - `Integration Enabled Toggle`: Switches the provider's active status. Live broker trading remains strictly disabled behind two-factor operator authorization and the software kill switch.
+  - `Authentication Method Dropdown (Groww)`: Choose between `API key and secret`, `API key and TOTP`, or `Access token`.
+  - `Input Fields & Masking`:
+    - **Default Environment Seeding**: Credentials present in the repository root `.env` (`GROWW_TOTP_TOKEN`, `GROWW_TOTP_SECRET`, `GROWW_API_KEYS`, `OPENAI_API_KEY`, `GEMINI_API_KEYS`, etc.) are automatically loaded by default on backend startup and upon reading integration status into the encrypted database storage.
+    - **Field Masking (`••••••••••••••••`)**: Whenever credentials are configured in the system, modal `<input type="password">` fields render them masked with bullet dots (`••••••••••••••••`) and display a subtle `(masked)` label.
+    - **One-Click Replace Focus**: Focusing or clicking any masked password field automatically selects the masked placeholder (`e.target.select()`), allowing seamless typing to overwrite without manually deleting characters.
+    - **Mask-Safe Preservation**: Saving or testing connection with unchanged masked bullets safely retains the existing decrypted secrets in backend storage rather than throwing missing credential errors or overwriting with literal bullet characters.
+  - `Label Input`: Custom nickname for the credential profile (e.g. `Primary Account`). Persisted via dedicated profile endpoints.
+  - `Model Selector & Dynamic Discovery (OpenAI & Gemini)`:
+    - **Dynamic Discovery on Open**: Opening the modal queries the live provider API to fetch active account models.
+    - `🔄 Query Live Models` button: Re-queries available models on-demand using either the saved credentials or a newly entered API key.
+    - **Google Gemini Catalog**: Supports live Google AI models (`gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.0-flash`, `gemini-2.0-flash-lite`, `gemini-1.5-pro`, etc.) plus custom/fine-tuned model names via `Custom / Fine-Tuned Model...`.
+    - **OpenAI Catalog**: Supports chat and reasoning intelligence models (`gpt-4o`, `gpt-4o-mini`, `o1`, `o1-mini`, `o1-preview`, etc.).
+  - `Save Changes` button: Validates credentials upfront. Persists encrypted secrets, enablement switches, and profile labels.
+  - `Test Connection` button: Runs real connection test directly from the modal. If new credentials were typed, automatically saves and enables them before running the test.
+  - `Disconnect` button: Disconnects the active integration without closing the modal or deleting keys.
+  - `Remove Credentials` button: Enforces double confirmation (`Confirm permanent removal`) before wiping credentials and test history from the database vault.
+- **Confirmation Dialog for Credential Removal**:
+  - When clicking `Remove` on any card, a focused modal dialog opens explaining that the action is permanent, highlighting the alternative to use `Disconnect` instead, and offering `Cancel` or `Permanently Delete Credentials`.
+- **Independently Configurable AI Agents (LangGraph)**:
+  - Configures distinct LLM providers and hyperparameters across 8 specialized multi-agent roles (`market_data_analyst`, `technical_analyst`, `global_macro_analyst`, `news_event_analyst`, `options_analyst`, `quant_forecast_analyst`, `risk_uncertainty_analyst`, `final_decision_agent`):
+    1. `Market Data Analyst`: Ingests and verifies OHLCV ticks.
+    2. `Technical Analyst`: Momentum, support/resistance, and volume oscillators.
+    3. `Global Macro Analyst`: Currency pairs (USD/INR), treasury yields, and crude oil.
+    4. `News & Event Analyst`: Regulatory filings and sentiment extraction.
+    5. `Options Analyst`: Greeks ($\Delta, \Gamma, \Theta, \mathcal{V}$), IV skew, and PCR.
+    6. `Quant Forecast Analyst`: Probabilistic ML model calibration and Brier metrics.
+    7. `Risk & Uncertainty Analyst`: Stress testing and tail-risk gating.
+    8. `Final Decision Agent`: Master consensus arbitrator enforcing fail-closed trade safety.
+  - `Active Provider`: Select `OpenAI` (`openai`) or `Google Gemini` (`gemini`) per role.
+  - `Model` (`cfg.model`): Specify canonical model identifier (e.g. `gpt-4o`, `gpt-4o-mini`, `o1`, `gemini-2.5-flash`, `gemini-1.5-pro`).
+  - `Temperature` (`cfg.temperature`): Float input (`0.0` to `2.0`, step `0.05`) controlling deterministic vs. creative output.
+  - `Max Tokens` (`cfg.max_tokens`): Output token limit (`100` to `8000`, step `100`).
+  - `Fallback Provider & Model` (`cfg.fallback_provider`, `cfg.fallback_model`): Automatic failover provider and model when primary provider faces rate limits or outage.
+  - `Enabled Checkbox` (`cfg.enabled`): Toggle specialist agent participation in the analysis graph.
+  - `Save Agent Settings` button: Persists agent matrix to `PUT /api/analysis/agents/config` using the canonical `SingleAgentConfig` schema (`model`, `max_tokens`, `fallback_model`).
+  - `Reset to Defaults` button: Restores default LangGraph configuration (`POST /api/analysis/agents/reset`).
+  - **LangGraph Multi-Agent Dynamic Consensus Card (`<V6ConsensusCard />`)**:
+    - `Run Consensus Cycle` button: Sends `POST /api/market-analysis` and immediately binds the returned report (`consensus` and `agent_outputs`) into local component state without requiring a page reload or falling back to hardcoded mock metrics.
+    - Displays real-time `Directional Dispersion Index (D)` (`disagreement_index`), `Composite Epistemic Uncertainty (U)` (`epistemic_uncertainty`), `Consensus Directional Bias` (`directional_recommendation` and `consensus_score`), and `Active Risk Vetoes` (`vetoes` / `reason_codes`).
+    - Each of the 8 specialist agent cards in the `Specialist Voting Matrix` displays `Base Weight`, `Dynamic Weight` (`effective_weight`), `Confidence`, measured `Latency` (`latency_ms`), truthful `Execution Mode` (`LLM`, `LLM_FALLBACK`, `MOCK_LLM`, `DETERMINISTIC_RULE`, `DETERMINISTIC_FALLBACK_ON_LLM_ERROR`, `SKIPPED`), and `Engine / Model` (`provider/model`).
+- **Forecast Model Studio (Controlled Model Comparison)**:
+  - Purpose: Chronological expanding-window walk-forward validation preventing look-ahead leakage.
+  - `Run Multi-Model Comparison (NIFTY)` button: Executes chronological walk-forward benchmark across `Majority Class`, `Last Return Sign`, and `Logistic Regression` models.
+  - `Summary Metrics`: Displays Instrument Target, Chronological Splits count, and `Lookahead Leakage Guard` status (`Verified Enforced` in green).
+  - `Evaluation Table`: Mean Directional Accuracy %, Mean Balanced Accuracy %, Mean Brier Score, and Baseline comparison vs Majority Class and Last Return Sign.
+- **Groww Historical Diagnostics**:
+  - `Start Time` & `End Time`: Date-time range for live test query (maximum 30-minute span).
+  - `Confirmation Checkbox`: Explicit confirmation to execute the read-only request once without automatic token refresh.
+  - `Run Diagnostic` button: Submits `POST /api/integrations/groww/historical-diagnostic`.
+  - `Quarantine Details & Previous Results Table`: Shows HTTP status, candle counts, timestamps, and quarantine validation results.
+
+---
+
+## 6. Global Status Badges, Indicators & Glossary
+
+### Status Badges & Pill Colors
+| Badge Text | Class | Color | Meaning |
+|:---|:---|:---|:---|
+| `LIVE SESSION` | `.pill.ok` | Vibrant Green | Market is open for regular trading |
+| `CLOSED` | `.pill.idle` | Slate Gray | Exchange is closed; post-close prices active |
+| `NO TRADE` / `STAND ASIDE` | `.pill.bad` | Rose Red | Risk or forecast gates block trade entry |
+| `TARGET HIT` | `STATUS_STYLE` | Emerald Green | Live spot reached or exceeded target price |
+| `SL HIT` | `STATUS_STYLE` | Crimson Red | Live spot breached stop-loss threshold |
+| `OPEN` | `STATUS_STYLE` | Sky Blue | Trade is active and running |
+| `EXPIRED` | `STATUS_STYLE` | Neutral Gray | Session closed before target or stop was touched |
+| `LIVE FEED` | `.data-badge` | Sky Blue | Real market quote direct from Groww API |
+| `UNVERIFIED` / `FIXTURE` | `.data-badge` | Amber Yellow | Offline synthetic fixture; not real market data |
+
+### Pipeline Stage & Dossier Status Badges
+| Badge Text | Class | Color | Meaning & Evaluation Criteria |
+|:---|:---|:---|:---|
+| `COMPLETED` | `.stage-pill.completed` | Soft Green | Pipeline node executed and validated successfully |
+| `PRESENT` | `.stage-pill.present` | Soft Green | Telemetry or series verified and present in ingested payload |
+| `VERIFIED` | `.stage-pill.verified` | Soft Green | Provider price print confirmed against an independent secondary reference |
+| `UNVERIFIED` | `.stage-pill.unverified` | Amber Yellow | Real provider data observed, but unverified by secondary cross-check |
+| `PARTIAL` | `.stage-pill.partial` | Amber Yellow | Partial telemetry available (e.g., India VIX present, but sector breadth absent) |
+| `UNCALIBRATED` | `.stage-pill.uncalibrated` | Amber Yellow | Probabilities derived heuristically with uncertainty buffer; empirical calibration pending |
+| `SYNTHETIC` | `.stage-pill.synthetic` | Amber Yellow | Offline fixture or synthetic mock print; strictly barred from live routing |
+| `STALE` | `.stage-pill.stale` | Amber Yellow | Observation timestamp exceeds session freshness threshold |
+| `MISSING_DATA` | `.stage-pill.missing_data` | Rose Red | Required series or telemetry completely absent from observation |
+| `VETO` | `.stage-pill.veto` | Rose Red | Risk gate or capital validation tripped, blocking downstream execution |
+| `BLOCKED` | `.stage-pill.blocked` | Rose Red | Downstream execution halted due to missing prerequisites or upstream veto |
+
+### Core Financial & Technical Acronyms
+- **LTP**: Last Traded Price reported by the exchange.
+- **ATM (At The Money)**: Option strike closest to the current spot price.
+- **ITM (In The Money)**: Call strike below spot price, or Put strike above spot price.
+- **OTM (Out Of The Money)**: Call strike above spot price, or Put strike below spot price.
+- **CE (Call European)**: Right to buy underlying index/commodity.
+- **PE (Put European)**: Right to sell underlying index/commodity.
+- **IV (Implied Volatility)**: Market's forecast of underlying volatility reflected in option pricing.
+- **PCR (Put-Call Ratio)**: Ratio of total open interest of Put options to Call options (sentiment indicator).
+- **Delta ($\Delta$)**: Rate of change of option premium per ₹1 move in spot price.
+- **Gamma ($\Gamma$)**: Rate of change of Delta per ₹1 move in spot price.
+- **Theta ($\Theta$)**: Daily time decay of option premium.
+- **Vega ($\mathcal{V}$)**: Sensitivity of option premium to a 1% change in implied volatility.
+- **Brier Score**: Metric measuring calibration of probabilistic forecasts (0.0 = perfect accuracy).
+- **Sharpe Ratio**: Risk-adjusted excess return per unit of volatility.
+
+---
+
+## 7. UI Maintenance Protocol for Developers and Agents
+
+To ensure this document never becomes stale or out-of-sync:
+
+1. **Mandatory Edit Rule**:
+   - Whenever any file in `apps/web/app/` is edited (pages, components, CSS styles, or navigation):
+   - You must review `docs/UI_WALKTHROUGH.md` and update any affected sections.
+2. **Review Checklist for Pull Requests & Agent Tasks**:
+   - [ ] Were any buttons, inputs, dropdowns, or toggles added or removed?
+   - [ ] Were any default values or intervals changed (e.g., auto-fetch rates)?
+   - [ ] Were any page layouts or tabs modified (e.g., analysis tab switcher)?
+   - [ ] Were any new badges, colors, or status messages introduced?
+   - [ ] Does the walkthrough document accurately describe the behavior seen in the live browser?
+3. **Automated Enforcement**:
+   - This invariant is codified in `.agents/rules/ui-documentation.md` and `AGENTS.md`. Future agents operating on this codebase will automatically verify and synchronize this file.

@@ -6,22 +6,36 @@ from datetime import datetime, timezone
 
 import pytest
 
+from urllib.parse import urlencode
+
 from app.db import get_session_factory
 from app.domain.tables import IntegrationCredential
 from app.integrations.crypto import decrypt_secrets, encrypt_secrets
 from app.integrations.groww import checksum, classify_token_expiry, totp_code
 from app.integrations.groww import historical_candles_url
-from app.integrations.http import GROWW_MARGIN_URL, GROWW_TOKEN_URL, HttpResult, UrlRejected, assert_allowed
+from app.integrations.http import (
+    GROWW_MARGIN_URL,
+    GROWW_QUOTE_URL,
+    GROWW_TOKEN_URL,
+    QUOTE_PARAMS,
+    HttpResult,
+    UrlRejected,
+    assert_allowed,
+)
 from app.integrations.openai_client import model_url
 from app.integrations.service import (
     clear_provider,
+    disconnect_provider,
     groww_read_token,
     read_status,
     run_groww_test,
     run_openai_test,
+    run_gemini_test,
     save_groww,
     save_openai,
+    save_gemini,
     set_openai_enabled,
+    set_provider_enabled,
 )
 from app.settings import get_settings
 from tests.conftest import login
@@ -144,11 +158,14 @@ def test_groww_success_uses_margin_and_reuses_an_unexpired_token(session):
         {"method": "api_key_secret", "api_key": API_KEY, "api_secret": API_SECRET},
     )
     session.commit()
+    quote_url = GROWW_QUOTE_URL + "?" + urlencode(QUOTE_PARAMS)
     caller = Caller(
         [
             HttpResult(200, {"token": ACCESS, "expiry": "2099-01-01T00:00:00+00:00", "isActive": True}, ""),
             HttpResult(200, {"status": "SUCCESS", "payload": {"clear_cash": 1}}, ""),
+            HttpResult(200, {"status": "SUCCESS", "payload": {"ltp": 25000.0}}, ""),
             HttpResult(200, {"status": "SUCCESS", "payload": {"clear_cash": 1}}, ""),
+            HttpResult(200, {"status": "SUCCESS", "payload": {"ltp": 25000.0}}, ""),
         ]
     )
     first = run_groww_test(session, get_settings(), caller=caller)
@@ -156,9 +173,17 @@ def test_groww_success_uses_margin_and_reuses_an_unexpired_token(session):
     session.commit()
     assert first["result"]["ok"] is True
     assert second["result"]["ok"] is True
-    assert caller.calls == [("POST", GROWW_TOKEN_URL), ("GET", GROWW_MARGIN_URL), ("GET", GROWW_MARGIN_URL)]
+    assert caller.calls == [
+        ("POST", GROWW_TOKEN_URL),
+        ("GET", GROWW_MARGIN_URL),
+        ("GET", quote_url),
+        ("GET", GROWW_MARGIN_URL),
+        ("GET", quote_url),
+    ]
     assert "clear_cash" not in str(first)
     assert ACCESS not in str(first)
+    assert first["groww"]["capabilities"]["authentication"] == "verified"
+    assert first["groww"]["capabilities"]["market_data"] == "verified"
 
 
 def test_pasted_access_token_does_not_call_the_token_endpoint(session):
@@ -567,3 +592,95 @@ def test_openai_model_save_requires_confirmation_and_keeps_the_key(client):
     assert body["openai"]["api_key_configured"] is True
     assert body["live_trading_enabled"] is False
     assert OPENAI_KEY not in updated.text
+
+
+def test_gemini_integration_lifecycle_and_test_connection(session):
+    save_gemini(session, get_settings(), {"api_key": "AIzaSyTestKey123", "model": "gemini-2.5-flash", "enabled": False})
+    session.commit()
+    caller = Caller([HttpResult(200, {"name": "models/gemini-2.5-flash", "displayName": "Gemini 2.5 Flash"}, "")])
+    disabled = run_gemini_test(session, get_settings(), caller=caller)
+    assert disabled["result"]["code"] == "INTEGRATION_DISABLED"
+    assert caller.calls == []
+
+    set_provider_enabled(session, "gemini", True)
+    session.commit()
+    caller = Caller([HttpResult(200, {"name": "models/gemini-2.5-flash"}, "")])
+    success = run_gemini_test(session, get_settings(), caller=caller)
+    assert success["result"]["ok"] is True
+    assert "Gemini model lookup succeeded" in success["result"]["message"]
+    assert caller.calls == [("GET", "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash")]
+
+    caller_err = Caller([HttpResult(400, {"error": {"message": "API key not valid", "status": "INVALID_ARGUMENT"}}, "")])
+    failed = run_gemini_test(session, get_settings(), caller=caller_err)
+    assert failed["result"]["ok"] is False
+    assert "Gemini model lookup failed (400): API key not valid" in failed["result"]["message"]
+
+
+def test_disconnect_provider_preserves_credentials_and_updates_lifecycle(client):
+    token = login(client)
+    # Configure and enable Groww
+    saved = client.put(
+        "/api/integrations/groww",
+        headers={"x-csrf-token": token},
+        json={"method": "api_key_secret", "api_key": API_KEY, "api_secret": API_SECRET},
+    )
+    assert saved.status_code == 200
+    client.post(
+        "/api/integrations/groww/enabled",
+        headers={"x-csrf-token": token},
+        json={"enabled": True, "confirm": True},
+    )
+    status = client.get("/api/integrations").json()
+    assert status["groww"]["enabled"] is True
+    assert status["groww"]["configured"] is True
+
+    # Disconnect Groww
+    disconnected = client.post(
+        "/api/integrations/groww/disconnect",
+        headers={"x-csrf-token": token},
+    )
+    assert disconnected.status_code == 200
+    body = disconnected.json()
+    assert body["groww"]["enabled"] is False
+    assert body["groww"]["configured"] is True
+    assert body["groww"]["lifecycle_state"] == "DISCONNECTED"
+
+    # OpenAI disconnect
+    client.put(
+        "/api/integrations/openai",
+        headers={"x-csrf-token": token},
+        json={"api_key": OPENAI_KEY, "model": "gpt-4.1-mini", "enabled": True},
+    )
+    dis_openai = client.post(
+        "/api/integrations/openai/disconnect",
+        headers={"x-csrf-token": token},
+    )
+    assert dis_openai.status_code == 200
+    assert dis_openai.json()["openai"]["enabled"] is False
+    assert dis_openai.json()["openai"]["configured"] is True
+    assert dis_openai.json()["openai"]["lifecycle_state"] == "DISCONNECTED"
+
+
+def test_groww_separate_auth_and_market_data_reporting(session):
+    save_groww(
+        session,
+        get_settings(),
+        {"method": "api_key_secret", "api_key": API_KEY, "api_secret": API_SECRET},
+    )
+    session.commit()
+    # Scenario: Token exchange succeeds, Margin read succeeds (auth ok), but Market quote read fails
+    caller = Caller(
+        [
+            HttpResult(200, {"token": ACCESS, "expiry": "2099-01-01T00:00:00+00:00", "isActive": True}, ""),
+            HttpResult(200, {"status": "SUCCESS", "payload": {"clear_cash": 1}}, ""),
+            HttpResult(403, {"status": "FAILURE", "error": {"message": "Quote access not subscribed"}}, ""),
+        ]
+    )
+    res = run_groww_test(session, get_settings(), caller=caller)
+    session.commit()
+    assert res["result"]["ok"] is False
+    assert res["result"]["code"] == "MARKET_DATA_REJECTED"
+    assert res["groww"]["capabilities"]["authentication"] == "verified"
+    assert res["groww"]["capabilities"]["market_data"] == "rejected"
+
+

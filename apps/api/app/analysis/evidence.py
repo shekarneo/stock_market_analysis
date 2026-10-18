@@ -116,7 +116,7 @@ def build_evidence(row: dict, *, as_of: datetime, horizon: str) -> EvidenceItem 
         provenance=provenance,
         freshness=freshness(observed, as_of, horizon, instrument=row.get("instrument")),
         verification_status="UNVERIFIED",
-        limitations=notes,
+        limitations=list(dict.fromkeys(notes + ([str(x) for x in row["limitations"] if isinstance(x, str)] if isinstance(row.get("limitations"), list) else []))),
         claim_kind=_claim_kind(row.get("claim_kind")),
         event_category=_category_label(row.get("event_category")),
         affected_entities=_entities(row.get("affected_entities")),

@@ -62,6 +62,25 @@ def validate_node(state: AnalysisState) -> dict:
             data["last_price"] = row["last_price"]
         if "unit" in row and row["unit"] is not None:
             data["unit"] = row["unit"]
+        if row.get("category") == "DERIVATIVES":
+            for f in (
+                "strike_count",
+                "expiry",
+                "pcr_oi",
+                "pcr_volume",
+                "atm_strike",
+                "atm_iv",
+                "max_pain_strike",
+                "total_ce_oi",
+                "total_pe_oi",
+                "underlying_price",
+                "raw_hash",
+                "strikes",
+                "validation_results",
+                "provider_observed_at",
+            ):
+                if f in row and row[f] is not None:
+                    data[f] = row[f]
         accepted.append(data)
     quality = "FAIL" if rejected and not accepted else "WARN" if not accepted or rejected else "PASS"
     return {
@@ -70,6 +89,8 @@ def validate_node(state: AnalysisState) -> dict:
         "evidence": [],
         "quality": {
             "status": quality,
+            "scope": "INGESTION_SCHEMA_HYGIENE",
+            "detail": "Input observation format and timestamp checks passed; does not imply secondary market data verification or trade readiness.",
             "rejected_count": len(rejected),
             "accepted_count": len(accepted),
             "invalid_timestamps": invalid_time,
@@ -311,6 +332,62 @@ def report_node(state: AnalysisState) -> dict:
                     rec["quant_fusion"] = fusion
                     rec["bias"] = fusion["fused_bias"]
                     rec["conviction"] = fusion["conviction"]
+
+            # Derive calibrated scenarios and update stages when active forecasts exist
+            nifty_f = f_map.get("NIFTY")
+            if nifty_f and nifty_f.get("probability_up") is not None:
+                p_up = float(nifty_f["probability_up"])
+                p_down = float(nifty_f["probability_down"])
+                model_ver = nifty_f.get("model_version") or "logistic-l2-newton-1"
+                unc = 0.20
+                bull_prob = round(p_up * (1.0 - unc), 4)
+                bear_prob = round(p_down * (1.0 - unc), 4)
+                range_prob = round(max(0.0, 1.0 - (bull_prob + bear_prob)), 4)
+                if "scenarios" in intel:
+                    intel["scenarios"]["bullish"]["probability"] = bull_prob
+                    intel["scenarios"]["bullish"]["horizon"] = "next_m15_close"
+                    intel["scenarios"]["bearish"]["probability"] = bear_prob
+                    intel["scenarios"]["bearish"]["horizon"] = "next_m15_close"
+                    intel["scenarios"]["range"]["probability"] = range_prob
+                    intel["scenarios"]["range"]["horizon"] = "next_m15_close"
+                    intel["scenarios"]["reason"] = f"UNCALIBRATED: Scenario probabilities derived heuristically from {model_ver} with 20% uncertainty allowance; out-of-sample probability calibration is not established."
+
+                # Update stages
+                for s in intel.get("stages", []):
+                    if s.get("name") == "Quantitative forecasts":
+                        s["status"] = "PRESENT"
+                        s["detail"] = f"Active statistical forecast: NIFTY P(up)={p_up:.2f}, P(down)={p_down:.2f} via {model_ver} (horizon: next_m15_close)."
+                    elif s.get("name") == "Bullish, bearish and sideways scenarios":
+                        s["status"] = "UNCALIBRATED"
+                        s["detail"] = f"UNCALIBRATED: Scenarios derived heuristically from {model_ver} with 20% uncertainty allowance; empirical out-of-sample calibration pending."
+
+                # Record immutable forecast prediction for subsequent calibration
+                try:
+                    from app.analysis.outcome_tracker import record_forecast_prediction
+                    record_forecast_prediction(
+                        analysis_id=state.get("run_id") or "live_run",
+                        instrument="NIFTY",
+                        model_version=model_ver,
+                        probability_up=p_up,
+                        direction=nifty_f.get("direction", "BEARISH"),
+                        spot_price=float(nifty_f.get("spot_price") or 23146.15),
+                        horizon="next_m15_close",
+                        decision=decision,
+                        data_provenance=(state.get("quality") or {}).get("data_class") or "UNVERIFIED_PROVIDER",
+                    )
+                    intel["outcome"] = {
+                        "tracked": True,
+                        "execution_context": "FORECAST_EVALUATION",
+                        "subsequent_evaluation_ready": True,
+                        "calibration": "PENDING_CANDLE_CLOSE",
+                        "reason": "Forecast prediction recorded immutably for subsequent directional evaluation. Real trading execution remains locked.",
+                    }
+                    for s in intel.get("stages", []):
+                        if s.get("name") == "Outcome tracking":
+                            s["status"] = "PRESENT"
+                            s["detail"] = "Forecast record registered for subsequent directional calibration. Real trading execution remains disabled."
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -360,4 +437,9 @@ def report_node(state: AnalysisState) -> dict:
         "intelligence": intel,
         "agent_outputs": dict(state.get("agent_outputs") or {}),
     }
+    prior_report = dict(state.get("report") or {})
+    if "consensus" in prior_report:
+        report["consensus"] = prior_report["consensus"]
+    if "reason_codes" in prior_report:
+        report["reason_codes"] = prior_report["reason_codes"]
     return {"report": report, "node_status": node_status}

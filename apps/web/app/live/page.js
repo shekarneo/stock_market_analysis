@@ -117,12 +117,12 @@ function ist(iso) {
 }
 
 const STATUS_STYLE = {
-  OPEN: { bg: "#eef3fb", fg: "#1a4d8f", label: "Open" },
-  TARGET_HIT: { bg: "#e6f4ea", fg: "#137333", label: "Target hit" },
-  SL_HIT: { bg: "#fce8e6", fg: "#c5221f", label: "SL hit" },
-  EXPIRED: { bg: "#f1f1f1", fg: "#5f6368", label: "Expired" },
-  AMBIGUOUS: { bg: "#fef7e0", fg: "#8a6d00", label: "Ambiguous" },
-  CANCELLED: { bg: "#f1f1f1", fg: "#5f6368", label: "Cancelled" },
+  OPEN: { bg: "rgba(56, 189, 248, 0.15)", fg: "#38bdf8", label: "Open" },
+  TARGET_HIT: { bg: "rgba(16, 185, 129, 0.15)", fg: "#34d399", label: "Target hit" },
+  SL_HIT: { bg: "rgba(244, 63, 94, 0.15)", fg: "#f87171", label: "SL hit" },
+  EXPIRED: { bg: "rgba(255, 255, 255, 0.08)", fg: "#94a3b8", label: "Expired" },
+  AMBIGUOUS: { bg: "rgba(245, 158, 11, 0.15)", fg: "#fbbf24", label: "Ambiguous" },
+  CANCELLED: { bg: "rgba(255, 255, 255, 0.08)", fg: "#94a3b8", label: "Cancelled" },
 };
 
 export default function LiveTradingPage() {
@@ -136,6 +136,7 @@ export default function LiveTradingPage() {
   const evalTimer = useRef(null);
   const prevRetrievedAt = useRef(null);
 
+  const [isHydrated, setIsHydrated] = useState(false);
   const [autoTradingEnabled, setAutoTradingEnabled] = useState(false);
   const [autoAddToWatchlist, setAutoAddToWatchlist] = useState(true);
   const [executionMode, setExecutionMode] = useState("PAPER"); // "PAPER" or "LIVE"
@@ -148,6 +149,65 @@ export default function LiveTradingPage() {
   const [actionNotice, setActionNotice] = useState("");
 
   const [orders, setOrders] = useState([]);
+
+  // Hydrate persistent state from browser localStorage on mount
+  useEffect(() => {
+    try {
+      const savedAuto = localStorage.getItem("imm_auto_trading_enabled");
+      if (savedAuto !== null) {
+        setAutoTradingEnabled(savedAuto === "true");
+      }
+      const savedMode = localStorage.getItem("imm_execution_mode");
+      if (savedMode === "PAPER" || savedMode === "LIVE") {
+        setExecutionMode(savedMode);
+      }
+      const savedWatchlist = localStorage.getItem("imm_auto_add_watchlist");
+      if (savedWatchlist !== null) {
+        setAutoAddToWatchlist(savedWatchlist === "true");
+      }
+      const savedAutoEval = localStorage.getItem("imm_auto_evaluate");
+      if (savedAutoEval !== null) {
+        setAutoEvaluate(savedAutoEval === "true");
+      }
+      const savedLots = localStorage.getItem("imm_max_lots");
+      if (savedLots) {
+        const parsed = parseInt(savedLots, 10);
+        if (!isNaN(parsed) && parsed > 0) setMaxLots(parsed);
+      }
+      const savedLossLimit = localStorage.getItem("imm_daily_loss_limit");
+      if (savedLossLimit) {
+        const parsed = parseFloat(savedLossLimit);
+        if (!isNaN(parsed) && parsed > 0) setDailyLossLimit(parsed);
+      }
+      const savedOrders = localStorage.getItem("imm_live_simulated_orders");
+      if (savedOrders) {
+        const parsed = JSON.parse(savedOrders);
+        if (Array.isArray(parsed)) {
+          setOrders(parsed);
+        }
+      }
+    } catch {
+      // Storage unavailable or quota blocked
+    } finally {
+      setIsHydrated(true);
+    }
+  }, []);
+
+  // Sync state changes to localStorage so settings and orders persist across refreshes
+  useEffect(() => {
+    if (!isHydrated) return;
+    try {
+      localStorage.setItem("imm_auto_trading_enabled", String(autoTradingEnabled));
+      localStorage.setItem("imm_execution_mode", executionMode);
+      localStorage.setItem("imm_auto_add_watchlist", String(autoAddToWatchlist));
+      localStorage.setItem("imm_auto_evaluate", String(autoEvaluate));
+      localStorage.setItem("imm_max_lots", String(maxLots));
+      localStorage.setItem("imm_daily_loss_limit", String(dailyLossLimit));
+      localStorage.setItem("imm_live_simulated_orders", JSON.stringify(orders));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [autoTradingEnabled, executionMode, autoAddToWatchlist, autoEvaluate, maxLots, dailyLossLimit, orders, isHydrated]);
 
   // Load Watchlist and Accuracy
   const loadWatchlist = useCallback(async () => {
@@ -186,6 +246,11 @@ export default function LiveTradingPage() {
   const clearOrders = () => {
     if (!window.confirm("Clear all executed simulated orders?")) return;
     setOrders([]);
+    try {
+      localStorage.removeItem("imm_live_simulated_orders");
+    } catch {
+      // Ignore
+    }
     setActionNotice("Simulated orders cleared.");
     setTimeout(() => setActionNotice(""), 3000);
   };
@@ -273,7 +338,7 @@ export default function LiveTradingPage() {
     return () => clearInterval(evalTimer.current);
   }, [autoEvaluate, evaluateAccuracy]);
 
-  const getSpot = (inst) => {
+  const getSpot = useCallback((inst) => {
     if (spots && spots[inst] != null) return spots[inst];
     if (inst === "CRUDEOILMINI" && spots?.CRUDEMINI != null) return spots.CRUDEMINI;
     if (inst === "CRUDEMINI" && spots?.CRUDEOILMINI != null) return spots.CRUDEOILMINI;
@@ -282,15 +347,14 @@ export default function LiveTradingPage() {
     const m = analysisData?.intelligence?.markets?.[inst];
     if (m?.last_price) return Number(m.last_price);
     return null;
-  };
+  }, [spots, quotes, analysisData]);
 
-
-  const getMarketAnalysis = (inst) => {
+  const getMarketAnalysis = useCallback((inst) => {
     return analysisData?.intelligence?.markets?.[inst] || null;
-  };
+  }, [analysisData]);
 
   // Auto-Add trade to Watchlist and track accuracy (deduplicating active open contracts)
-  const addTradeToWatchlist = async (inst, pick, rec) => {
+  const addTradeToWatchlist = useCallback(async (inst, pick, rec) => {
     const plannedContract = pick?.contract || `${inst} ATM`;
     const isAlreadyOpen = (watchlistData?.items || []).some(
       (item) => item.contract === plannedContract && item.status === "OPEN"
@@ -337,7 +401,28 @@ export default function LiveTradingPage() {
       // Ignore
     }
     return false;
-  };
+  }, [watchlistData, getSpot, loadWatchlist]);
+
+  // Auto-scan routine for autonomous bot
+  const triggerAutoTradingScan = useCallback(() => {
+    if (killSwitchTriggered) return;
+    ["NIFTY", "SENSEX", "CRUDEOILMINI"].forEach((inst) => {
+      const m = getMarketAnalysis(inst);
+      const rec = m?.manual_trade_recommendation;
+      if (rec && rec.top_5_options?.[2]) {
+        const pick = rec.top_5_options[2];
+        if (autoAddToWatchlist) {
+          addTradeToWatchlist(inst, pick, rec);
+        }
+      }
+    });
+  }, [killSwitchTriggered, autoAddToWatchlist, getMarketAnalysis, addTradeToWatchlist]);
+
+  // When live quotes sync or analysis arrives, auto-scan if auto trading is enabled
+  useEffect(() => {
+    if (!autoTradingEnabled || killSwitchTriggered || !analysisData) return;
+    triggerAutoTradingScan();
+  }, [analysisData, retrievedAt, autoTradingEnabled, killSwitchTriggered, triggerAutoTradingScan]);
 
   const handleToggleAutoTrading = () => {
     if (killSwitchTriggered) {
@@ -346,18 +431,15 @@ export default function LiveTradingPage() {
     }
     const next = !autoTradingEnabled;
     setAutoTradingEnabled(next);
+    try {
+      localStorage.setItem("imm_auto_trading_enabled", String(next));
+    } catch {
+      // Ignore
+    }
 
     if (next) {
       setActionNotice("🟢 Auto-Trading Engine ACTIVATED. Bot is actively scanning live breakout signals and auto-logging to Watchlist.");
-      // Auto-add current high-conviction analysis picks to watchlist
-      ["NIFTY", "SENSEX", "CRUDEOILMINI"].forEach((inst) => {
-        const m = getMarketAnalysis(inst);
-        const rec = m?.manual_trade_recommendation;
-        if (rec && rec.top_5_options?.[2]) {
-          const pick = rec.top_5_options[2];
-          addTradeToWatchlist(inst, pick, rec);
-        }
-      });
+      triggerAutoTradingScan();
     } else {
       setActionNotice("⏸️ Auto-Trading Engine PAUSED. Automated execution and watchlist logging suspended.");
     }
@@ -369,6 +451,11 @@ export default function LiveTradingPage() {
       setShowLiveConfirmModal(true);
     } else {
       setExecutionMode("PAPER");
+      try {
+        localStorage.setItem("imm_execution_mode", "PAPER");
+      } catch {
+        // Ignore
+      }
       setActionNotice("Switched to Paper Simulation mode (Zero capital risk, accuracy testing enabled).");
       setTimeout(() => setActionNotice(""), 4000);
     }
@@ -376,6 +463,11 @@ export default function LiveTradingPage() {
 
   const confirmLiveMode = () => {
     setExecutionMode("LIVE");
+    try {
+      localStorage.setItem("imm_execution_mode", "LIVE");
+    } catch {
+      // Ignore
+    }
     setShowLiveConfirmModal(false);
     setActionNotice("⚠️ LIVE BROKER MODE ACTIVATED. Orders will be routed to Groww exchange endpoints.");
     setTimeout(() => setActionNotice(""), 5000);
@@ -384,6 +476,11 @@ export default function LiveTradingPage() {
   const handleKillSwitch = () => {
     setKillSwitchTriggered(true);
     setAutoTradingEnabled(false);
+    try {
+      localStorage.setItem("imm_auto_trading_enabled", "false");
+    } catch {
+      // Ignore
+    }
     setOrders((prev) =>
       prev.map((o) => ({
         ...o,
@@ -417,6 +514,7 @@ export default function LiveTradingPage() {
       return;
     }
 
+    const spotVal = getSpot(inst);
     const newOrd = {
       id: `ORD-${Math.floor(10000 + Math.random() * 90000)}`,
       time: new Date().toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }),
@@ -429,6 +527,7 @@ export default function LiveTradingPage() {
       target: (price || 120.0) * 1.4,
       sl: (price || 120.0) * 0.75,
       ltp: price || 120.0,
+      entrySpot: spotVal != null ? spotVal : (price || 120.0),
       status: "OPEN",
       pnl: 0.0,
       mode: executionMode,
@@ -452,6 +551,31 @@ export default function LiveTradingPage() {
     setActionNotice(`⚡ Order Placed & Added to Watchlist: ${newOrd.contract} (${newOrd.side}) [${executionMode}] @ ₹${newOrd.entry}`);
     setTimeout(() => setActionNotice(""), 4500);
   };
+
+  // Update open simulated orders LTP & mark-to-market PnL when spots update
+  useEffect(() => {
+    if (!spots || orders.length === 0) return;
+    setOrders((prevOrders) => {
+      let changed = false;
+      const nextOrders = prevOrders.map((ord) => {
+        if (ord.status !== "OPEN") return ord;
+        const currentSpot = spots[ord.instrument] != null ? Number(spots[ord.instrument]) : null;
+        if (currentSpot == null || isNaN(currentSpot)) return ord;
+        const entrySpot = ord.entrySpot || currentSpot;
+        const isCe = ord.side ? ord.side.includes("CE") : true;
+        const spotDelta = isCe ? (currentSpot - entrySpot) : (entrySpot - currentSpot);
+        const delta = ord.contract?.includes("FUT") ? 1.0 : 0.5;
+        const currentLtp = Number(Math.max(0.05, ord.entry + spotDelta * delta).toFixed(2));
+        const currentPnl = Number(((currentLtp - ord.entry) * ord.qty * ord.lots).toFixed(2));
+        if (currentLtp !== ord.ltp || currentPnl !== ord.pnl) {
+          changed = true;
+          return { ...ord, ltp: currentLtp, pnl: currentPnl, entrySpot };
+        }
+        return ord;
+      });
+      return changed ? nextOrders : prevOrders;
+    });
+  }, [spots, orders.length]);
 
   const totalPnL = orders
     .filter((o) => o.status === "OPEN")
@@ -529,26 +653,27 @@ export default function LiveTradingPage() {
 
           <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
             <div style={{
-              background: "#f8fafc",
-              border: "1px solid #e2e8f0",
+              background: "var(--card, #0f172a)",
+              border: "1px solid var(--line)",
               borderRadius: "8px",
               padding: "6px 12px",
               fontSize: "0.82rem",
               display: "flex",
               alignItems: "center",
-              gap: "8px"
+              gap: "8px",
+              color: "var(--ink, #f8fafc)"
             }}>
               <span>🟢 Live Feed: <strong>Groww API</strong></span>
-              <span style={{ color: "#cbd5e1" }}>|</span>
-              <span>Open Paper P&amp;L: <strong style={{ color: totalPnL >= 0 ? "#16a34a" : "#dc2626" }}>₹{totalPnL.toFixed(2)}</strong></span>
+              <span style={{ color: "var(--line)" }}>|</span>
+              <span>Open Paper P&amp;L: <strong style={{ color: totalPnL >= 0 ? "#10b981" : "#f43f5e" }}>₹{totalPnL.toFixed(2)}</strong></span>
             </div>
           </div>
         </div>
 
         {/* Accuracy Benchmark Notice */}
         <div style={{
-          background: "#f0fdf4",
-          border: "1px solid #bbf7d0",
+          background: "var(--green-bg, rgba(16, 185, 129, 0.12))",
+          border: "1px solid rgba(16, 185, 129, 0.3)",
           borderRadius: "10px",
           padding: "10px 14px",
           marginBottom: "16px",
@@ -560,8 +685,8 @@ export default function LiveTradingPage() {
           fontSize: "0.86rem",
         }}>
           <div>
-            <span style={{ fontWeight: 600, color: "#166534" }}>🧪 Auto-Trading Accuracy Benchmark Mode:</span>
-            <span style={{ color: "#15803d", marginLeft: "6px" }}>
+            <span style={{ fontWeight: 600, color: "var(--green, #10b981)" }}>🧪 Auto-Trading Accuracy Benchmark Mode:</span>
+            <span style={{ color: "#a7f3d0", marginLeft: "6px" }}>
               Virtual paper testing mode. No actual broker funds are at risk. Every bot suggestion is automatically logged to the Watchlist and evaluated against live exchange ticks to measure hit-rate accuracy.
             </span>
           </div>
@@ -612,18 +737,18 @@ export default function LiveTradingPage() {
 
         {/* Auto-Trading Accuracy Scorecard (Live Hit-Rate Dashboard) */}
         <div style={{
-          background: "#ffffff",
-          border: "1px solid #e2e8f0",
+          background: "var(--card, #0f172a)",
+          border: "1px solid var(--line)",
           borderRadius: "12px",
           padding: "16px 20px",
-          boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+          boxShadow: "var(--shadow)",
           marginBottom: "20px",
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px", marginBottom: "12px" }}>
             <div>
-              <h2 style={{ fontSize: "1.1rem", fontWeight: 700, margin: 0, display: "flex", alignItems: "center", gap: "8px" }}>
+              <h2 style={{ fontSize: "1.1rem", fontWeight: 700, margin: 0, display: "flex", alignItems: "center", gap: "8px", color: "var(--ink)" }}>
                 <span>🎯 Auto-Trading Precision &amp; Accuracy Scorecard</span>
-                <span style={{ fontSize: "0.75rem", background: "#f1f5f9", padding: "2px 8px", borderRadius: "999px", color: "var(--muted)" }}>
+                <span style={{ fontSize: "0.75rem", background: "rgba(255, 255, 255, 0.08)", padding: "2px 8px", borderRadius: "999px", color: "var(--muted)" }}>
                   {watchlistItems.length} Total Suggestions Logged
                 </span>
               </h2>
@@ -632,7 +757,7 @@ export default function LiveTradingPage() {
               </small>
             </div>
             {overallAcc?.sample_warning && (
-              <span style={{ fontSize: "0.76rem", color: "#854d0e", background: "#fef9c3", padding: "3px 8px", borderRadius: "6px" }}>
+              <span style={{ fontSize: "0.76rem", color: "var(--amber)", background: "var(--amber-bg)", padding: "3px 8px", borderRadius: "6px", border: "1px solid rgba(245, 158, 11, 0.3)" }}>
                 ⚠️ Sample &lt; 30 trades (Early Benchmark)
               </span>
             )}
@@ -644,9 +769,9 @@ export default function LiveTradingPage() {
             gap: "10px",
             marginBottom: "10px",
           }}>
-            <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+            <div style={{ background: "var(--card-subtle, #131c31)", padding: "10px 14px", borderRadius: "8px", border: "1px solid var(--line)" }}>
               <div style={{ fontSize: "0.72rem", color: "var(--muted)", textTransform: "uppercase" }}>Overall Hit Rate</div>
-              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "#16a34a" }}>
+              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "var(--green)" }}>
                 {pct(overallAcc?.hit_rate)}
               </div>
               <small style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
@@ -654,33 +779,33 @@ export default function LiveTradingPage() {
               </small>
             </div>
 
-            <div style={{ background: "#f0fdf4", padding: "10px 14px", borderRadius: "8px", border: "1px solid #bbf7d0" }}>
-              <div style={{ fontSize: "0.72rem", color: "#166534", textTransform: "uppercase" }}>Target Hit</div>
-              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "#15803d" }}>
+            <div style={{ background: "var(--green-bg)", padding: "10px 14px", borderRadius: "8px", border: "1px solid rgba(16, 185, 129, 0.3)" }}>
+              <div style={{ fontSize: "0.72rem", color: "#6ee7b7", textTransform: "uppercase" }}>Target Hit</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "var(--green)" }}>
                 {overallAcc?.TARGET_HIT || 0}
               </div>
-              <small style={{ fontSize: "0.72rem", color: "#166534" }}>Wins</small>
+              <small style={{ fontSize: "0.72rem", color: "#6ee7b7" }}>Wins</small>
             </div>
 
-            <div style={{ background: "#fef2f2", padding: "10px 14px", borderRadius: "8px", border: "1px solid #fecaca" }}>
-              <div style={{ fontSize: "0.72rem", color: "#991b1b", textTransform: "uppercase" }}>SL Hit</div>
-              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "#dc2626" }}>
+            <div style={{ background: "var(--red-bg)", padding: "10px 14px", borderRadius: "8px", border: "1px solid rgba(244, 63, 94, 0.3)" }}>
+              <div style={{ fontSize: "0.72rem", color: "#fda4af", textTransform: "uppercase" }}>SL Hit</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "var(--red)" }}>
                 {overallAcc?.SL_HIT || 0}
               </div>
-              <small style={{ fontSize: "0.72rem", color: "#991b1b" }}>Losses</small>
+              <small style={{ fontSize: "0.72rem", color: "#fda4af" }}>Losses</small>
             </div>
 
-            <div style={{ background: "#eff6ff", padding: "10px 14px", borderRadius: "8px", border: "1px solid #bfdbfe" }}>
-              <div style={{ fontSize: "0.72rem", color: "#1e40af", textTransform: "uppercase" }}>Open Tracking</div>
-              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "#2563eb" }}>
+            <div style={{ background: "var(--cyan-bg)", padding: "10px 14px", borderRadius: "8px", border: "1px solid rgba(56, 189, 248, 0.3)" }}>
+              <div style={{ fontSize: "0.72rem", color: "#7dd3fc", textTransform: "uppercase" }}>Open Tracking</div>
+              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "var(--cyan)" }}>
                 {overallAcc?.OPEN || 0}
               </div>
-              <small style={{ fontSize: "0.72rem", color: "#1e40af" }}>Live Active</small>
+              <small style={{ fontSize: "0.72rem", color: "#7dd3fc" }}>Live Active</small>
             </div>
 
-            <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+            <div style={{ background: "var(--card-subtle, #131c31)", padding: "10px 14px", borderRadius: "8px", border: "1px solid var(--line)" }}>
               <div style={{ fontSize: "0.72rem", color: "var(--muted)", textTransform: "uppercase" }}>CE / Upward Win Rate</div>
-              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "#0f172a" }}>
+              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "var(--ink)" }}>
                 {pct(acc?.by_direction?.UP?.hit_rate)}
               </div>
               <small style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
@@ -688,9 +813,9 @@ export default function LiveTradingPage() {
               </small>
             </div>
 
-            <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+            <div style={{ background: "var(--card-subtle, #131c31)", padding: "10px 14px", borderRadius: "8px", border: "1px solid var(--line)" }}>
               <div style={{ fontSize: "0.72rem", color: "var(--muted)", textTransform: "uppercase" }}>PE / Downward Win Rate</div>
-              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "#0f172a" }}>
+              <div style={{ fontSize: "1.35rem", fontWeight: 700, color: "var(--ink)" }}>
                 {pct(acc?.by_direction?.DOWN?.hit_rate)}
               </div>
               <small style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
@@ -709,43 +834,43 @@ export default function LiveTradingPage() {
         }}>
           {/* Card 1: Auto-Trading Bot Switch */}
           <div style={{
-            background: "#ffffff",
-            border: "1px solid #e2e8f0",
+            background: "var(--card, #0f172a)",
+            border: "1px solid var(--line)",
             borderRadius: "12px",
             padding: "18px 20px",
-            boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+            boxShadow: "var(--shadow)",
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
               <div>
-                <strong style={{ fontSize: "1.05rem", display: "block" }}>Autonomous Bot Engine</strong>
+                <strong style={{ fontSize: "1.05rem", display: "block", color: "var(--ink, #f8fafc)" }}>Autonomous Bot Engine</strong>
                 <small style={{ color: "var(--muted)" }}>Live tick polling &amp; auto-watchlist entry</small>
               </div>
               <button
                 type="button"
                 onClick={handleToggleAutoTrading}
                 style={{
-                  background: autoTradingEnabled ? "#16a34a" : "#94a3b8",
+                  background: autoTradingEnabled ? "#16a34a" : "rgba(255, 255, 255, 0.12)",
                   color: "#ffffff",
-                  border: "none",
+                  border: autoTradingEnabled ? "none" : "1px solid var(--line)",
                   padding: "8px 18px",
                   borderRadius: "999px",
                   fontWeight: 700,
                   fontSize: "0.85rem",
                   cursor: "pointer",
-                  transition: "background 0.2s",
+                  transition: "all 0.2s",
                 }}
               >
                 {autoTradingEnabled ? "● AUTO-TRADING ON" : "○ AUTO-TRADING OFF"}
               </button>
             </div>
-            <div style={{ fontSize: "0.82rem", color: "#64748b", lineHeight: 1.5, background: "#f8fafc", padding: "10px 12px", borderRadius: "8px", marginBottom: "8px" }}>
+            <div style={{ fontSize: "0.82rem", color: "var(--muted)", lineHeight: 1.5, background: "var(--card-subtle, #131c31)", border: "1px solid var(--line)", padding: "10px 12px", borderRadius: "8px", marginBottom: "8px" }}>
               {autoTradingEnabled ? (
-                <>🟢 <strong>Bot is actively polling.</strong> Multi-agent breakout signals are auto-added to Watchlist and simulated without manual approval.</>
+                <>🟢 <strong style={{ color: "var(--ink, #f8fafc)" }}>Bot is actively polling.</strong> Multi-agent breakout signals are auto-added to Watchlist and simulated without manual approval.</>
               ) : (
-                <>⏸️ <strong>Bot is in manual standby.</strong> Use "+ Add to Watchlist &amp; Auto-Track" on any instrument below to benchmark precision.</>
+                <>⏸️ <strong style={{ color: "var(--ink, #f8fafc)" }}>Bot is in manual standby.</strong> Use "+ Add to Watchlist &amp; Auto-Track" on any instrument below to benchmark precision.</>
               )}
             </div>
-            <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.8rem", color: "#475569", cursor: "pointer" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "0.8rem", color: "var(--muted)", cursor: "pointer" }}>
               <input
                 type="checkbox"
                 checked={autoAddToWatchlist}
@@ -757,25 +882,25 @@ export default function LiveTradingPage() {
 
           {/* Card 2: Routing Mode (Paper vs Live Broker) */}
           <div style={{
-            background: "#ffffff",
-            border: "1px solid #e2e8f0",
+            background: "var(--card, #0f172a)",
+            border: "1px solid var(--line)",
             borderRadius: "12px",
             padding: "18px 20px",
-            boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+            boxShadow: "var(--shadow)",
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
               <div>
-                <strong style={{ fontSize: "1.05rem", display: "block" }}>Execution Environment</strong>
+                <strong style={{ fontSize: "1.05rem", display: "block", color: "var(--ink, #f8fafc)" }}>Execution Environment</strong>
                 <small style={{ color: "var(--muted)" }}>Choose between Paper Simulation and Live Broker</small>
               </div>
-              <div style={{ display: "flex", background: "#f1f5f9", borderRadius: "999px", padding: "3px" }}>
+              <div style={{ display: "flex", background: "var(--card-subtle, #131c31)", border: "1px solid var(--line)", borderRadius: "999px", padding: "3px" }}>
                 <button
                   type="button"
                   onClick={() => handleSwitchMode("PAPER")}
                   style={{
-                    background: executionMode === "PAPER" ? "#ffffff" : "transparent",
-                    color: executionMode === "PAPER" ? "#0f172a" : "#64748b",
-                    boxShadow: executionMode === "PAPER" ? "0 1px 2px rgba(0,0,0,0.1)" : "none",
+                    background: executionMode === "PAPER" ? "rgba(255, 255, 255, 0.15)" : "transparent",
+                    color: executionMode === "PAPER" ? "#ffffff" : "var(--muted)",
+                    boxShadow: executionMode === "PAPER" ? "0 1px 2px rgba(0,0,0,0.3)" : "none",
                     border: "none",
                     padding: "5px 12px",
                     borderRadius: "999px",
@@ -791,8 +916,8 @@ export default function LiveTradingPage() {
                   onClick={() => handleSwitchMode("LIVE")}
                   style={{
                     background: executionMode === "LIVE" ? "#dc2626" : "transparent",
-                    color: executionMode === "LIVE" ? "#ffffff" : "#64748b",
-                    boxShadow: executionMode === "LIVE" ? "0 1px 2px rgba(0,0,0,0.1)" : "none",
+                    color: executionMode === "LIVE" ? "#ffffff" : "var(--muted)",
+                    boxShadow: executionMode === "LIVE" ? "0 1px 2px rgba(0,0,0,0.3)" : "none",
                     border: "none",
                     padding: "5px 12px",
                     borderRadius: "999px",
@@ -805,23 +930,23 @@ export default function LiveTradingPage() {
                 </button>
               </div>
             </div>
-            <div style={{ fontSize: "0.82rem", color: "#64748b", lineHeight: 1.5, background: "#f8fafc", padding: "10px 12px", borderRadius: "8px" }}>
-              Current: <strong style={{ color: executionMode === "LIVE" ? "#dc2626" : "#16a34a" }}>{executionMode === "LIVE" ? "Live Account (Real Capital)" : "Paper Simulation (Safe ₹10L Sandbox)"}</strong>. Sizing capped at <strong>{maxLots} lot</strong> per trade.
+            <div style={{ fontSize: "0.82rem", color: "var(--muted)", lineHeight: 1.5, background: "var(--card-subtle, #131c31)", border: "1px solid var(--line)", padding: "10px 12px", borderRadius: "8px" }}>
+              Current: <strong style={{ color: executionMode === "LIVE" ? "#f43f5e" : "#10b981" }}>{executionMode === "LIVE" ? "Live Account (Real Capital)" : "Paper Simulation (Safe ₹10L Sandbox)"}</strong>. Sizing capped at <strong style={{ color: "var(--ink, #f8fafc)" }}>{maxLots} lot</strong> per trade.
             </div>
           </div>
 
           {/* Card 3: Emergency Kill Switch */}
           <div style={{
-            background: "#fff1f2",
-            border: "1px solid #fecdd3",
+            background: "var(--red-bg, rgba(244, 63, 94, 0.12))",
+            border: "1px solid rgba(244, 63, 94, 0.3)",
             borderRadius: "12px",
             padding: "18px 20px",
-            boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+            boxShadow: "var(--shadow)",
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
               <div>
-                <strong style={{ fontSize: "1.05rem", color: "#9f1239", display: "block" }}>Safety Circuit Breaker</strong>
-                <small style={{ color: "#be123c" }}>Instant emergency square-off &amp; kill switch</small>
+                <strong style={{ fontSize: "1.05rem", color: "#fda4af", display: "block" }}>Safety Circuit Breaker</strong>
+                <small style={{ color: "#fecdd3" }}>Instant emergency square-off &amp; kill switch</small>
               </div>
               {!killSwitchTriggered ? (
                 <button
@@ -836,6 +961,7 @@ export default function LiveTradingPage() {
                     fontWeight: 700,
                     fontSize: "0.82rem",
                     cursor: "pointer",
+                    boxShadow: "0 2px 4px rgba(225, 29, 72, 0.4)",
                   }}
                 >
                   🛑 KILL SWITCH
@@ -859,11 +985,11 @@ export default function LiveTradingPage() {
                 </button>
               )}
             </div>
-            <div style={{ fontSize: "0.82rem", color: "#881337", lineHeight: 1.5 }}>
+            <div style={{ fontSize: "0.82rem", color: "#fecdd3", lineHeight: 1.5 }}>
               {killSwitchTriggered ? (
-                <strong>Engine locked by operator. Open orders squared off. Reset to resume.</strong>
+                <strong style={{ color: "#ffffff" }}>Engine locked by operator. Open orders squared off. Reset to resume.</strong>
               ) : (
-                <>Max daily loss threshold: <strong>₹{dailyLossLimit.toLocaleString("en-IN")}</strong>. Mandatory stop-loss enforced on all trades.</>
+                <>Max daily loss threshold: <strong style={{ color: "#ffffff" }}>₹{dailyLossLimit.toLocaleString("en-IN")}</strong>. Mandatory stop-loss enforced on all trades.</>
               )}
             </div>
           </div>
@@ -872,7 +998,7 @@ export default function LiveTradingPage() {
         {/* Tradable Underlyings Bot Matrix with Live Analysis */}
         <div style={{ marginBottom: "24px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-            <h2 style={{ fontSize: "1.2rem", fontWeight: 700, margin: 0 }}>
+            <h2 style={{ fontSize: "1.2rem", fontWeight: 700, margin: 0, color: "var(--ink, #f8fafc)" }}>
               Live Data &amp; Multi-Agent Analysis (Auto-Add to Trading)
             </h2>
             <button
@@ -881,9 +1007,9 @@ export default function LiveTradingPage() {
               disabled={analysisLoading}
               title="Fetches fresh live quotes from Groww API and recalculates multi-agent analysis signals on the latest spot prices"
               style={{
-                background: "#f1f5f9",
-                color: "#1e293b",
-                border: "1px solid #cbd5e1",
+                background: "var(--card, #0f172a)",
+                color: "var(--ink, #f8fafc)",
+                border: "1px solid var(--line)",
                 padding: "6px 12px",
                 borderRadius: "6px",
                 fontSize: "0.8rem",
@@ -919,20 +1045,20 @@ export default function LiveTradingPage() {
                 <div
                   key={u.symbol}
                   style={{
-                    background: "#ffffff",
-                    border: "1px solid #e2e8f0",
+                    background: "var(--card, #0f172a)",
+                    border: "1px solid var(--line)",
                     borderRadius: "12px",
                     padding: "16px 18px",
-                    boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+                    boxShadow: "var(--shadow)",
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "10px" }}>
                     <div>
                       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        <strong style={{ fontSize: "1.1rem" }}>{u.name}</strong>
-                        <span style={{ fontSize: "0.75rem", color: "var(--muted)", background: "#f1f5f9", padding: "2px 6px", borderRadius: "4px" }}>{u.exchange}</span>
+                        <strong style={{ fontSize: "1.1rem", color: "var(--ink, #f8fafc)" }}>{u.name}</strong>
+                        <span style={{ fontSize: "0.75rem", color: "var(--muted)", background: "rgba(255, 255, 255, 0.08)", border: "1px solid var(--line)", padding: "2px 6px", borderRadius: "4px" }}>{u.exchange}</span>
                       </div>
-                      <div style={{ fontSize: "1.25rem", fontWeight: 700, color: "#0f172a", marginTop: "2px" }}>
+                      <div style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--ink, #f8fafc)", marginTop: "2px" }}>
                         {spotText}
                         {!u.session.isOpen && (
                           <span style={{ display: "block", fontSize: "0.68rem", color: "var(--muted)", fontWeight: 500, marginTop: "1px" }}>
@@ -944,11 +1070,16 @@ export default function LiveTradingPage() {
 
                     <span style={{
                       background: u.session.isOpen
-                        ? (u.session.freshness === "STALE" ? "#fef3c7" : "#dcfce7")
-                        : u.session.sessionPhase === "POST_CLOSE" ? "#ede9fe" : "#f1f5f9",
+                        ? (u.session.freshness === "STALE" ? "var(--amber-bg, rgba(245, 158, 11, 0.15))" : "var(--green-bg, rgba(16, 185, 129, 0.15))")
+                        : u.session.sessionPhase === "POST_CLOSE" ? "rgba(139, 92, 246, 0.18)" : "var(--card-subtle, #131c31)",
                       color: u.session.isOpen
-                        ? (u.session.freshness === "STALE" ? "#b45309" : "#15803d")
-                        : u.session.sessionPhase === "POST_CLOSE" ? "#6d28d9" : "#64748b",
+                        ? (u.session.freshness === "STALE" ? "#fbbf24" : "#34d399")
+                        : u.session.sessionPhase === "POST_CLOSE" ? "#c4b5fd" : "var(--muted)",
+                      border: `1px solid ${
+                        u.session.isOpen
+                          ? (u.session.freshness === "STALE" ? "rgba(245, 158, 11, 0.3)" : "rgba(16, 185, 129, 0.3)")
+                          : u.session.sessionPhase === "POST_CLOSE" ? "rgba(139, 92, 246, 0.3)" : "var(--line)"
+                      }`,
                       padding: "3px 8px",
                       borderRadius: "6px",
                       fontSize: "0.75rem",
@@ -963,26 +1094,26 @@ export default function LiveTradingPage() {
                   </div>
 
                   {/* Multi-Agent Analysis Stance */}
-                  <div style={{ fontSize: "0.82rem", background: "#f8fafc", padding: "10px", borderRadius: "8px", marginBottom: "12px", lineHeight: 1.5 }}>
+                  <div style={{ fontSize: "0.82rem", background: "var(--card-subtle, #131c31)", border: "1px solid var(--line)", padding: "10px", borderRadius: "8px", marginBottom: "12px", lineHeight: 1.5 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "3px" }}>
                       <span style={{ color: "var(--muted)" }}>Multi-Agent Bias:</span>
                       <strong style={{
-                        color: rec?.bias?.includes("BULLISH") ? "#15803d" : rec?.bias?.includes("BEARISH") ? "#b91c1c" : "#1e40af"
+                        color: rec?.bias?.includes("BULLISH") ? "#34d399" : rec?.bias?.includes("BEARISH") ? "#f87171" : "#60a5fa"
                       }}>
                         {rec?.bias || "AWAITING TRIGGER"}
                       </strong>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "3px" }}>
                       <span style={{ color: "var(--muted)" }}>Planned Contract:</span>
-                      <strong style={{ color: "#1d4ed8" }}>{plannedPick}</strong>
+                      <strong style={{ color: "#38bdf8" }}>{plannedPick}</strong>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "3px" }}>
                       <span style={{ color: "var(--muted)" }}>Execution Signal:</span>
-                      <strong style={{ color: side.includes("BUY") ? "#16a34a" : "#dc2626" }}>{side}</strong>
+                      <strong style={{ color: side.includes("BUY") ? "#34d399" : "#f87171" }}>{side}</strong>
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.76rem", color: "#64748b", borderTop: "1px dashed #e2e8f0", paddingTop: "4px", marginTop: "4px" }}>
-                      <span>Target: {targetSpot != null ? `₹${Number(targetSpot).toLocaleString("en-IN")}` : expPts != null ? `+${expPts} pts` : "Awaiting feed"}</span>
-                      <span>Stop: {stopLossSpot != null ? `₹${Number(stopLossSpot).toLocaleString("en-IN")}` : slPts != null ? `-${slPts} pts` : "Awaiting feed"}</span>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.76rem", color: "var(--muted)", borderTop: "1px dashed var(--line)", paddingTop: "4px", marginTop: "4px" }}>
+                      <span>Target: <strong style={{ color: "var(--ink, #f8fafc)" }}>{targetSpot != null ? `₹${Number(targetSpot).toLocaleString("en-IN")}` : expPts != null ? `+${expPts} pts` : "Awaiting feed"}</strong></span>
+                      <span>Stop: <strong style={{ color: "var(--ink, #f8fafc)" }}>{stopLossSpot != null ? `₹${Number(stopLossSpot).toLocaleString("en-IN")}` : slPts != null ? `-${slPts} pts` : "Awaiting feed"}</strong></span>
                     </div>
                   </div>
 
@@ -1004,12 +1135,12 @@ export default function LiveTradingPage() {
                           style={{
                             flex: 1,
                             background: killSwitchTriggered
-                              ? "#cbd5e1"
+                              ? "rgba(255, 255, 255, 0.08)"
                               : isOrderOpen
-                              ? "#1e293b"
-                              : "#0f172a",
-                            color: "#ffffff",
-                            border: isOrderOpen ? "1px solid #38bdf8" : "none",
+                              ? "rgba(56, 189, 248, 0.2)"
+                              : "rgba(255, 255, 255, 0.12)",
+                            color: killSwitchTriggered ? "var(--muted)" : "#ffffff",
+                            border: isOrderOpen ? "1px solid #38bdf8" : "1px solid var(--line)",
                             padding: "8px 12px",
                             borderRadius: "8px",
                             fontSize: "0.82rem",
@@ -1043,9 +1174,9 @@ export default function LiveTradingPage() {
                             }
                           }}
                           style={{
-                            background: isWatched ? "#ecfdf5" : "#f0fdf4",
-                            color: isWatched ? "#047857" : "#166534",
-                            border: isWatched ? "1px solid #6ee7b7" : "1px solid #86efac",
+                            background: isWatched ? "rgba(16, 185, 129, 0.18)" : "transparent",
+                            color: isWatched ? "#34d399" : "#10b981",
+                            border: isWatched ? "1px solid #10b981" : "1px solid rgba(16, 185, 129, 0.4)",
                             padding: "8px 12px",
                             borderRadius: "8px",
                             fontSize: "0.8rem",
@@ -1067,15 +1198,15 @@ export default function LiveTradingPage() {
 
         {/* Live Execution & Order Book Table */}
         <div style={{
-          background: "#ffffff",
-          border: "1px solid #e2e8f0",
+          background: "var(--card, #0f172a)",
+          border: "1px solid var(--line)",
           borderRadius: "12px",
           padding: "18px 20px",
-          boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+          boxShadow: "var(--shadow)",
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", flexWrap: "wrap", gap: "10px" }}>
             <div>
-              <h2 style={{ fontSize: "1.15rem", fontWeight: 700, margin: 0 }}>Execution Audit Log &amp; Tracked Trades</h2>
+              <h2 style={{ fontSize: "1.15rem", fontWeight: 700, margin: 0, color: "var(--ink, #f8fafc)" }}>Execution Audit Log &amp; Tracked Trades</h2>
               <small style={{ color: "var(--muted)" }}>
                 Real-time tracking of option trades with explicit Premium Targets, Stop-Losses, and underlying spot validation
               </small>
@@ -1083,14 +1214,14 @@ export default function LiveTradingPage() {
 
             <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
               {/* Source Switcher */}
-              <div style={{ display: "flex", background: "#f1f5f9", borderRadius: "8px", padding: "3px" }}>
+              <div style={{ display: "flex", background: "var(--card-subtle, #131c31)", border: "1px solid var(--line)", borderRadius: "8px", padding: "3px" }}>
                 <button
                   type="button"
                   onClick={() => setViewSource("WATCHLIST")}
                   style={{
-                    background: viewSource === "WATCHLIST" ? "#ffffff" : "transparent",
-                    color: viewSource === "WATCHLIST" ? "#0f172a" : "#64748b",
-                    boxShadow: viewSource === "WATCHLIST" ? "0 1px 2px rgba(0,0,0,0.1)" : "none",
+                    background: viewSource === "WATCHLIST" ? "rgba(255, 255, 255, 0.15)" : "transparent",
+                    color: viewSource === "WATCHLIST" ? "#ffffff" : "var(--muted)",
+                    boxShadow: viewSource === "WATCHLIST" ? "0 1px 2px rgba(0,0,0,0.3)" : "none",
                     border: "none",
                     padding: "4px 10px",
                     borderRadius: "6px",
@@ -1105,9 +1236,9 @@ export default function LiveTradingPage() {
                   type="button"
                   onClick={() => setViewSource("ORDERS")}
                   style={{
-                    background: viewSource === "ORDERS" ? "#ffffff" : "transparent",
-                    color: viewSource === "ORDERS" ? "#0f172a" : "#64748b",
-                    boxShadow: viewSource === "ORDERS" ? "0 1px 2px rgba(0,0,0,0.1)" : "none",
+                    background: viewSource === "ORDERS" ? "rgba(255, 255, 255, 0.15)" : "transparent",
+                    color: viewSource === "ORDERS" ? "#ffffff" : "var(--muted)",
+                    boxShadow: viewSource === "ORDERS" ? "0 1px 2px rgba(0,0,0,0.3)" : "none",
                     border: "none",
                     padding: "4px 10px",
                     borderRadius: "6px",
@@ -1128,9 +1259,9 @@ export default function LiveTradingPage() {
                     type="button"
                     onClick={() => setActiveTab(tab)}
                     style={{
-                      background: activeTab === tab ? "#0f172a" : "#f1f5f9",
-                      color: activeTab === tab ? "#ffffff" : "#64748b",
-                      border: "none",
+                      background: activeTab === tab ? "rgba(255, 255, 255, 0.18)" : "transparent",
+                      color: activeTab === tab ? "#ffffff" : "var(--muted)",
+                      border: activeTab === tab ? "1px solid var(--line)" : "1px solid transparent",
                       padding: "4px 9px",
                       borderRadius: "6px",
                       fontSize: "0.75rem",
@@ -1148,9 +1279,9 @@ export default function LiveTradingPage() {
                   type="button"
                   onClick={clearAllWatchlist}
                   style={{
-                    background: "#fee2e2",
-                    color: "#991b1b",
-                    border: "1px solid #fecdd3",
+                    background: "var(--red-bg, rgba(244, 63, 94, 0.15))",
+                    color: "#fca5a5",
+                    border: "1px solid rgba(244, 63, 94, 0.3)",
                     padding: "4px 9px",
                     borderRadius: "6px",
                     fontSize: "0.75rem",
@@ -1167,9 +1298,9 @@ export default function LiveTradingPage() {
                   type="button"
                   onClick={clearOrders}
                   style={{
-                    background: "#fee2e2",
-                    color: "#991b1b",
-                    border: "1px solid #fecdd3",
+                    background: "var(--red-bg, rgba(244, 63, 94, 0.15))",
+                    color: "#fca5a5",
+                    border: "1px solid rgba(244, 63, 94, 0.3)",
                     padding: "4px 9px",
                     borderRadius: "6px",
                     fontSize: "0.75rem",
@@ -1187,13 +1318,13 @@ export default function LiveTradingPage() {
             {viewSource === "WATCHLIST" ? (
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.84rem", textAlign: "left" }}>
                 <thead>
-                  <tr style={{ borderBottom: "2px solid #e2e8f0", color: "var(--muted)", fontSize: "0.75rem", textTransform: "uppercase" }}>
+                  <tr style={{ borderBottom: "2px solid var(--line)", color: "var(--muted)", fontSize: "0.75rem", textTransform: "uppercase" }}>
                     <th style={{ padding: "8px 10px" }}>Contract</th>
                     <th style={{ padding: "8px 10px" }}>Status</th>
-                    <th style={{ padding: "8px 10px", background: "rgba(240, 253, 244, 0.6)", color: "#166534" }}>Prem. Entry</th>
-                    <th style={{ padding: "8px 10px", background: "rgba(224, 231, 255, 0.7)", color: "#3730a3" }}>Running Prem.</th>
-                    <th style={{ padding: "8px 10px", background: "rgba(240, 253, 244, 0.6)", color: "#166534" }}>Prem. Target</th>
-                    <th style={{ padding: "8px 10px", background: "rgba(254, 242, 242, 0.6)", color: "#991b1b" }}>Prem. SL</th>
+                    <th style={{ padding: "8px 10px", background: "rgba(16, 185, 129, 0.1)", color: "#34d399" }}>Prem. Entry</th>
+                    <th style={{ padding: "8px 10px", background: "rgba(56, 189, 248, 0.1)", color: "#38bdf8" }}>Running Prem.</th>
+                    <th style={{ padding: "8px 10px", background: "rgba(16, 185, 129, 0.1)", color: "#34d399" }}>Prem. Target</th>
+                    <th style={{ padding: "8px 10px", background: "rgba(244, 63, 94, 0.1)", color: "#f87171" }}>Prem. SL</th>
                     <th style={{ padding: "8px 10px" }}>Spot Entry</th>
                     <th style={{ padding: "8px 10px" }}>Spot Target</th>
                     <th style={{ padding: "8px 10px" }}>Spot SL</th>
@@ -1224,9 +1355,9 @@ export default function LiveTradingPage() {
                       const isRunPos = runDiffPct != null && runDiffPct >= 0;
 
                       return (
-                        <tr key={w.suggestion_id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                        <tr key={w.suggestion_id} style={{ borderBottom: "1px solid var(--line)", color: "var(--ink, #f8fafc)" }}>
                           <td style={{ padding: "10px 10px" }}>
-                            <strong style={{ color: w.option_type === "CE" ? "#137333" : "#c5221f" }}>{w.contract}</strong>
+                            <strong style={{ color: w.option_type === "CE" ? "#34d399" : "#f87171" }}>{w.contract}</strong>
                             <small style={{ display: "block", color: "var(--muted)", fontSize: "0.72rem" }}>
                               {w.direction === "UP" ? "▲ needs spot up" : "▼ needs spot down"} · {ist(w.created_at)}
                             </small>
@@ -1237,19 +1368,19 @@ export default function LiveTradingPage() {
                             </span>
                           </td>
                           {/* Dedicated Premium Entry Column */}
-                          <td style={{ padding: "10px 10px", background: "rgba(240, 253, 244, 0.25)" }}>
-                            <strong>{inr(pEntry)}</strong>
+                          <td style={{ padding: "10px 10px", background: "rgba(16, 185, 129, 0.05)" }}>
+                            <strong style={{ color: "var(--ink, #f8fafc)" }}>{inr(pEntry)}</strong>
                             {p.lot_size ? <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem" }}>Lot {p.lot_size}</small> : null}
                           </td>
                           {/* Dedicated Running Premium Column */}
-                          <td style={{ padding: "10px 10px", background: "rgba(224, 231, 255, 0.25)" }}>
-                            <strong style={{ color: runDiffPct == null ? "inherit" : isRunPos ? "#15803d" : "#b91c1c" }}>
+                          <td style={{ padding: "10px 10px", background: "rgba(56, 189, 248, 0.05)" }}>
+                            <strong style={{ color: runDiffPct == null ? "inherit" : isRunPos ? "#34d399" : "#f87171" }}>
                               {inr(runningPrem)}
                             </strong>
                             {runDiffPct != null && (
                               <small style={{
                                 display: "block",
-                                color: isRunPos ? "#166534" : "#991b1b",
+                                color: isRunPos ? "#34d399" : "#f87171",
                                 fontWeight: 600,
                                 fontSize: "0.7rem",
                               }}>
@@ -1258,24 +1389,24 @@ export default function LiveTradingPage() {
                             )}
                           </td>
                           {/* Dedicated Premium Target Column */}
-                          <td style={{ padding: "10px 10px", background: "rgba(240, 253, 244, 0.25)" }}>
-                            <strong style={{ color: "#15803d" }}>{inr(pTarget)}</strong>
-                            {gainPct ? <small style={{ display: "block", color: "#166534", fontWeight: 600, fontSize: "0.7rem" }}>{gainPct}</small> : null}
+                          <td style={{ padding: "10px 10px", background: "rgba(16, 185, 129, 0.05)" }}>
+                            <strong style={{ color: "#34d399" }}>{inr(pTarget)}</strong>
+                            {gainPct ? <small style={{ display: "block", color: "#6ee7b7", fontWeight: 600, fontSize: "0.7rem" }}>{gainPct}</small> : null}
                           </td>
                           {/* Dedicated Premium SL Column */}
-                          <td style={{ padding: "10px 10px", background: "rgba(254, 242, 242, 0.25)" }}>
-                            <strong style={{ color: "#b91c1c" }}>{inr(pSL)}</strong>
-                            {lossPct ? <small style={{ display: "block", color: "#991b1b", fontWeight: 600, fontSize: "0.7rem" }}>{lossPct}</small> : null}
+                          <td style={{ padding: "10px 10px", background: "rgba(244, 63, 94, 0.05)" }}>
+                            <strong style={{ color: "#f87171" }}>{inr(pSL)}</strong>
+                            {lossPct ? <small style={{ display: "block", color: "#fda4af", fontWeight: 600, fontSize: "0.7rem" }}>{lossPct}</small> : null}
                           </td>
                           {/* Underlying Spot Levels */}
-                          <td style={{ padding: "10px 10px" }}>{inr(w.entry_spot)}</td>
-                          <td style={{ padding: "10px 10px", color: "#137333", fontWeight: 600 }}>{inr(w.target_spot)}</td>
-                          <td style={{ padding: "10px 10px", color: "#c5221f", fontWeight: 600 }}>{inr(w.stop_loss_spot)}</td>
-                          <td style={{ padding: "10px 10px" }}>
+                          <td style={{ padding: "10px 10px", color: "var(--ink, #f8fafc)" }}>{inr(w.entry_spot)}</td>
+                          <td style={{ padding: "10px 10px", color: "#34d399", fontWeight: 600 }}>{inr(w.target_spot)}</td>
+                          <td style={{ padding: "10px 10px", color: "#f87171", fontWeight: 600 }}>{inr(w.stop_loss_spot)}</td>
+                          <td style={{ padding: "10px 10px", color: "var(--ink, #f8fafc)" }}>
                             {inr(w.last_spot)}
                             <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem" }}>{w.checks || 0} checks</small>
                           </td>
-                          <td style={{ padding: "10px 10px" }}>
+                          <td style={{ padding: "10px 10px", color: "var(--ink, #f8fafc)" }}>
                             <small style={{ fontWeight: w.status !== "OPEN" ? 600 : 400 }}>
                               {w.status === "OPEN" ? `by ${ist(w.expires_at)}` : `${ist(w.resolved_at)} @ ${inr(w.resolved_spot)}`}
                             </small>
@@ -1284,7 +1415,7 @@ export default function LiveTradingPage() {
                             {w.status === "OPEN" ? (
                               <button
                                 type="button"
-                                style={{ fontSize: "0.72rem", padding: "3px 8px", borderRadius: "4px", border: "1px solid #cbd5e1", background: "#f8fafc", cursor: "pointer" }}
+                                style={{ fontSize: "0.72rem", padding: "3px 8px", borderRadius: "4px", border: "1px solid var(--line)", background: "var(--card-subtle, #131c31)", color: "var(--muted)", cursor: "pointer" }}
                                 onClick={() => cancelSuggestion(w.suggestion_id)}
                               >
                                 Cancel
@@ -1298,8 +1429,8 @@ export default function LiveTradingPage() {
                     })}
                   {watchlistItems.length === 0 && (
                     <tr>
-                      <td colSpan={12} style={{ padding: "24px", textAlign: "center", color: "var(--muted)" }}>
-                        No trades logged yet. Click <strong>+ Add to Watchlist &amp; Auto-Track</strong> above to benchmark a setup.
+                      <td colSpan={12} style={{ padding: "28px 14px", textAlign: "center", color: "var(--muted)" }}>
+                        No trades logged yet. Click <strong style={{ color: "var(--green, #10b981)" }}>+ Add to Watchlist &amp; Auto-Track</strong> above to benchmark a setup.
                       </td>
                     </tr>
                   )}
@@ -1308,7 +1439,7 @@ export default function LiveTradingPage() {
             ) : (
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.84rem", textAlign: "left" }}>
                 <thead>
-                  <tr style={{ borderBottom: "1px solid #e2e8f0", color: "var(--muted)", fontSize: "0.75rem", textTransform: "uppercase" }}>
+                  <tr style={{ borderBottom: "1px solid var(--line)", color: "var(--muted)", fontSize: "0.75rem", textTransform: "uppercase" }}>
                     <th style={{ padding: "8px 10px" }}>Time</th>
                     <th style={{ padding: "8px 10px" }}>Order ID</th>
                     <th style={{ padding: "8px 10px" }}>Instrument</th>
@@ -1316,8 +1447,8 @@ export default function LiveTradingPage() {
                     <th style={{ padding: "8px 10px" }}>Side</th>
                     <th style={{ padding: "8px 10px" }}>Mode</th>
                     <th style={{ padding: "8px 10px" }}>Prem. Entry ₹</th>
-                    <th style={{ padding: "8px 10px", color: "#166534" }}>Prem. Target ₹</th>
-                    <th style={{ padding: "8px 10px", color: "#991b1b" }}>Prem. SL ₹</th>
+                    <th style={{ padding: "8px 10px", color: "#34d399" }}>Prem. Target ₹</th>
+                    <th style={{ padding: "8px 10px", color: "#f87171" }}>Prem. SL ₹</th>
                     <th style={{ padding: "8px 10px" }}>Status</th>
                     <th style={{ padding: "8px 10px", textAlign: "right" }}>P&amp;L ₹</th>
                   </tr>
@@ -1326,15 +1457,15 @@ export default function LiveTradingPage() {
                   {orders
                     .filter((o) => activeTab === "ALL" || (activeTab === "OPEN" ? o.status === "OPEN" : o.status !== "OPEN"))
                     .map((o) => (
-                      <tr key={o.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                      <tr key={o.id} style={{ borderBottom: "1px solid var(--line)", color: "var(--ink, #f8fafc)" }}>
                         <td style={{ padding: "10px 10px", color: "var(--muted)" }}>{o.time}</td>
-                        <td style={{ padding: "10px 10px", fontFamily: "monospace" }}>{o.id}</td>
-                        <td style={{ padding: "10px 10px", fontWeight: 600 }}>{o.instrument}</td>
-                        <td style={{ padding: "10px 10px" }}>{o.contract}</td>
+                        <td style={{ padding: "10px 10px", fontFamily: "monospace", color: "var(--ink, #f8fafc)" }}>{o.id}</td>
+                        <td style={{ padding: "10px 10px", fontWeight: 600, color: "var(--ink, #f8fafc)" }}>{o.instrument}</td>
+                        <td style={{ padding: "10px 10px", color: "var(--ink, #f8fafc)" }}>{o.contract}</td>
                         <td style={{ padding: "10px 10px" }}>
                           <span style={{
-                            background: o.side.includes("BUY") ? "#dcfce7" : "#fee2e2",
-                            color: o.side.includes("BUY") ? "#15803d" : "#b91c1c",
+                            background: o.side.includes("BUY") ? "rgba(16, 185, 129, 0.15)" : "rgba(244, 63, 94, 0.15)",
+                            color: o.side.includes("BUY") ? "#34d399" : "#f87171",
                             padding: "2px 6px",
                             borderRadius: "4px",
                             fontSize: "0.75rem",
@@ -1345,8 +1476,8 @@ export default function LiveTradingPage() {
                         </td>
                         <td style={{ padding: "10px 10px" }}>
                           <span style={{
-                            background: o.mode === "LIVE" ? "#fee2e2" : "#f1f5f9",
-                            color: o.mode === "LIVE" ? "#b91c1c" : "#475569",
+                            background: o.mode === "LIVE" ? "rgba(244, 63, 94, 0.15)" : "rgba(255, 255, 255, 0.08)",
+                            color: o.mode === "LIVE" ? "#f87171" : "var(--muted)",
                             padding: "2px 6px",
                             borderRadius: "4px",
                             fontSize: "0.72rem",
@@ -1355,13 +1486,13 @@ export default function LiveTradingPage() {
                             {o.mode}
                           </span>
                         </td>
-                        <td style={{ padding: "10px 10px" }}><strong>₹{o.entry.toFixed(2)}</strong></td>
-                        <td style={{ padding: "10px 10px", color: "#16a34a", fontWeight: 600 }}>₹{o.target.toFixed(2)}</td>
-                        <td style={{ padding: "10px 10px", color: "#dc2626", fontWeight: 600 }}>₹{o.sl.toFixed(2)}</td>
+                        <td style={{ padding: "10px 10px", color: "var(--ink, #f8fafc)" }}><strong>₹{o.entry.toFixed(2)}</strong></td>
+                        <td style={{ padding: "10px 10px", color: "#34d399", fontWeight: 600 }}>₹{o.target.toFixed(2)}</td>
+                        <td style={{ padding: "10px 10px", color: "#f87171", fontWeight: 600 }}>₹{o.sl.toFixed(2)}</td>
                         <td style={{ padding: "10px 10px" }}>
                           <span style={{
-                            background: o.status === "OPEN" ? "#dbeafe" : "#f1f5f9",
-                            color: o.status === "OPEN" ? "#1e40af" : "#64748b",
+                            background: o.status === "OPEN" ? "rgba(56, 189, 248, 0.15)" : "rgba(255, 255, 255, 0.08)",
+                            color: o.status === "OPEN" ? "#38bdf8" : "var(--muted)",
                             padding: "2px 6px",
                             borderRadius: "4px",
                             fontSize: "0.75rem",
@@ -1370,7 +1501,7 @@ export default function LiveTradingPage() {
                             {o.status}
                           </span>
                         </td>
-                        <td style={{ padding: "10px 10px", textAlign: "right", fontWeight: 700, color: (o.pnl || 0) >= 0 ? "#16a34a" : "#dc2626" }}>
+                        <td style={{ padding: "10px 10px", textAlign: "right", fontWeight: 700, color: (o.pnl || 0) >= 0 ? "#34d399" : "#f87171" }}>
                           {(o.pnl || 0) >= 0 ? `+₹${(o.pnl || 0).toFixed(2)}` : `-₹${Math.abs(o.pnl || 0).toFixed(2)}`}
                         </td>
                       </tr>
@@ -1387,27 +1518,29 @@ export default function LiveTradingPage() {
         <div style={{
           position: "fixed",
           inset: 0,
-          background: "rgba(15, 23, 42, 0.6)",
+          background: "rgba(0, 0, 0, 0.75)",
+          backdropFilter: "blur(4px)",
           display: "grid",
           placeItems: "center",
           zIndex: 9999,
           padding: "20px",
         }}>
           <div style={{
-            background: "#ffffff",
+            background: "var(--card, #0f172a)",
+            border: "1px solid var(--line)",
             borderRadius: "14px",
             padding: "24px",
             maxWidth: "480px",
             width: "100%",
-            boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1)",
+            boxShadow: "var(--shadow)",
           }}>
-            <h3 style={{ fontSize: "1.25rem", margin: "0 0 10px", color: "#991b1b" }}>
+            <h3 style={{ fontSize: "1.25rem", margin: "0 0 10px", color: "#fda4af" }}>
               ⚠️ Activate Live Broker Order Routing?
             </h3>
-            <p style={{ fontSize: "0.88rem", color: "#475569", lineHeight: 1.5, marginBottom: "16px" }}>
+            <p style={{ fontSize: "0.88rem", color: "var(--ink, #f8fafc)", lineHeight: 1.5, marginBottom: "16px" }}>
               You are about to switch the execution engine to <strong>Live Broker Mode</strong>. When enabled, any manual or autonomous triggers will route live orders to your Groww trading account using real funds.
             </p>
-            <ul style={{ fontSize: "0.84rem", color: "#475569", paddingLeft: "20px", marginBottom: "20px", lineHeight: 1.6 }}>
+            <ul style={{ fontSize: "0.84rem", color: "var(--muted)", paddingLeft: "20px", marginBottom: "20px", lineHeight: 1.6 }}>
               <li>Maximum 1 lot per trade enforced.</li>
               <li>Hard stop-loss automatically attached to every order.</li>
               <li>Emergency kill switch available at all times.</li>
@@ -1417,9 +1550,9 @@ export default function LiveTradingPage() {
                 type="button"
                 onClick={() => setShowLiveConfirmModal(false)}
                 style={{
-                  background: "#f1f5f9",
-                  color: "#475569",
-                  border: "none",
+                  background: "var(--card-subtle, #131c31)",
+                  color: "var(--ink, #f8fafc)",
+                  border: "1px solid var(--line)",
                   padding: "8px 16px",
                   borderRadius: "8px",
                   fontWeight: 600,

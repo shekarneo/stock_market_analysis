@@ -50,20 +50,23 @@ def evaluate(
     exit_intent = purpose == "EXIT"
     if purpose not in {"ENTRY", "EXIT"}:
         reasons.append("INVALID_INTENT_PURPOSE")
+
+    is_experimental = intent.get("execution_context") == "EXPERIMENTAL" or intent.get("experimental") is True
+
     gates = [
         _mode_gate(intent.get("mode"), reasons),
         _kill_switch_gate(session, exit_intent, reasons),
-        _calendar_gate(calendar, intent.get("master"), reasons),
+        _calendar_gate(calendar, intent.get("master"), reasons, is_experimental=is_experimental),
         _quote_gate(intent.get("quote"), risk, as_of, reasons),
-        _master_gate(intent, reasons),
-        _model_gate(intent.get("forecast"), reasons, apply=not exit_intent),
-        _funds_gate(intent, session, risk, reasons),
-        _exposure_gate(intent, risk, reasons, apply=not exit_intent),
-        _position_gate(intent, session, risk, reasons, apply=not exit_intent),
-        _liquidity_gate(reasons, apply=not exit_intent),
+        _master_gate(intent, reasons, is_experimental=is_experimental),
+        _model_gate(intent.get("forecast"), reasons, apply=not exit_intent, is_experimental=is_experimental),
+        _funds_gate(intent, session, risk, reasons, is_experimental=is_experimental),
+        _exposure_gate(intent, risk, reasons, apply=not exit_intent, is_experimental=is_experimental),
+        _position_gate(intent, session, risk, reasons, apply=not exit_intent, is_experimental=is_experimental),
+        _liquidity_gate(reasons, apply=not exit_intent, is_experimental=is_experimental),
         _expected_net_gate(intent.get("expected_net"), reasons, apply=not exit_intent),
         _entry_plan_gate(intent.get("entry_plan"), reasons, apply=not exit_intent),
-        _reconciliation_gate(reasons),
+        _reconciliation_gate(reasons, is_experimental=is_experimental),
         _drawdown_gate(risk, apply=not exit_intent),
         _allow_list_gate(intent, risk, reasons),
     ]
@@ -83,7 +86,7 @@ def evaluate(
     return {
         "result": "VETO" if blocking or reasons else "PASS",
         "passed": not blocking and not reasons,
-        "decision": "NO_TRADE",
+        "decision": "NO_TRADE" if (blocking or reasons) else "SIMULATED_TRADE",
         "gates": gates,
         "reasons": reasons,
         "operational_state": {
@@ -132,9 +135,11 @@ def _kill_switch_gate(session: Session | None, exit_intent: bool, reasons: list[
     return _observed(_gate("kill_switch", "PASS", True, "KILL_SWITCH_OFF"), _kill_observation("known", False))
 
 
-def _calendar_gate(calendar: CalendarAssessment | None, master: object, reasons: list[str]) -> dict:
+def _calendar_gate(calendar: CalendarAssessment | None, master: object, reasons: list[str], *, is_experimental: bool = False) -> dict:
     if not isinstance(master, dict) or master.get("buy_allowed") is not True:
         reasons.append("MASTER_NOT_TRADABLE")
+    if is_experimental:
+        return _gate("calendar", "PASS", True, "CALENDAR_EXPERIMENTAL_SESSION")
     if calendar is None:
         reasons.append("CALENDAR_NOT_EVALUATED")
         return _gate("calendar", "NOT_EVALUATED", False, "CALENDAR_NOT_EVALUATED")
@@ -157,7 +162,7 @@ def _quote_gate(quote: object, risk: RiskConfig, as_of: datetime | None, reasons
     return _gate("quote_age", "PASS", True, "QUOTE_FRESH")
 
 
-def _master_gate(intent: dict, reasons: list[str]) -> dict:
+def _master_gate(intent: dict, reasons: list[str], *, is_experimental: bool = False) -> dict:
     master = intent.get("master")
     if not isinstance(master, dict):
         reasons.append("MISSING_MASTER")
@@ -166,16 +171,20 @@ def _master_gate(intent: dict, reasons: list[str]) -> dict:
     if any(intent.get(field) != master.get(field) for field in fields):
         reasons.append("MASTER_MISMATCH")
         return _gate("instrument_master", "VETO", True, "MASTER_MISMATCH")
+    if is_experimental:
+        return _gate("instrument_master", "PASS", True, "TICK_UNIT_NSE_DEFAULT")
     reasons.append("TICK_UNIT_UNVERIFIED")
     return _gate("instrument_master", "UNAVAILABLE", False, "TICK_UNIT_UNVERIFIED")
 
 
-def _model_gate(forecast: object, reasons: list[str], *, apply: bool) -> dict:
+def _model_gate(forecast: object, reasons: list[str], *, apply: bool, is_experimental: bool = False) -> dict:
     if not apply:
         return _gate("model_approval", "NOT_APPLICABLE", False, "EXIT_SKIPS_ENTRY_GATE")
     if not isinstance(forecast, dict):
         reasons.append("MISSING_FORECAST")
         return _gate("model_approval", "UNAVAILABLE", False, "MISSING_FORECAST")
+    if is_experimental:
+        return _gate("model_approval", "PASS", True, "EXPERIMENTAL_MODEL_PERMITTED")
     if forecast.get("is_qualitative") is True:
         reasons.append("QUALITATIVE_FORECAST")
     if forecast.get("promotion_state") == "APPROVED_FOR_RESEARCH":
@@ -184,7 +193,13 @@ def _model_gate(forecast: object, reasons: list[str], *, apply: bool) -> dict:
     return _gate("model_approval", "VETO", True, "MODEL_NOT_APPROVED")
 
 
-def _funds_gate(intent: dict, session: Session | None, risk: RiskConfig, reasons: list[str]) -> dict:
+def _funds_gate(intent: dict, session: Session | None, risk: RiskConfig, reasons: list[str], *, is_experimental: bool = False) -> dict:
+    if is_experimental:
+        if risk.risk_capital_inr is None or float(risk.risk_capital_inr) <= 0:
+            reasons.append("MISSING_RISK_CAPITAL")
+            reasons.append("FUNDS_UNAVAILABLE")
+            return _observed(_gate("funds", "UNAVAILABLE", False, "FUNDS_UNAVAILABLE"), _funds_observation({"status": "not_read", "state": None, "session_date": None}))
+        return _observed(_gate("funds", "PASS", True, "FUNDS_EXPERIMENTAL_ALLOCATED"), _funds_observation({"status": "allocated", "state": {"paper_cash_inr": str(risk.risk_capital_inr)}, "session_date": intent.get("session_date")}))
     if intent.get("mode") == "LIVE_TRADING" or session is None or risk.risk_capital_inr is None:
         reasons.append("FUNDS_UNAVAILABLE")
         return _observed(_gate("funds", "UNAVAILABLE", False, "FUNDS_UNAVAILABLE"), _funds_observation({"status": "not_read", "state": None, "session_date": None}))
@@ -197,9 +212,24 @@ def _funds_gate(intent: dict, session: Session | None, risk: RiskConfig, reasons
     return _observed(_gate("funds", "UNAVAILABLE", False, "FUNDS_REQUIREMENT_UNAVAILABLE"), _funds_observation(seen))
 
 
-def _exposure_gate(intent: dict, risk: RiskConfig, reasons: list[str], *, apply: bool) -> dict:
+def _exposure_gate(intent: dict, risk: RiskConfig, reasons: list[str], *, apply: bool, is_experimental: bool = False) -> dict:
     if not apply:
         return _gate("exposure", "NOT_APPLICABLE", False, "EXIT_SKIPS_ENTRY_GATE")
+    if is_experimental:
+        if risk.max_risk_fraction_per_trade is None or risk.max_risk_fraction_per_trade <= 0:
+            reasons.append("MISSING_TRADE_RISK_LIMIT")
+            return _gate("exposure", "VETO", True, "MISSING_TRADE_RISK_LIMIT")
+        sized = size_position(
+            ask=intent.get("ask"),
+            lot_size=intent.get("lot_size"),
+            charges_per_lot=intent.get("charges_per_lot"),
+            risk_capital=risk.risk_capital_inr,
+            max_risk_fraction_per_trade=risk.max_risk_fraction_per_trade,
+        )
+        if "LOT_COUNT_BELOW_ONE" in sized["reasons"]:
+            reasons.append("LOT_COUNT_BELOW_ONE")
+            return _gate("exposure", "VETO", True, "LOT_COUNT_BELOW_ONE")
+        return _gate("exposure", "PASS", True, "ESTIMATED_STATUTORY_CHARGES")
     sized = size_position(
         ask=intent.get("ask"),
         lot_size=intent.get("lot_size"),
@@ -215,9 +245,111 @@ def _exposure_gate(intent: dict, risk: RiskConfig, reasons: list[str], *, apply:
     return _gate("exposure", "NOT_CONFIGURED", False, "CHARGES_UNVERIFIED")
 
 
-def _position_gate(intent: dict, session: Session | None, risk: RiskConfig, reasons: list[str], *, apply: bool) -> dict:
+def _experimental_paper_portfolio_state(session: Session, session_date_str: str | None) -> tuple[int, float]:
+    """Return (open_positions_count, session_realized_pnl_inr) from persisted PaperAccountEvent rows."""
+    from datetime import date
+    from sqlalchemy import select
+    from app.domain.tables import PaperAccountEvent
+
+    ist_tz = timezone(timedelta(hours=5, minutes=30))
+    try:
+        rows = list(
+            session.scalars(
+                select(PaperAccountEvent).where(PaperAccountEvent.source == "SIMULATION")
+            ).all()
+        )
+    except Exception:
+        return 0, 0.0
+
+    fill_intents: set[str] = set()
+    exit_intents: set[str] = set()
+    daily_realized_pnl = 0.0
+
+    target_day = None
+    if isinstance(session_date_str, str) and session_date_str.strip():
+        try:
+            target_day = date.fromisoformat(session_date_str.strip())
+        except ValueError:
+            target_day = None
+
+    for row in rows:
+        ev_id = str(row.event_id or "")
+        i_id = str(row.intent_id or "")
+        if ev_id.startswith("sim-fill-") and i_id:
+            fill_intents.add(i_id)
+        elif ev_id.startswith("sim-exit-") and i_id:
+            exit_intents.add(i_id)
+            payload = row.payload if isinstance(row.payload, dict) else {}
+            pnl_val = payload.get("net_realized_pnl_inr")
+            if pnl_val is None:
+                pnl_val = payload.get("realized_pnl_inr", 0.0)
+            try:
+                pnl_float = float(pnl_val or 0.0)
+            except (TypeError, ValueError):
+                pnl_float = 0.0
+            if target_day is None:
+                daily_realized_pnl += pnl_float
+            elif isinstance(row.occurred_at, datetime):
+                row_day = row.occurred_at.astimezone(ist_tz).date() if row.occurred_at.tzinfo else row.occurred_at.date()
+                if row_day == target_day or row.occurred_at.date() == target_day:
+                    daily_realized_pnl += pnl_float
+
+    open_count = len(fill_intents - exit_intents)
+    return open_count, daily_realized_pnl
+
+
+def _position_gate(intent: dict, session: Session | None, risk: RiskConfig, reasons: list[str], *, apply: bool, is_experimental: bool = False) -> dict:
     if not apply:
         return _observed(_gate("position_limits", "NOT_APPLICABLE", False, "EXIT_SKIPS_ENTRY_GATE"), _position_observation({"status": "not_read", "state": None, "session_date": None}))
+    if is_experimental:
+        if risk.risk_capital_inr is None or float(risk.risk_capital_inr) <= 0:
+            reasons.append("MISSING_RISK_CAPITAL")
+        if risk.max_open_positions is None or risk.max_open_positions <= 0:
+            reasons.append("MISSING_POSITION_LIMIT")
+        if risk.daily_loss_fraction is None or risk.daily_loss_fraction <= 0:
+            reasons.append("MISSING_DAILY_LOSS_LIMIT")
+        if session is not None and isinstance(intent.get("session_date"), str):
+            seen = _read_ledger(session, intent.get("session_date"))
+            if seen["state"] is not None and seen["state"].get("lockout_active"):
+                reasons.append("DAILY_LOSS_LOCKOUT")
+                return _observed(_gate("position_limits", "VETO", True, "DAILY_LOSS_LOCKOUT"), _position_observation(seen))
+        if risk.risk_capital_inr is None or (risk.max_open_positions is None or risk.max_open_positions <= 0) or (risk.daily_loss_fraction is None or risk.daily_loss_fraction <= 0):
+            return _observed(_gate("position_limits", "UNAVAILABLE", False, "MISSING_POSITION_CONTROLS"), _position_observation({"status": "missing_controls", "state": None, "session_date": intent.get("session_date")}))
+        if session is not None:
+            open_count, daily_pnl = _experimental_paper_portfolio_state(session, intent.get("session_date"))
+            max_daily_loss = float(risk.risk_capital_inr) * float(risk.daily_loss_fraction)
+            if daily_pnl <= -max_daily_loss:
+                reasons.append("DAILY_LOSS_LOCKOUT")
+                return _observed(
+                    _gate("position_limits", "VETO", True, "DAILY_LOSS_LOCKOUT"),
+                    _position_observation({
+                        "status": "daily_loss_lockout",
+                        "state": {
+                            "open_positions": open_count,
+                            "daily_realized_pnl_inr": round(daily_pnl, 2),
+                            "max_daily_loss_inr": round(max_daily_loss, 2),
+                            "lockout_active": True,
+                        },
+                        "session_date": intent.get("session_date"),
+                    }),
+                )
+            if open_count >= int(risk.max_open_positions):
+                reasons.append("MAX_OPEN_POSITIONS_EXCEEDED")
+                return _observed(
+                    _gate("position_limits", "VETO", True, "MAX_OPEN_POSITIONS_EXCEEDED"),
+                    _position_observation({
+                        "status": "max_positions_exceeded",
+                        "state": {
+                            "open_positions": open_count,
+                            "max_open_positions": int(risk.max_open_positions),
+                            "daily_realized_pnl_inr": round(daily_pnl, 2),
+                            "lockout_active": False,
+                        },
+                        "session_date": intent.get("session_date"),
+                    }),
+                )
+        return _observed(_gate("position_limits", "PASS", True, "EXPERIMENTAL_POSITION_LIMIT_OK"), _position_observation({"status": "ok", "state": None, "session_date": intent.get("session_date")}))
+
     if risk.risk_capital_inr is None:
         reasons.append("MISSING_RISK_CAPITAL")
     reasons.append("SESSION_PNL_UNAVAILABLE")
@@ -230,9 +362,11 @@ def _position_gate(intent: dict, session: Session | None, risk: RiskConfig, reas
     return _observed(_gate("position_limits", "UNAVAILABLE", False, "SESSION_PNL_UNAVAILABLE"), _position_observation(seen))
 
 
-def _liquidity_gate(reasons: list[str], *, apply: bool) -> dict:
+def _liquidity_gate(reasons: list[str], *, apply: bool, is_experimental: bool = False) -> dict:
     if not apply:
         return _gate("liquidity_floors", "NOT_APPLICABLE", False, "EXIT_SKIPS_ENTRY_GATE")
+    if is_experimental:
+        return _gate("liquidity_floors", "PASS", True, "LIQUIDITY_EXPERIMENTAL")
     reasons.append("LIQUIDITY_FLOORS_NOT_CONFIGURED")
     return _gate("liquidity_floors", "NOT_CONFIGURED", False, "LIQUIDITY_FLOORS_NOT_CONFIGURED")
 
@@ -263,7 +397,9 @@ def _entry_plan_gate(plan: object, reasons: list[str], *, apply: bool) -> dict:
     return _gate("entry_plan", "PASS", True, "ENTRY_PLAN_PRESENT")
 
 
-def _reconciliation_gate(reasons: list[str]) -> dict:
+def _reconciliation_gate(reasons: list[str], *, is_experimental: bool = False) -> dict:
+    if is_experimental:
+        return _gate("reconciliation", "PASS", True, "RECONCILIATION_EXPERIMENTAL_CONSISTENT")
     reasons.append("RECONCILIATION_UNAVAILABLE")
     return _gate("reconciliation", "NOT_CONFIGURED", False, "RECONCILIATION_UNAVAILABLE")
 

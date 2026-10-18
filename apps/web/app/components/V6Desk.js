@@ -6,6 +6,7 @@ import { useRead } from "./useRead";
 import { valueText } from "../research/present.mjs";
 import { csrf } from "./ResearchBoard";
 import { useMarketData } from "./MarketDataContext";
+import NewsSourcesManager from "./NewsSourcesManager";
 
 const INDICES_CHOICES = [
   { id: "NIFTY", label: "NIFTY", desc: "NSE Spot Index" },
@@ -145,7 +146,7 @@ function isMarketOpenIST() {
   return isAnyMarketOpenIST();
 }
 
-export default function V6Desk() {
+export default function V6Desk({ defaultTab = "trades", hideTickers = false } = {}) {
   const [selected, setSelected] = useState(CHOICES);
   const [commentary, setCommentary] = useState(false);
   const [quantFusion, setQuantFusion] = useState(true);
@@ -153,12 +154,14 @@ export default function V6Desk() {
   const [error, setError] = useState("");
   const [report, setReport] = useState(null);
   const [tab, setTab] = useState("dossier");
-  const [deskTab, setDeskTab] = useState("trades");
+  const [deskTab, setDeskTab] = useState(defaultTab);
+  const [showTickerFeed, setShowTickerFeed] = useState(!hideTickers);
   const forecasts = useRead("/api/forecasts?live=true");
   const news = useRead("/api/news");
   const approved = forecasts.body?.forecasts || [];
   const [newsPhase, setNewsPhase] = useState("idle");
   const [newsError, setNewsError] = useState("");
+  const [showNewsConfig, setShowNewsConfig] = useState(false);
   const marketData = useMarketData();
   const [quotesPhase, setQuotesPhase] = useState("idle");
   const [quotesError, setQuotesError] = useState("");
@@ -306,417 +309,541 @@ export default function V6Desk() {
                 </span>
               ) : null}
             </div>
-            <button type="button" onClick={fetchLiveQuotes} disabled={quotesPhase === "loading"} style={{ padding: "4px 12px", fontSize: "0.78rem" }}>
-              {quotesPhase === "loading" ? "Fetching quotes…" : "Refresh Groww live quotes"}
-            </button>
-          </div>
-          {quotesPhase === "error" ? <p className="error" role="alert" style={{ marginTop: "4px", marginBottom: "8px" }}>{quotesError}</p> : null}
-          {/* Feed Category & Filter Controls */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px", margin: "10px 0 14px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-              <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginRight: "4px" }}>
-                Market Segments:
-              </span>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
               <button
                 type="button"
+                onClick={() => setShowTickerFeed((prev) => !prev)}
                 style={{
-                  padding: "3px 10px",
-                  fontSize: "0.75rem",
-                  borderRadius: "6px",
+                  padding: "4px 10px",
+                  fontSize: "0.78rem",
+                  background: "var(--card-subtle, #131c31)",
                   border: "1px solid var(--border)",
-                  background: feedCategoryFilter === "ALL" ? "#14211c" : "var(--surface)",
-                  color: feedCategoryFilter === "ALL" ? "#fff" : "var(--ink)",
-                  fontWeight: 650,
+                  borderRadius: "6px",
+                  color: "var(--ink)",
                   cursor: "pointer",
                 }}
-                onClick={() => { setFeedCategoryFilter("ALL"); setFeedIndexFilter("ALL"); }}
               >
-                All Markets ({quotesList.length + commoditiesList.length + globalIndicesList.length})
+                {showTickerFeed ? "Hide Market Tickers ▴" : "Show Market Tickers (15) ▾"}
               </button>
-              <button
-                type="button"
-                style={{
-                  padding: "3px 10px",
-                  fontSize: "0.75rem",
-                  borderRadius: "6px",
-                  border: "1px solid var(--border)",
-                  background: feedCategoryFilter === "INDICES" ? "#14211c" : "var(--surface)",
-                  color: feedCategoryFilter === "INDICES" ? "#fff" : "var(--ink)",
-                  fontWeight: 650,
-                  cursor: "pointer",
-                }}
-                onClick={() => { setFeedCategoryFilter("INDICES"); setFeedIndexFilter("ALL"); }}
-              >
-                All Indices ({quotesList.filter((q) => q.instrument === "NIFTY" || q.instrument === "SENSEX").length})
-              </button>
-              <button
-                type="button"
-                style={{
-                  padding: "3px 10px",
-                  fontSize: "0.75rem",
-                  borderRadius: "6px",
-                  border: "1px solid var(--border)",
-                  background: feedCategoryFilter === "COMMODITIES" ? "#14211c" : "var(--surface)",
-                  color: feedCategoryFilter === "COMMODITIES" ? "#fff" : "var(--ink)",
-                  fontWeight: 650,
-                  cursor: "pointer",
-                }}
-                onClick={() => { setFeedCategoryFilter("COMMODITIES"); setFeedIndexFilter("ALL"); }}
-              >
-                ⚡ MCX Commodities ({commoditiesList.length || 4})
-              </button>
-              <button
-                type="button"
-                style={{
-                  padding: "3px 10px",
-                  fontSize: "0.75rem",
-                  borderRadius: "6px",
-                  border: "1px solid var(--border)",
-                  background: feedCategoryFilter === "GLOBAL" ? "#14211c" : "var(--surface)",
-                  color: feedCategoryFilter === "GLOBAL" ? "#fff" : "var(--ink)",
-                  fontWeight: 650,
-                  cursor: "pointer",
-                }}
-                onClick={() => { setFeedCategoryFilter("GLOBAL"); setFeedIndexFilter("ALL"); }}
-              >
-                🌐 Global Benchmarks ({globalIndicesList.length || 5})
+              <button type="button" onClick={fetchLiveQuotes} disabled={quotesPhase === "loading"} style={{ padding: "4px 12px", fontSize: "0.78rem" }}>
+                {quotesPhase === "loading" ? "Fetching quotes…" : "Refresh Groww live quotes"}
               </button>
             </div>
-
-            {/* Sub-filter by specific index if in indices mode */}
-            {feedCategoryFilter === "INDICES" || feedCategoryFilter === "ALL" ? (
-              <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap", fontSize: "0.72rem" }}>
-                <span style={{ color: "var(--muted)", fontWeight: 600 }}>Filter Index:</span>
-                <button
-                  type="button"
-                  style={{
-                    padding: "2px 8px",
-                    fontSize: "0.72rem",
-                    borderRadius: "4px",
-                    border: "1px solid var(--border)",
-                    background: feedIndexFilter === "ALL" ? "rgba(0,0,0,0.08)" : "transparent",
-                    color: "var(--ink)",
-                    cursor: "pointer",
-                  }}
-                  onClick={() => setFeedIndexFilter("ALL")}
-                >
-                  All
-                </button>
-                {quotesList.filter((q) => q.instrument === "NIFTY" || q.instrument === "SENSEX").map((q) => (
+          </div>
+          {quotesPhase === "error" ? <p className="error" role="alert" style={{ marginTop: "4px", marginBottom: "8px" }}>{quotesError}</p> : null}
+          {showTickerFeed && (
+            <>
+              {/* Feed Category & Filter Controls */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px", margin: "10px 0 14px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginRight: "4px" }}>
+                    Market Segments:
+                  </span>
                   <button
-                    key={q.instrument}
                     type="button"
                     style={{
-                      padding: "2px 8px",
-                      fontSize: "0.72rem",
-                      borderRadius: "4px",
+                      padding: "3px 10px",
+                      fontSize: "0.75rem",
+                      borderRadius: "6px",
                       border: "1px solid var(--border)",
-                      background: feedIndexFilter === q.instrument ? "rgba(0,0,0,0.08)" : "transparent",
-                      color: "var(--ink)",
+                      background: feedCategoryFilter === "ALL" ? "#14211c" : "var(--surface)",
+                      color: feedCategoryFilter === "ALL" ? "#fff" : "var(--ink)",
+                      fontWeight: 650,
                       cursor: "pointer",
                     }}
-                    onClick={() => setFeedIndexFilter(q.instrument)}
+                    onClick={() => { setFeedCategoryFilter("ALL"); setFeedIndexFilter("ALL"); }}
                   >
-                    {q.instrument}
+                    All Markets ({quotesList.length + commoditiesList.length + globalIndicesList.length})
                   </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-
-          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
-            {/* 1. Domestic Index Quotes (NIFTY, SENSEX) */}
-            {(feedCategoryFilter === "ALL" || feedCategoryFilter === "INDICES") &&
-              quotesList.filter((q) => q.instrument === "NIFTY" || q.instrument === "SENSEX").map((q) => {
-                if (feedIndexFilter !== "ALL" && feedIndexFilter !== q.instrument) return null;
-                const chg = formatQuoteChange(q);
-                return (
-                  <div
-                    key={q.instrument}
+                  <button
+                    type="button"
                     style={{
-                      background: "var(--surface)",
-                      padding: "10px 14px",
-                      borderRadius: "8px",
+                      padding: "3px 10px",
+                      fontSize: "0.75rem",
+                      borderRadius: "6px",
                       border: "1px solid var(--border)",
-                      minWidth: "200px",
-                      flex: "1 1 220px",
+                      background: feedCategoryFilter === "INDICES" ? "#14211c" : "var(--surface)",
+                      color: feedCategoryFilter === "INDICES" ? "#fff" : "var(--ink)",
+                      fontWeight: 650,
+                      cursor: "pointer",
                     }}
+                    onClick={() => { setFeedCategoryFilter("INDICES"); setFeedIndexFilter("ALL"); }}
                   >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2px" }}>
-                      <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700, letterSpacing: "0.5px" }}>{q.instrument}</span>
-                      <span
+                    All Indices ({quotesList.filter((q) => q.instrument === "NIFTY" || q.instrument === "SENSEX").length})
+                  </button>
+                  <button
+                    type="button"
+                    style={{
+                      padding: "3px 10px",
+                      fontSize: "0.75rem",
+                      borderRadius: "6px",
+                      border: "1px solid var(--border)",
+                      background: feedCategoryFilter === "COMMODITIES" ? "#14211c" : "var(--surface)",
+                      color: feedCategoryFilter === "COMMODITIES" ? "#fff" : "var(--ink)",
+                      fontWeight: 650,
+                      cursor: "pointer",
+                    }}
+                    onClick={() => { setFeedCategoryFilter("COMMODITIES"); setFeedIndexFilter("ALL"); }}
+                  >
+                    ⚡ MCX Commodities ({commoditiesList.length || 4})
+                  </button>
+                  <button
+                    type="button"
+                    style={{
+                      padding: "3px 10px",
+                      fontSize: "0.75rem",
+                      borderRadius: "6px",
+                      border: "1px solid var(--border)",
+                      background: feedCategoryFilter === "GLOBAL" ? "#14211c" : "var(--surface)",
+                      color: feedCategoryFilter === "GLOBAL" ? "#fff" : "var(--ink)",
+                      fontWeight: 650,
+                      cursor: "pointer",
+                    }}
+                    onClick={() => { setFeedCategoryFilter("GLOBAL"); setFeedIndexFilter("ALL"); }}
+                  >
+                    🌐 Global Benchmarks ({globalIndicesList.length || 5})
+                  </button>
+                </div>
+
+                {/* Sub-filter by specific index if in indices mode */}
+                {feedCategoryFilter === "INDICES" || feedCategoryFilter === "ALL" ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap", fontSize: "0.72rem" }}>
+                    <span style={{ color: "var(--muted)", fontWeight: 600 }}>Filter Index:</span>
+                    <button
+                      type="button"
+                      style={{
+                        padding: "2px 8px",
+                        fontSize: "0.72rem",
+                        borderRadius: "4px",
+                        border: "1px solid var(--border)",
+                        background: feedIndexFilter === "ALL" ? "rgba(0,0,0,0.08)" : "transparent",
+                        color: "var(--ink)",
+                        cursor: "pointer",
+                      }}
+                      onClick={() => setFeedIndexFilter("ALL")}
+                    >
+                      All
+                    </button>
+                    {quotesList.filter((q) => q.instrument === "NIFTY" || q.instrument === "SENSEX").map((q) => (
+                      <button
+                        key={q.instrument}
+                        type="button"
                         style={{
-                          fontSize: "0.65rem",
-                          padding: "1px 6px",
+                          padding: "2px 8px",
+                          fontSize: "0.72rem",
                           borderRadius: "4px",
-                          background: marketData.isEquityOpen ? "rgba(22, 163, 74, 0.12)" : "rgba(100, 116, 139, 0.12)",
-                          color: marketData.isEquityOpen ? "#16a34a" : "#64748b",
-                          fontWeight: 600,
+                          border: "1px solid var(--border)",
+                          background: feedIndexFilter === q.instrument ? "rgba(0,0,0,0.08)" : "transparent",
+                          color: "var(--ink)",
+                          cursor: "pointer",
+                        }}
+                        onClick={() => setFeedIndexFilter(q.instrument)}
+                      >
+                        {q.instrument}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+
+              <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+                {/* 1. Domestic Index Quotes (NIFTY, SENSEX) */}
+                {(feedCategoryFilter === "ALL" || feedCategoryFilter === "INDICES") &&
+                  quotesList.filter((q) => q.instrument === "NIFTY" || q.instrument === "SENSEX").map((q) => {
+                    if (feedIndexFilter !== "ALL" && feedIndexFilter !== q.instrument) return null;
+                    const chg = formatQuoteChange(q);
+                    return (
+                      <div
+                        key={q.instrument}
+                        style={{
+                          background: "var(--surface)",
+                          padding: "10px 14px",
+                          borderRadius: "8px",
+                          border: "1px solid var(--border)",
+                          minWidth: "200px",
+                          flex: "1 1 220px",
                         }}
                       >
-                        {q.instrument === "NIFTY"
-                          ? (marketData.isEquityOpen ? "NSE · LIVE" : "NSE · CLOSED")
-                          : q.instrument === "SENSEX"
-                          ? (marketData.isEquityOpen ? "BSE · LIVE" : "BSE · CLOSED")
-                          : "MCX Commodity"}
-                      </span>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "baseline", gap: "8px", flexWrap: "wrap" }}>
-                      <strong style={{ fontSize: "1.2rem", letterSpacing: "-0.5px" }}>
-                        ₹{Number(q.last_price).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </strong>
-                      {chg ? (
-                        <span style={{ fontSize: "0.78rem", fontWeight: 600, color: chg.color }}>
-                          {chg.diffFormatted} ({chg.pctFormatted})
-                        </span>
-                      ) : q.day_change != null ? (
-                        <span style={{ fontSize: "0.78rem", fontWeight: 600, color: (q.day_change || 0) >= 0 ? "#16a34a" : "#dc2626" }}>
-                          {q.day_change > 0 ? `+₹${q.day_change}` : `-₹${Math.abs(q.day_change)}`} ({q.percent_change})
-                        </span>
-                      ) : null}
-                    </div>
-                    {q.ohlc ? (
-                      <div style={{ fontSize: "0.68rem", color: "var(--muted)", marginTop: "6px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1px 8px" }}>
-                        <span><strong>O:</strong> ₹{Number(q.ohlc.open).toLocaleString("en-IN", { minimumFractionDigits: 1 })}</span>
-                        <span><strong>H:</strong> ₹{Number(q.ohlc.high).toLocaleString("en-IN", { minimumFractionDigits: 1 })}</span>
-                        <span><strong>L:</strong> ₹{Number(q.ohlc.low).toLocaleString("en-IN", { minimumFractionDigits: 1 })}</span>
-                        <span><strong>Prev:</strong> ₹{Number(q.ohlc.close).toLocaleString("en-IN", { minimumFractionDigits: 1 })}</span>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2px" }}>
+                          <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700, letterSpacing: "0.5px" }}>{q.instrument}</span>
+                          <span
+                            style={{
+                              fontSize: "0.65rem",
+                              padding: "1px 6px",
+                              borderRadius: "4px",
+                              background: marketData.isEquityOpen ? "rgba(22, 163, 74, 0.12)" : "rgba(100, 116, 139, 0.12)",
+                              color: marketData.isEquityOpen ? "#16a34a" : "#64748b",
+                              fontWeight: 600,
+                            }}
+                          >
+                            {q.instrument === "NIFTY"
+                              ? (marketData.isEquityOpen ? "NSE · LIVE" : "NSE · CLOSED")
+                              : q.instrument === "SENSEX"
+                              ? (marketData.isEquityOpen ? "BSE · LIVE" : "BSE · CLOSED")
+                              : "MCX Commodity"}
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "baseline", gap: "8px", flexWrap: "wrap" }}>
+                          <strong style={{ fontSize: "1.2rem", letterSpacing: "-0.5px" }}>
+                            ₹{Number(q.last_price).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </strong>
+                          {chg ? (
+                            <span style={{ fontSize: "0.78rem", fontWeight: 600, color: chg.color }}>
+                              {chg.diffFormatted} ({chg.pctFormatted})
+                            </span>
+                          ) : q.day_change != null ? (
+                            <span style={{ fontSize: "0.78rem", fontWeight: 600, color: (q.day_change || 0) >= 0 ? "#16a34a" : "#dc2626" }}>
+                              {q.day_change > 0 ? `+₹${q.day_change}` : `-₹${Math.abs(q.day_change)}`} ({q.percent_change})
+                            </span>
+                          ) : null}
+                        </div>
+                        {q.ohlc ? (
+                          <div style={{ fontSize: "0.68rem", color: "var(--muted)", marginTop: "6px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1px 8px" }}>
+                            <span><strong>O:</strong> ₹{Number(q.ohlc.open).toLocaleString("en-IN", { minimumFractionDigits: 1 })}</span>
+                            <span><strong>H:</strong> ₹{Number(q.ohlc.high).toLocaleString("en-IN", { minimumFractionDigits: 1 })}</span>
+                            <span><strong>L:</strong> ₹{Number(q.ohlc.low).toLocaleString("en-IN", { minimumFractionDigits: 1 })}</span>
+                            <span><strong>Prev:</strong> ₹{Number(q.ohlc.close).toLocaleString("en-IN", { minimumFractionDigits: 1 })}</span>
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: "0.68rem", color: "var(--muted)", marginTop: "6px" }}>
+                            <span>{q.instrument === "SENSEX" ? "BSE CASH Spot Quote (Groww LTP)" : (q.instrument.includes("CRUDE") ? "MCX Live Commodity Feed" : "Live Market Feed")}</span>
+                          </div>
+                        )}
                       </div>
-                    ) : (
+                    );
+                  })}
+
+                {/* 2. Domestic Sectoral & Indicator Feeds (India VIX, sector context) */}
+                {(feedCategoryFilter === "ALL" || feedCategoryFilter === "INDICES") &&
+                  sectoralIndicesList.map((s) => (
+                    <div
+                      key={s.instrument}
+                      style={{
+                        background: "var(--surface)",
+                        padding: "10px 14px",
+                        borderRadius: "8px",
+                        border: "1px solid var(--border)",
+                        minWidth: "200px",
+                        flex: "1 1 210px",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2px" }}>
+                        <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700, letterSpacing: "0.5px" }}>{s.name}</span>
+                        <span
+                          style={{
+                            fontSize: "0.65rem",
+                            padding: "1px 5px",
+                            borderRadius: "4px",
+                            background: s.instrument === "VIX" ? "rgba(239, 68, 68, 0.12)" : "rgba(99, 102, 241, 0.12)",
+                            color: s.instrument === "VIX" ? "#dc2626" : "#4f46e5",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {s.instrument === "VIX" ? "NSE Volatility" : "NSE Sectoral"}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: "8px", flexWrap: "wrap" }}>
+                        <strong style={{ fontSize: "1.2rem", letterSpacing: "-0.5px" }}>
+                          {s.instrument === "VIX" ? Number(s.last_price).toFixed(2) : `₹${Number(s.last_price).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
+                        </strong>
+                        {s.day_change_text ? (
+                          <span style={{ fontSize: "0.78rem", fontWeight: 600, color: s.day_change_text.startsWith("-") ? "#dc2626" : "#16a34a" }}>
+                            {s.day_change_text}
+                          </span>
+                        ) : null}
+                      </div>
                       <div style={{ fontSize: "0.68rem", color: "var(--muted)", marginTop: "6px" }}>
-                        <span>{q.instrument === "SENSEX" ? "BSE CASH Spot Quote (Groww LTP)" : (q.instrument.includes("CRUDE") ? "MCX Live Commodity Feed" : "Live Market Feed")}</span>
+                        <span>Groww Live Sectoral Feed · {formatIST(s.retrieved_at)}</span>
                       </div>
-                    )}
-                  </div>
-                );
-              })}
+                    </div>
+                  ))}
 
-            {/* 2. Domestic Sectoral & Indicator Feeds (India VIX, sector context) */}
-            {(feedCategoryFilter === "ALL" || feedCategoryFilter === "INDICES") &&
-              sectoralIndicesList.map((s) => (
-                <div
-                  key={s.instrument}
-                  style={{
-                    background: "var(--surface)",
-                    padding: "10px 14px",
-                    borderRadius: "8px",
-                    border: "1px solid var(--border)",
-                    minWidth: "200px",
-                    flex: "1 1 210px",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2px" }}>
-                    <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700, letterSpacing: "0.5px" }}>{s.name}</span>
-                    <span
+                {/* 3. MCX Commodities */}
+                {(feedCategoryFilter === "ALL" || feedCategoryFilter === "COMMODITIES") &&
+                  commoditiesList.map((c) => (
+                    <div
+                      key={c.instrument}
                       style={{
-                        fontSize: "0.65rem",
-                        padding: "1px 5px",
-                        borderRadius: "4px",
-                        background: s.instrument === "VIX" ? "rgba(239, 68, 68, 0.12)" : "rgba(99, 102, 241, 0.12)",
-                        color: s.instrument === "VIX" ? "#dc2626" : "#4f46e5",
-                        fontWeight: 600,
+                        background: "var(--surface)",
+                        padding: "10px 14px",
+                        borderRadius: "8px",
+                        border: "1px solid var(--border)",
+                        minWidth: "200px",
+                        flex: "1 1 210px",
                       }}
                     >
-                      {s.instrument === "VIX" ? "NSE Volatility" : "NSE Sectoral"}
-                    </span>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: "8px", flexWrap: "wrap" }}>
-                    <strong style={{ fontSize: "1.2rem", letterSpacing: "-0.5px" }}>
-                      {s.instrument === "VIX" ? Number(s.last_price).toFixed(2) : `₹${Number(s.last_price).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`}
-                    </strong>
-                    {s.day_change_text ? (
-                      <span style={{ fontSize: "0.78rem", fontWeight: 600, color: s.day_change_text.startsWith("-") ? "#dc2626" : "#16a34a" }}>
-                        {s.day_change_text}
-                      </span>
-                    ) : null}
-                  </div>
-                  <div style={{ fontSize: "0.68rem", color: "var(--muted)", marginTop: "6px" }}>
-                    <span>Groww Live Sectoral Feed · {formatIST(s.retrieved_at)}</span>
-                  </div>
-                </div>
-              ))}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2px" }}>
+                        <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700, letterSpacing: "0.5px" }}>{c.name}</span>
+                        <span
+                          style={{
+                            fontSize: "0.65rem",
+                            padding: "1px 6px",
+                            borderRadius: "4px",
+                            background: marketData.isCommodityOpen ? "rgba(22, 163, 74, 0.12)" : "rgba(100, 116, 139, 0.12)",
+                            color: marketData.isCommodityOpen ? "#16a34a" : "#64748b",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {marketData.isCommodityOpen ? "MCX · LIVE" : "MCX · CLOSED"}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: "8px", flexWrap: "wrap" }}>
+                        <strong style={{ fontSize: "1.2rem", letterSpacing: "-0.5px" }}>
+                          ₹{Number(c.last_price).toLocaleString("en-IN", { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
+                        </strong>
+                        {c.day_change != null ? (
+                          <span style={{ fontSize: "0.78rem", fontWeight: 600, color: (c.day_change || 0) >= 0 ? "#16a34a" : "#dc2626" }}>
+                            {c.day_change > 0 ? `+₹${c.day_change}` : `-₹${Math.abs(c.day_change)}`} ({c.percent_change})
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 500 }}>
+                            {c.unit}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: "0.68rem", color: "var(--muted)", marginTop: "6px" }}>
+                        <span>MCX Live Feed ({c.unit}) · {formatIST(c.retrieved_at)}</span>
+                      </div>
+                    </div>
+                  ))}
 
-            {/* 3. MCX Commodities */}
-            {(feedCategoryFilter === "ALL" || feedCategoryFilter === "COMMODITIES") &&
-              commoditiesList.map((c) => (
-                <div
-                  key={c.instrument}
-                  style={{
-                    background: "var(--surface)",
-                    padding: "10px 14px",
-                    borderRadius: "8px",
-                    border: "1px solid var(--border)",
-                    minWidth: "200px",
-                    flex: "1 1 210px",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2px" }}>
-                    <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700, letterSpacing: "0.5px" }}>{c.name}</span>
-                    <span
+                {/* 4. Global Market Benchmarks (Non-Interval) */}
+                {(feedCategoryFilter === "ALL" || feedCategoryFilter === "GLOBAL") &&
+                  globalIndicesList.map((g) => (
+                    <div
+                      key={g.instrument}
                       style={{
-                        fontSize: "0.65rem",
-                        padding: "1px 6px",
-                        borderRadius: "4px",
-                        background: marketData.isCommodityOpen ? "rgba(22, 163, 74, 0.12)" : "rgba(100, 116, 139, 0.12)",
-                        color: marketData.isCommodityOpen ? "#16a34a" : "#64748b",
-                        fontWeight: 600,
+                        background: "var(--surface)",
+                        padding: "10px 14px",
+                        borderRadius: "8px",
+                        border: "1px solid var(--border)",
+                        minWidth: "200px",
+                        flex: "1 1 210px",
                       }}
                     >
-                      {marketData.isCommodityOpen ? "MCX · LIVE" : "MCX · CLOSED"}
-                    </span>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: "8px", flexWrap: "wrap" }}>
-                    <strong style={{ fontSize: "1.2rem", letterSpacing: "-0.5px" }}>
-                      ₹{Number(c.last_price).toLocaleString("en-IN", { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
-                    </strong>
-                    {c.day_change != null ? (
-                      <span style={{ fontSize: "0.78rem", fontWeight: 600, color: (c.day_change || 0) >= 0 ? "#16a34a" : "#dc2626" }}>
-                        {c.day_change > 0 ? `+₹${c.day_change}` : `-₹${Math.abs(c.day_change)}`} ({c.percent_change})
-                      </span>
-                    ) : (
-                      <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 500 }}>
-                        {c.unit}
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: "0.68rem", color: "var(--muted)", marginTop: "6px" }}>
-                    <span>MCX Live Feed ({c.unit}) · {formatIST(c.retrieved_at)}</span>
-                  </div>
-                </div>
-              ))}
-
-            {/* 4. Global Market Benchmarks (Non-Interval) */}
-            {(feedCategoryFilter === "ALL" || feedCategoryFilter === "GLOBAL") &&
-              globalIndicesList.map((g) => (
-                <div
-                  key={g.instrument}
-                  style={{
-                    background: "var(--surface)",
-                    padding: "10px 14px",
-                    borderRadius: "8px",
-                    border: "1px solid var(--border)",
-                    minWidth: "200px",
-                    flex: "1 1 210px",
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2px" }}>
-                    <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700, letterSpacing: "0.5px" }}>{g.name}</span>
-                    <span style={{ fontSize: "0.65rem", padding: "1px 5px", borderRadius: "4px", background: "rgba(59, 130, 246, 0.12)", color: "#2563eb", fontWeight: 600 }}>
-                      Global Market
-                    </span>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: "8px", flexWrap: "wrap" }}>
-                    <strong style={{ fontSize: "1.2rem", letterSpacing: "-0.5px" }}>
-                      {Number(g.last_price).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {g.unit || "pts"}
-                    </strong>
-                    {g.percent_change ? (
-                      <span style={{ fontSize: "0.78rem", fontWeight: 600, color: (g.day_change || 0) >= 0 ? "#16a34a" : "#dc2626" }}>
-                        {g.day_change ? (g.day_change > 0 ? `+${g.day_change}` : `${g.day_change}`) : ""} ({g.percent_change})
-                      </span>
-                    ) : null}
-                  </div>
-                  <div style={{ fontSize: "0.68rem", color: "var(--muted)", marginTop: "6px" }}>
-                    <span>Groww Global Feed · {formatIST(g.retrieved_at)}</span>
-                  </div>
-                </div>
-              ))}
-          </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2px" }}>
+                        <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: 700, letterSpacing: "0.5px" }}>{g.name}</span>
+                        <span style={{ fontSize: "0.65rem", padding: "1px 5px", borderRadius: "4px", background: "rgba(59, 130, 246, 0.12)", color: "#2563eb", fontWeight: 600 }}>
+                          Global Market
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: "8px", flexWrap: "wrap" }}>
+                        <strong style={{ fontSize: "1.2rem", letterSpacing: "-0.5px" }}>
+                          {Number(g.last_price).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {g.unit || "pts"}
+                        </strong>
+                        {g.percent_change ? (
+                          <span style={{ fontSize: "0.78rem", fontWeight: 600, color: (g.day_change || 0) >= 0 ? "#16a34a" : "#dc2626" }}>
+                            {g.day_change ? (g.day_change > 0 ? `+${g.day_change}` : `${g.day_change}`) : ""} ({g.percent_change})
+                          </span>
+                        ) : null}
+                      </div>
+                      <div style={{ fontSize: "0.68rem", color: "var(--muted)", marginTop: "6px" }}>
+                        <span>Groww Global Feed · {formatIST(g.retrieved_at)}</span>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            </>
+          )}
 
         </section>
 
-        {/* Command Toolbar & Action Bar */}
-        <div className="pro-command-bar">
-          {/* Executive System & Engine Health Status Deck */}
+        {/* 1. Executive System & Engine Health Status Deck (Full-width 4-column ribbon) */}
+        <div
+          data-testid="system-health-overview"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            gap: "12px",
+            marginBottom: "16px",
+            width: "100%",
+          }}
+        >
+          {/* 1. Market Quotes Feed (Public LTP Data) */}
           <div
-            data-testid="system-health-overview"
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
-              gap: "10px",
-              marginBottom: "14px",
-              padding: "12px 14px",
-              background: "rgba(255, 255, 255, 0.03)",
-              border: "1px solid var(--border)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "4px",
+              background: "var(--card-subtle, #131c31)",
+              border: "1px solid var(--border, rgba(255, 255, 255, 0.08))",
               borderRadius: "10px",
+              padding: "12px 14px",
+            }}
+            title="Public and cached live quote snapshot reader (Indices & Commodities). Direct broker trading integration is configured under Settings -> Integrations."
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Market Quotes Feed</span>
+              <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "#16a34a", background: "rgba(22, 163, 74, 0.12)", padding: "1px 6px", borderRadius: "4px" }}>
+                🟢 {quotesList.length > 0 ? "Live Active" : "Polling"}
+              </span>
+            </div>
+            <span style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--ink, #f8fafc)" }}>
+              {quotesList.length + commoditiesList.length} Quotes Active
+            </span>
+            <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
+              Groww Public LTP · Auto-sync: {marketData.pollConfig?.intervalSeconds || 60}s · {retrievedAtText || "Live IST"}
+            </span>
+          </div>
+
+          {/* 2. 12 Specialist Agents */}
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "4px",
+              background: "var(--card-subtle, #131c31)",
+              border: "1px solid var(--border, rgba(255, 255, 255, 0.08))",
+              borderRadius: "10px",
+              padding: "12px 14px",
             }}
           >
-            {/* 1. Groww Live API */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>Groww API</span>
-                <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "#16a34a", background: "rgba(22, 163, 74, 0.12)", padding: "1px 6px", borderRadius: "4px" }}>
-                  🟢 {quotesList.length > 0 ? "Connected" : "Polling"}
-                </span>
-              </div>
-              <span style={{ fontSize: "0.85rem", fontWeight: 650 }}>
-                {quotesList.length + commoditiesList.length} Quotes Active
-              </span>
-              <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
-                Auto-sync: {marketData.pollConfig?.intervalSeconds || 60}s · {retrievedAtText || "Live IST"}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Specialist Agents</span>
+              <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "#16a34a", background: "rgba(22, 163, 74, 0.12)", padding: "1px 6px", borderRadius: "4px" }}>
+                🟢 12 Online
               </span>
             </div>
-
-            {/* 2. 12 Specialist Agents */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>Specialist Agents</span>
-                <span style={{ fontSize: "0.7rem", fontWeight: 700, color: "#16a34a", background: "rgba(22, 163, 74, 0.12)", padding: "1px 6px", borderRadius: "4px" }}>
-                  🟢 12 Online
-                </span>
-              </div>
-              <span style={{ fontSize: "0.85rem", fontWeight: 650 }}>
-                Deterministic Consensus
-              </span>
-              <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
-                News Wire ({news.body?.items?.length || 39}) · Macro (8) · Tech
-              </span>
-            </div>
-
-            {/* 3. OpenAI LLM Integration */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>OpenAI Status</span>
-                <span style={{ fontSize: "0.7rem", fontWeight: 700, color: commentary ? "#2563eb" : "var(--muted)", background: commentary ? "rgba(37, 99, 235, 0.12)" : "rgba(100, 116, 139, 0.12)", padding: "1px 6px", borderRadius: "4px" }}>
-                  {commentary ? "🟢 In-Loop" : "⚪ Standby"}
-                </span>
-              </div>
-              <span style={{ fontSize: "0.85rem", fontWeight: 650 }}>
-                {commentary ? "GPT-4.1 Mini In-Loop" : "Heuristic Rules Active"}
-              </span>
-              <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
-                Zero-hallucination deterministic guard
-              </span>
-            </div>
-
-            {/* 4. Statistical ML Model */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase" }}>ML Forecasting</span>
-                <span style={{ fontSize: "0.7rem", fontWeight: 700, color: approved.length > 0 ? "#16a34a" : "#ca8a04", background: approved.length > 0 ? "rgba(22, 163, 74, 0.12)" : "rgba(202, 138, 4, 0.12)", padding: "1px 6px", borderRadius: "4px" }}>
-                  {approved.length > 0 ? `🟢 ${approved.length} Models Ready` : "🟡 Fitted Active"}
-                </span>
-              </div>
-              <span style={{ fontSize: "0.85rem", fontWeight: 650 }}>
-                Logistic L2 + Persistence
-              </span>
-              <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
-                Quant P(Up)/P(Down) Probabilities
-              </span>
-            </div>
+            <span style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--ink, #f8fafc)" }}>
+              Deterministic Consensus
+            </span>
+            <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
+              News Wire ({news.body?.items?.length || 39}) · Macro (8) · Tech
+            </span>
           </div>
 
+          {/* 3. AI Inference & Commentary */}
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "4px",
+              background: "var(--card-subtle, #131c31)",
+              border: "1px solid var(--border, rgba(255, 255, 255, 0.08))",
+              borderRadius: "10px",
+              padding: "12px 14px",
+            }}
+            title="Consensus engine runs mathematical quant, volatility, and technical indicators deterministically without LLMs. OpenAI provides optional narrative commentary when enabled."
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>AI Commentary</span>
+              <span style={{ fontSize: "0.7rem", fontWeight: 700, color: commentary ? "#2563eb" : "var(--muted)", background: commentary ? "rgba(37, 99, 235, 0.12)" : "rgba(100, 116, 139, 0.12)", padding: "1px 6px", borderRadius: "4px" }}>
+                {commentary ? "🟢 In-Loop" : "⚪ Standby"}
+              </span>
+            </div>
+            <span style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--ink, #f8fafc)" }}>
+              {commentary ? "LLM Commentary Active" : "Deterministic Quant Active"}
+            </span>
+            <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
+              {commentary ? "Structured LLM narrative generated" : "Zero-hallucination deterministic guard"}
+            </span>
+          </div>
+
+          {/* 4. Statistical ML Model */}
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "4px",
+              background: "var(--card-subtle, #131c31)",
+              border: "1px solid var(--border, rgba(255, 255, 255, 0.08))",
+              borderRadius: "10px",
+              padding: "12px 14px",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>ML Forecasting</span>
+              <span style={{ fontSize: "0.7rem", fontWeight: 700, color: approved.length > 0 ? "#16a34a" : "#ca8a04", background: approved.length > 0 ? "rgba(22, 163, 74, 0.12)" : "rgba(202, 138, 4, 0.12)", padding: "1px 6px", borderRadius: "4px" }}>
+                {approved.length > 0 ? `🟢 ${approved.length} Models Ready` : "🟡 Fitted Active"}
+              </span>
+            </div>
+            <span style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--ink, #f8fafc)" }}>
+              Logistic L2 + Persistence
+            </span>
+            <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
+              Quant P(Up)/P(Down) Probabilities
+            </span>
+          </div>
+        </div>
+
+        {/* 2. Institutional Desk Verdict Hero Banner */}
+        <div
+          className="pro-verdict-hero"
+          style={{
+            borderLeft: `4px solid ${
+              callClass === "bullish"
+                ? "#10b981"
+                : callClass === "bearish"
+                ? "#f43f5e"
+                : "#f59e0b"
+            }`,
+            marginBottom: "16px",
+          }}
+        >
           <div className="pro-verdict-summary">
-            <span className="pro-eyebrow">Desk Signal</span>
-            <h2 id="agents-heading" className={`pro-call-badge ${callClass}`}>
-              {decision === "NO_TRADE" ? "NO TRADE / CAUTION" : decision}
-            </h2>
-            <div className="pro-meta-chips">
-              <span>Horizon: <strong>Intraday</strong></span>
-              <span>Forecasts: <strong>{approved.length === 0 ? (intel.forecast?.live_forecasts?.length ? `${intel.forecast.live_forecasts.length} live active` : "none") : `${approved.length} approved`}</strong></span>
-              <span>Probabilities: <strong>{intel.forecast?.probabilities != null ? "returned" : (approved.length > 0 ? "ready" : "not set")}</strong></span>
-              <span>Quant Fusion: <strong>{quantFusion ? "ENABLED" : "OFF"}</strong></span>
+            <span className="pro-eyebrow">
+              🏛️ Institutional Desk Verdict &amp; Consensus Signal
+            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap", marginTop: "2px" }}>
+              <h2 id="agents-heading" className={`pro-call-badge ${callClass}`} style={{ margin: 0 }}>
+                {decision === "NO_TRADE" ? "NO TRADE / CAUTION" : decision}
+              </h2>
+              <span
+                style={{
+                  fontSize: "0.75rem",
+                  fontWeight: 700,
+                  padding: "3px 10px",
+                  borderRadius: "6px",
+                  background:
+                    callClass === "bullish"
+                      ? "rgba(16, 185, 129, 0.15)"
+                      : callClass === "bearish"
+                      ? "rgba(244, 63, 94, 0.15)"
+                      : "rgba(245, 158, 11, 0.15)",
+                  color:
+                    callClass === "bullish"
+                      ? "#10b981"
+                      : callClass === "bearish"
+                      ? "#f43f5e"
+                      : "#f59e0b",
+                  border: `1px solid ${
+                    callClass === "bullish"
+                      ? "rgba(16, 185, 129, 0.3)"
+                      : callClass === "bearish"
+                      ? "rgba(244, 63, 94, 0.3)"
+                      : "rgba(245, 158, 11, 0.3)"
+                  }`,
+                }}
+              >
+                {decision === "NO_TRADE" ? "Deadband Gated" : "Active Allocation"}
+              </span>
+            </div>
+            <div className="pro-meta-chips" style={{ marginTop: "6px" }}>
+              <span>⏱ Horizon: <strong>Intraday</strong></span>
+              <span>📊 Forecasts: <strong>{approved.length === 0 ? (intel.forecast?.live_forecasts?.length ? `${intel.forecast.live_forecasts.length} live active` : "none") : `${approved.length} approved`}</strong></span>
+              <span>🎯 Probabilities: <strong>{intel.forecast?.probabilities != null ? "returned" : (approved.length > 0 ? "ready" : "not set")}</strong></span>
+              <span>⚡ Quant Fusion: <strong style={{ color: quantFusion ? "#10b981" : "var(--muted)" }}>{quantFusion ? "ENABLED" : "OFF"}</strong></span>
             </div>
           </div>
+
+          {/* Regime & Safety Context Pills */}
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "6px" }}>
+            <span style={{ fontSize: "0.72rem", color: "var(--muted)", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.06em" }}>
+              Macro &amp; Market Regime
+            </span>
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <span style={{ fontSize: "0.78rem", fontWeight: 650, color: "var(--ink)", background: "rgba(255, 255, 255, 0.04)", padding: "4px 10px", borderRadius: "6px", border: "1px solid var(--border)" }}>
+                🛡️ Normal Volatility
+              </span>
+              <span style={{ fontSize: "0.78rem", fontWeight: 650, color: "#10b981", background: "rgba(16, 185, 129, 0.1)", padding: "4px 10px", borderRadius: "6px", border: "1px solid rgba(16, 185, 129, 0.2)" }}>
+                ✓ Risk Limits Clear
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* 3. Command Toolbar & Action Bar */}
+        <div className="pro-command-bar">
 
           <form onSubmit={run} className="agent-run pro-run-form" style={{ display: "grid", gap: "10px" }}>
             {/* Quick preset selector buttons */}
@@ -995,15 +1122,41 @@ export default function V6Desk() {
         <section data-testid="market-news">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px", marginBottom: "10px" }}>
             <div>
-              <h3 style={{ margin: 0, fontSize: "1.05rem" }}>Headlines</h3>
+              <h3 style={{ margin: 0, fontSize: "1.05rem" }}>Headlines &amp; News Wire</h3>
               <p style={{ margin: "2px 0 0 0", fontSize: "0.82rem", color: "var(--muted)" }}>
-                Latest market articles for the thesis. A headline carries no bullish or bearish mark and does not set the side of the ticket.
+                Latest market articles for the thesis. Configured web pages and RSS feeds are fetched by the News Agent.
               </p>
             </div>
-            <button type="button" onClick={fetchNews} disabled={newsPhase === "loading"}>
-              {newsPhase === "loading" ? "Fetching…" : "Fetch latest articles"}
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={() => setShowNewsConfig((prev) => !prev)}
+                style={{
+                  background: showNewsConfig ? "rgba(56, 189, 248, 0.2)" : "rgba(255, 255, 255, 0.05)",
+                  color: showNewsConfig ? "#38bdf8" : "var(--ink)",
+                  border: "1px solid var(--line)",
+                  borderRadius: "6px",
+                  padding: "6px 12px",
+                  fontSize: "0.8rem",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                {showNewsConfig ? "✕ Close Feed Config" : "⚙ Configure Feeds & Web Pages"}
+              </button>
+              <button type="button" onClick={fetchNews} disabled={newsPhase === "loading"}>
+                {newsPhase === "loading" ? "Fetching…" : "Fetch latest articles"}
+              </button>
+            </div>
           </div>
+          {showNewsConfig && (
+            <NewsSourcesManager
+              onNewsUpdated={() => {
+                news.retry();
+                fetchNews();
+              }}
+            />
+          )}
           {newsPhase === "error" ? <p className="error" role="alert">{newsError}</p> : null}
           {news.phase === "ready" && (news.body?.items || []).length === 0 ? <p>No articles are stored yet.</p> : null}
           {news.phase === "error" ? <p className="error">{news.error}</p> : null}

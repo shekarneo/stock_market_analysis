@@ -23,6 +23,10 @@ dev = [
   "pytest==8.3.4",
 ]
 
+[project.scripts]
+imm = "app.cli:main"
+
+
 [build-system]
 requires = ["setuptools==75.6.0"]
 build-backend = "setuptools.build_meta"

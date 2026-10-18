@@ -129,6 +129,72 @@ def is_candle_complete(quote_data: dict, current_time: datetime | None = None) -
     return True
 
 
+def _resolve_trailing_features_and_meta(instrument: str) -> tuple[dict[str, float] | None, str | None, float | None]:
+    """Resolve trailing features, actual candle bar_end, and last candle close from verified completed candles."""
+    inst = instrument.upper()
+    if inst == "NIFTY":
+        dataset_path = REPO_ROOT / "var" / "datasets" / "derived_nifty_15m_regular_ac9484b605d484c2.json"
+        if not dataset_path.is_file():
+            candidates = list((REPO_ROOT / "var" / "datasets").glob("derived_nifty_15m_regular_*.json"))
+            if candidates:
+                dataset_path = candidates[0]
+        if dataset_path.is_file():
+            try:
+                data = json.loads(dataset_path.read_text(encoding="utf-8"))
+                candles_data = data.get("regular_candles") or []
+                if len(candles_data) >= 10:
+                    from app.market.schemas import Candle, DataOrigin, MarketSession
+                    from app.market.calendar import ExchangeCalendar
+                    from app.features.pipeline import compute_feature_row
+
+                    cal_dates = set()
+                    candle_objs = []
+                    for c in candles_data[-30:]:
+                        start_dt = datetime.fromisoformat(c["bar_start"])
+                        end_dt = datetime.fromisoformat(c["bar_end"])
+                        cal_dates.add(start_dt.date())
+                        candle_objs.append(
+                            Candle(
+                                instrument_id="NIFTY",
+                                underlying="NIFTY",
+                                exchange="NSE",
+                                interval="M15",
+                                bar_start=start_dt,
+                                bar_end=end_dt,
+                                provider_timestamp=start_dt,
+                                retrieved_at=end_dt,
+                                open=float(c["open"]),
+                                high=float(c["high"]),
+                                low=float(c["low"]),
+                                close=float(c["close"]),
+                                volume=float(c["volume"]) if c.get("volume") is not None else None,
+                                source_id="derived_regular",
+                                origin=DataOrigin.PROVIDER,
+                                session=MarketSession.OPEN,
+                            )
+                        )
+                    calendar = ExchangeCalendar(listed_sessions=cal_dates, closed_dates=set())
+                    row = compute_feature_row(candle_objs, len(candle_objs) - 1, calendar)
+                    res = {}
+                    for f in MODEL_FEATURES:
+                        if f in row.values and row.values[f].value is not None:
+                            val = float(row.values[f].value)
+                            if math.isfinite(val):
+                                res[f] = val
+                    if len(res) == len(MODEL_FEATURES):
+                        last_c = candle_objs[-1]
+                        return res, last_c.bar_end.isoformat(), float(last_c.close)
+            except Exception:
+                pass
+    return None, None, None
+
+
+def resolve_trailing_features_for_instrument(instrument: str) -> dict[str, float] | None:
+    """Resolve and compute trailing features from verified completed candles."""
+    feats, _, _ = _resolve_trailing_features_and_meta(instrument)
+    return feats
+
+
 def compute_live_forecast_for_instrument(
     instrument: str,
     quote_data: dict | None,
@@ -159,8 +225,25 @@ def compute_live_forecast_for_instrument(
 
     last_price = float(quote_data["last_price"])
 
+    # If features are not yet attached on quote_data, resolve from trailing completed candles
+    features = quote_data.get("features")
+    feature_source = "LIVE_QUOTE_FEATURES"
+    is_live_feature_vector = True
+    if not isinstance(features, dict) or not features:
+        trailing, trailing_bar_end, _ = _resolve_trailing_features_and_meta(inst)
+        if trailing and len(trailing) == len(MODEL_FEATURES):
+            features = trailing
+            feature_source = "HISTORICAL_CANDLE_DATASET"
+            is_live_feature_vector = False
+            quote_data["features"] = features
+            if not quote_data.get("bar_end") and trailing_bar_end:
+                quote_data["bar_end"] = trailing_bar_end
+            quote_data["feature_source"] = feature_source
+            quote_data["is_live_feature_vector"] = is_live_feature_vector
+
     # Reject incomplete / partial candles
     if not is_candle_complete(quote_data, current_time=current_time):
+
         return {
             "instrument": inst,
             "status": "INCOMPLETE_CANDLE",
@@ -318,6 +401,11 @@ def compute_live_forecast_for_instrument(
         "target_spot": target_spot,
         "stop_loss_spot": stop_loss_spot,
         "features": feature_row,
+        "feature_bar_end": quote_data.get("bar_end"),
+        "feature_source": quote_data.get("feature_source", feature_source),
+        "is_live_feature_vector": bool(quote_data.get("is_live_feature_vector", is_live_feature_vector)),
+        "quote_source": quote_data.get("quote_source", "MARKET_SNAPSHOT"),
+        "is_live_quote": bool(quote_data.get("is_live_quote", False)),
         "summary": (
             f"Fitted model {model.get('model_version')} predicts {int(p_up * 100)}% P(Up) vs "
             f"{int(p_down * 100)}% P(Down) with {round(confidence * 100)}% conviction over completed candle."
@@ -330,6 +418,34 @@ def generate_all_live_forecasts() -> dict:
     read = load_read() or {}
     quotes = {q["instrument"]: q for q in read.get("quotes", []) if q.get("instrument")}
     commodities = {c["instrument"]: c for c in read.get("commodities", []) if c.get("instrument")}
+
+    if not quotes.get("NIFTY"):
+        for row in (read.get("sectoral_indices") or []) + (read.get("observations") or []):
+            if row.get("instrument") == "NIFTY" and row.get("last_price") is not None:
+                quotes["NIFTY"] = dict(row)
+                quotes["NIFTY"].setdefault("quote_source", "STORED_MARKET_SNAPSHOT")
+                quotes["NIFTY"].setdefault("is_live_quote", False)
+                break
+    if not quotes.get("SENSEX"):
+        for row in (read.get("sectoral_indices") or []) + (read.get("observations") or []):
+            if row.get("instrument") == "SENSEX" and row.get("last_price") is not None:
+                quotes["SENSEX"] = dict(row)
+                quotes["SENSEX"].setdefault("quote_source", "STORED_MARKET_SNAPSHOT")
+                quotes["SENSEX"].setdefault("is_live_quote", False)
+                break
+    if not quotes.get("NIFTY"):
+        trailing, trailing_bar_end, last_close = _resolve_trailing_features_and_meta("NIFTY")
+        if last_close is not None:
+            quotes["NIFTY"] = {
+                "instrument": "NIFTY",
+                "last_price": last_close,
+                "features": trailing,
+                "bar_end": trailing_bar_end,
+                "feature_source": "HISTORICAL_CANDLE_DATASET",
+                "is_live_feature_vector": False,
+                "quote_source": "HISTORICAL_CANDLE_SNAPSHOT",
+                "is_live_quote": False,
+            }
 
     vix_row = next(
         (r for r in read.get("sectoral_indices", []) + read.get("global_indices", []) if r.get("instrument") in {"VIX", "INDIA_VIX"}),
@@ -359,6 +475,7 @@ def generate_all_live_forecasts() -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "forecasts": forecasts,
     }
+
 
 
 def fuse_agents_and_forecast(agent_rec: dict, forecast_item: dict) -> dict:

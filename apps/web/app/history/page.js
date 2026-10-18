@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import InstrumentSelector from "../components/InstrumentSelector";
+import InstrumentHistoricalChart from "../components/InstrumentHistoricalChart";
+import InstrumentDataHealthCard from "../components/InstrumentDataHealthCard";
 
 function csrf() {
   const match = document.cookie.match(/(?:^|; )imm_csrf=([^;]+)/);
@@ -104,9 +107,14 @@ export default function HistoryPage() {
     <main>
       <header className="page-head">
         <p className="eyebrow">History</p>
-        <h1>Historical data</h1>
-        <p>Research import for NIFTY 50 and SENSEX 15-minute candles. This page does not place orders and does not approve a model.</p>
+        <h1>Historical data & Market Health</h1>
+        <p>Independent multi-instrument data validation, historical interactive charts, session audits, and quarantine inspection.</p>
       </header>
+
+      {/* V6 Multi-Instrument Selector, Interactive Chart & Data Health */}
+      <InstrumentSelector />
+      <InstrumentHistoricalChart />
+      <InstrumentDataHealthCard />
       {ready ? null : (
         <section>
           <h2>Sign in required</h2>

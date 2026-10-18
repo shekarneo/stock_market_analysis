@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 os.environ["DATABASE_URL"] = os.environ.get(
-    "DATABASE_URL", "postgresql+psycopg://imm:imm@localhost:54329/imm"
+    "DATABASE_URL", "postgresql+psycopg://imm:imm@localhost:54329/imm_test"
 )
 os.environ["SESSION_SECRET"] = "test-session-secret"
 os.environ["OPERATOR_PASSWORD"] = "test-password"
@@ -26,7 +27,10 @@ from app.settings import get_settings
 def migrated_database():
     get_settings.cache_clear()
     reset_engine()
-    command.upgrade(Config("alembic.ini"), "head")
+    alembic_ini_path = Path(__file__).resolve().parents[1] / "alembic.ini"
+    config = Config(str(alembic_ini_path))
+    config.set_main_option("script_location", str(alembic_ini_path.parent / "alembic"))
+    command.upgrade(config, "head")
     yield
     reset_engine()
 
@@ -36,7 +40,7 @@ def db(migrated_database):
     with get_engine().begin() as connection:
         connection.execute(
             text(
-                "TRUNCATE audit_events, config_revisions, ops_state, integration_credentials, risk_events, risk_sessions, paper_transitions, paper_account_events, operator_accounts, worker_leases, watchlist_suggestions RESTART IDENTITY"
+                "TRUNCATE audit_events, config_revisions, ops_state, integration_credentials, risk_events, risk_sessions, paper_transitions, paper_account_events, operator_accounts, worker_leases, watchlist_suggestions, raw_response_artifacts, market_candles, candle_conflict_audit, ingestion_runs, dataset_provenance, benchmark_cache RESTART IDENTITY"
             )
         )
     yield

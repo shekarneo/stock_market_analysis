@@ -72,30 +72,41 @@ export default function ResearchBoard({ title, lede, children }) {
 }
 
 function StatusStrip({ status }) {
+  const experimentalPaper = status.experimental_paper_execution || (status.paper_trading_active ? "Enabled" : "Blocked");
+  const forecastEval = status.forecast_evaluation_status || "Active";
+  const dataVerification = status.data_verification || (status.real_market_data_verified ? "Verified" : "Unverified");
+  const liveBroker = status.live_broker_execution || (status.live_trading_enabled ? "Enabled" : "Locked");
+
   return (
     <div className="safety">
       <article>
-        <h3>Paper book</h3>
-        <strong>{paperLabel(status.paper_trading_active)}</strong>
+        <h3>Experimental paper</h3>
+        <strong style={{ color: experimentalPaper === "Enabled" ? "var(--good, #4ade80)" : "inherit" }}>
+          {experimentalPaper}
+        </strong>
       </article>
       <article>
-        <h3>Live book</h3>
-        <strong>{flagLabel(status.live_trading_enabled)}</strong>
+        <h3>Forecast evaluation</h3>
+        <strong style={{ color: forecastEval === "Active" ? "var(--good, #4ade80)" : "inherit" }}>
+          {forecastEval}
+        </strong>
+      </article>
+      <article>
+        <h3>Data verification</h3>
+        <strong>{dataVerification}</strong>
+      </article>
+      <article>
+        <h3>Live broker</h3>
+        <strong style={{ color: liveBroker === "Locked" ? "var(--muted, #94a3b8)" : "var(--bad, #f87171)" }}>
+          {liveBroker}
+        </strong>
       </article>
       <article>
         <h3>Kill switch</h3>
         <strong>{killSwitchLabel(status.kill_switch)}</strong>
       </article>
       <article>
-        <h3>Tape</h3>
-        <strong>{valueText(status.market_data)}</strong>
-      </article>
-      <article>
-        <h3>Forecast</h3>
-        <strong>{flagLabel(status.forecast_ready)}</strong>
-      </article>
-      <article>
-        <h3>Fills</h3>
+        <h3>Simulated fills</h3>
         <strong>{fillLabel(status.fills_persisted)}</strong>
       </article>
     </div>

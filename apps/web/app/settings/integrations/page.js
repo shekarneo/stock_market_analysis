@@ -12,6 +12,8 @@ import {
   growwSavePlan,
   historicalLabel,
   integrationLabel,
+  lifecycleKind,
+  lifecycleLabel,
   openaiSavePlan,
   safetySummary,
   secretIndicator,
@@ -22,6 +24,10 @@ function csrf() {
   const match = document.cookie.match(/(?:^|; )imm_csrf=([^;]+)/);
   return match ? decodeURIComponent(match[1]) : "";
 }
+
+const MASK_VALUE = "••••••••••••••••";
+const hasMask = (val) => Boolean(val && (val.includes("•") || val.includes("\u2022")));
+const isNewSecret = (val) => Boolean(val && val.trim() && !hasMask(val));
 
 function when(value) {
   if (!value) return "Not run";
@@ -34,8 +40,26 @@ function when(value) {
   }).format(date);
 }
 
-const MODELS = ["gpt-4.1-mini", "gpt-6-luna", "gpt-6.1-sol"];
-const GEMINI_MODELS = ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.0-flash"];
+const DEFAULT_OPENAI_MODELS = [
+  { id: "gpt-4o", label: "gpt-4o (Omni Flagship · High Intelligence)" },
+  { id: "gpt-4o-mini", label: "gpt-4o-mini (Fast & Cost Efficient)" },
+  { id: "o1", label: "o1 (Deep Reasoning & Complex Analysis)" },
+  { id: "o1-mini", label: "o1-mini (Fast Reasoning)" },
+  { id: "o1-preview", label: "o1-preview (Advanced Reasoning Preview)" },
+  { id: "gpt-4-turbo", label: "gpt-4-turbo (High Capability)" },
+  { id: "gpt-4", label: "gpt-4 (Legacy Baseline)" },
+  { id: "gpt-3.5-turbo", label: "gpt-3.5-turbo (Legacy Speed)" },
+];
+
+const DEFAULT_GEMINI_MODELS = [
+  { id: "gemini-2.5-pro", label: "gemini-2.5-pro (Flagship Reasoning & Code)" },
+  { id: "gemini-2.5-flash", label: "gemini-2.5-flash (Fast, Highly Capable)" },
+  { id: "gemini-2.0-flash", label: "gemini-2.0-flash (High-Speed Multimodal)" },
+  { id: "gemini-2.0-flash-lite", label: "gemini-2.0-flash-lite (Ultra Lightweight)" },
+  { id: "gemini-1.5-pro", label: "gemini-1.5-pro (Long Context)" },
+  { id: "gemini-1.5-flash", label: "gemini-1.5-flash (Legacy Fast)" },
+  { id: "gemini-1.5-flash-8b", label: "gemini-1.5-flash-8b (High Volume / Low Cost)" },
+];
 const DEFAULT_START = "2026-10-13T09:15";
 const DEFAULT_END = "2026-10-13T09:45";
 const METHODS = {
@@ -124,10 +148,42 @@ export default function IntegrationsPage() {
   const [compBusy, setCompBusy] = useState(false);
   const [confirmEnable, setConfirmEnable] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [confirmClearProvider, setConfirmClearProvider] = useState(null);
   const [diagStart, setDiagStart] = useState(DEFAULT_START);
   const [diagEnd, setDiagEnd] = useState(DEFAULT_END);
   const [diagConfirm, setDiagConfirm] = useState(false);
   const [diagResult, setDiagResult] = useState(null);
+  const [openaiModels, setOpenaiModels] = useState(DEFAULT_OPENAI_MODELS);
+  const [geminiModels, setGeminiModels] = useState(DEFAULT_GEMINI_MODELS);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [modelsStatusMessage, setModelsStatusMessage] = useState("");
+
+  async function refreshModels(provider, apiKey = "") {
+    setLoadingModels(true);
+    setModelsStatusMessage(`Querying live ${provider === "openai" ? "OpenAI" : "Google Gemini"} models...`);
+    try {
+      const res = await fetch(`/api/integrations/${provider}/models`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-csrf-token": csrf() },
+        body: JSON.stringify({ api_key: apiKey }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && Array.isArray(data.models)) {
+          if (provider === "openai") setOpenaiModels(data.models);
+          if (provider === "gemini") setGeminiModels(data.models);
+          setModelsStatusMessage(data.message || (data.source === "live" ? "Live models loaded" : "Catalog loaded"));
+          return data.models;
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to fetch models for", provider, e);
+      setModelsStatusMessage(`Could not query live ${provider} models; showing catalog.`);
+    } finally {
+      setLoadingModels(false);
+    }
+    return null;
+  }
 
   async function load() {
     const response = await fetch("/api/integrations");
@@ -156,7 +212,7 @@ export default function IntegrationsPage() {
     setNotice("");
     setBusy(path);
     try {
-      const method = path.endsWith("/test") || path.endsWith("/clear") || path.endsWith("/enabled") || path.endsWith("/profile") || path.endsWith("/historical-diagnostic") ? "POST" : "PUT";
+      const method = path.endsWith("/test") || path.endsWith("/clear") || path.endsWith("/disconnect") || path.endsWith("/enabled") || path.endsWith("/profile") || path.endsWith("/historical-diagnostic") ? "POST" : "PUT";
       const response = await fetch(path, {
         method,
         headers: { "content-type": "application/json", "x-csrf-token": csrf() },
@@ -171,7 +227,8 @@ export default function IntegrationsPage() {
       }
       if (path.endsWith("/test")) setNotice("Connection test finished.");
       else if (path.endsWith("/clear")) setNotice("Credentials removed.");
-      else if (path.endsWith("/enabled")) setNotice(payload.enabled ? "Integration enabled. Live trading stays off." : "Integration disabled.");
+      else if (path.endsWith("/disconnect")) setNotice("Provider disconnected. Active synchronization stopped; credentials retained.");
+      else if (path.endsWith("/enabled")) setNotice(payload?.enabled ? "Integration enabled. Live trading stays off." : "Integration disabled.");
       else if (!path.endsWith("/historical-diagnostic")) setNotice("Settings saved.");
       return body;
     } finally {
@@ -179,16 +236,32 @@ export default function IntegrationsPage() {
     }
   }
 
+  async function disconnectProvider(provider) {
+    await send(`/api/integrations/${provider}/disconnect`);
+  }
+
+  async function connectProvider(provider) {
+    await send(`/api/integrations/${provider}/enabled`, { enabled: true, confirm: true });
+  }
+
+  async function removeProvider(provider) {
+    const res = await send(`/api/integrations/${provider}/clear`);
+    if (res) {
+      setConfirmClearProvider(null);
+    }
+  }
+
   function openGroww() {
+    setError("");
     const groww = status?.groww;
     if (!groww) return;
     setGrowwDraft({
-      method: groww.auth_method || "api_key_secret",
+      method: groww.auth_method || "totp",
       enabled: groww.enabled === true,
-      apiKey: "",
-      apiSecret: "",
-      accessToken: "",
-      totpSecret: "",
+      apiKey: groww.api_key_configured ? MASK_VALUE : "",
+      apiSecret: groww.api_secret_configured ? MASK_VALUE : "",
+      accessToken: groww.access_token_configured ? MASK_VALUE : "",
+      totpSecret: groww.totp_secret_configured ? MASK_VALUE : "",
     });
     setConfirmEnable(false);
     setConfirmClear(false);
@@ -196,24 +269,28 @@ export default function IntegrationsPage() {
   }
 
   function openOpenAI() {
+    setError("");
     const openai = status?.openai;
     if (!openai) return;
     setOpenaiDraft({
-      model: openai.model || "gpt-4.1-mini",
+      model: openai.model || "gpt-4o-mini",
       label: openai.label || "",
       enabled: openai.enabled === true,
-      apiKey: "",
+      apiKey: openai.api_key_configured ? MASK_VALUE : "",
     });
     setConfirmEnable(false);
     setPanel("openai");
+    setModelsStatusMessage("");
+    refreshModels("openai", "");
   }
 
   function openUpstox() {
+    setError("");
     const upstox = status?.upstox;
     if (!upstox) return;
     setUpstoxDraft({
       enabled: upstox.enabled === true,
-      accessToken: "",
+      accessToken: upstox.access_token_configured ? MASK_VALUE : "",
       label: upstox.label || "",
     });
     setConfirmEnable(false);
@@ -221,12 +298,13 @@ export default function IntegrationsPage() {
   }
 
   function openKite() {
+    setError("");
     const kite = status?.kite;
     if (!kite) return;
     setKiteDraft({
       enabled: kite.enabled === true,
-      apiKey: "",
-      accessToken: "",
+      apiKey: kite.api_key_configured ? MASK_VALUE : "",
+      accessToken: kite.access_token_configured ? MASK_VALUE : "",
       label: kite.label || "",
     });
     setConfirmEnable(false);
@@ -234,13 +312,14 @@ export default function IntegrationsPage() {
   }
 
   function openAngelOne() {
+    setError("");
     const angelone = status?.angelone;
     if (!angelone) return;
     setAngeloneDraft({
       enabled: angelone.enabled === true,
-      apiKey: "",
-      clientCode: "",
-      jwtToken: "",
+      apiKey: angelone.api_key_configured ? MASK_VALUE : "",
+      clientCode: angelone.client_code || "",
+      jwtToken: angelone.jwt_token_configured ? MASK_VALUE : "",
       label: angelone.label || "",
     });
     setConfirmEnable(false);
@@ -248,46 +327,59 @@ export default function IntegrationsPage() {
   }
 
   function openGemini() {
+    setError("");
     const gemini = status?.gemini;
     if (!gemini) return;
     setGeminiDraft({
       enabled: gemini.enabled === true,
-      apiKey: "",
-      model: gemini.model || "gemini-1.5-pro",
+      apiKey: gemini.api_key_configured ? MASK_VALUE : "",
+      model: gemini.model || "gemini-2.5-flash",
       label: gemini.label || "",
+      customModelActive: !DEFAULT_GEMINI_MODELS.some(m => m.id === (gemini.model || "gemini-2.5-flash")),
     });
     setConfirmEnable(false);
     setPanel("gemini");
+    setModelsStatusMessage("");
+    refreshModels("gemini", "");
   }
 
   function closePanel() {
     setPanel(null);
     setConfirmEnable(false);
     setConfirmClear(false);
+    setError("");
   }
 
   async function saveGroww(event) {
     event.preventDefault();
     const groww = status.groww;
-    const secretsEntered = [growwDraft.apiKey, growwDraft.apiSecret, growwDraft.accessToken, growwDraft.totpSecret].some((value) => value.trim());
+    const hasNewSecrets = [growwDraft.apiKey, growwDraft.apiSecret, growwDraft.accessToken, growwDraft.totpSecret].some(isNewSecret);
     const plan = growwSavePlan({
       method: growwDraft.method,
-      savedMethod: groww.auth_method || "api_key_secret",
+      savedMethod: groww.auth_method || "totp",
       enabled: growwDraft.enabled,
       savedEnabled: groww.enabled === true,
-      secretsEntered,
+      secretsEntered: hasNewSecrets,
       confirmEnable,
     });
-    if (plan.blocked === "UNCHANGED") return;
-    if (plan.blocked === "CREDENTIALS_REQUIRED") {
-      setError("Local check: enter the credentials for the selected authentication method before saving.");
+    if (plan.blocked === "UNCHANGED") {
+      closePanel();
       return;
+    }
+    if (plan.blocked === "CREDENTIALS_REQUIRED") {
+      const methodConfigured = (growwDraft.method === "totp" && groww.totp_secret_configured && groww.api_key_configured) ||
+                               (growwDraft.method === "api_key_secret" && groww.api_secret_configured && groww.api_key_configured) ||
+                               (growwDraft.method === "access_token" && groww.access_token_configured);
+      if (!methodConfigured && !hasNewSecrets) {
+        setError("Local check: enter the credentials for the selected authentication method before saving.");
+        return;
+      }
     }
     if (plan.blocked === "CONFIRMATION_REQUIRED") {
       setConfirmEnable(true);
       return;
     }
-    if (plan.steps.includes("save-credentials")) {
+    if (plan.steps.includes("save-credentials") || hasNewSecrets || growwDraft.method !== (groww.auth_method || "totp")) {
       const payload = { method: growwDraft.method, label: groww.label || "" };
       if (growwDraft.method === "access_token") payload.access_token = growwDraft.accessToken;
       if (growwDraft.method === "api_key_secret") {
@@ -301,145 +393,327 @@ export default function IntegrationsPage() {
       const saved = await send("/api/integrations/groww", payload);
       if (!saved) return;
     }
-    if (plan.steps.includes("set-enabled")) {
+    if (plan.steps.includes("set-enabled") || growwDraft.enabled !== (groww.enabled === true)) {
       const saved = await send("/api/integrations/groww/enabled", { enabled: growwDraft.enabled, confirm: true });
       if (!saved) return;
     }
     closePanel();
   }
 
+  async function testGrowwInModal() {
+    const hasNewSecrets = [growwDraft.apiKey, growwDraft.apiSecret, growwDraft.accessToken, growwDraft.totpSecret].some(isNewSecret);
+    if (hasNewSecrets) {
+      const payload = { method: growwDraft.method, label: status.groww?.label || "" };
+      if (growwDraft.method === "access_token") payload.access_token = growwDraft.accessToken;
+      if (growwDraft.method === "api_key_secret") {
+        payload.api_key = growwDraft.apiKey;
+        payload.api_secret = growwDraft.apiSecret;
+      }
+      if (growwDraft.method === "totp") {
+        payload.api_key = growwDraft.apiKey;
+        payload.totp_secret = growwDraft.totpSecret;
+      }
+      const saved = await send("/api/integrations/groww", payload);
+      if (!saved) return;
+    }
+    if (!status.groww?.enabled) {
+      await send("/api/integrations/groww/enabled", { enabled: true, confirm: true });
+    }
+    await send("/api/integrations/groww/test");
+  }
+
   async function saveOpenAI(event) {
     event.preventDefault();
     const openai = status.openai;
-    const plan = openaiSavePlan({
-      model: openaiDraft.model,
-      savedModel: openai.model || "",
-      label: openaiDraft.label,
-      savedLabel: openai.label || "",
-      enabled: openaiDraft.enabled,
-      savedEnabled: openai.enabled === true,
-      keyEntered: Boolean(openaiDraft.apiKey.trim()),
-      confirmEnable,
-    });
-    if (plan.blocked === "UNCHANGED") return;
-    if (plan.blocked === "CONFIRMATION_REQUIRED") {
-      setConfirmEnable(true);
+    const keyEntered = isNewSecret(openaiDraft.apiKey);
+    if (!openai.configured && !keyEntered) {
+      setError("Enter an OpenAI API key before saving.");
       return;
     }
-    if (plan.steps.includes("save-credentials")) {
+    if (keyEntered) {
       const saved = await send("/api/integrations/openai", {
         api_key: openaiDraft.apiKey,
         model: openaiDraft.model,
         label: openaiDraft.label,
-        enabled: openai.enabled === true,
+        enabled: openaiDraft.enabled === true,
       });
       if (!saved) return;
-    }
-    if (plan.steps.includes("save-profile")) {
-      const saved = await send("/api/integrations/openai/profile", {
-        model: openaiDraft.model,
-        label: openaiDraft.label,
-        confirm: true,
-      });
-      if (!saved) return;
-    }
-    if (plan.steps.includes("set-enabled")) {
-      const saved = await send("/api/integrations/openai/enabled", { enabled: openaiDraft.enabled, confirm: true });
-      if (!saved) return;
+    } else {
+      if (openaiDraft.model !== (openai.model || "") || openaiDraft.label !== (openai.label || "")) {
+        const saved = await send("/api/integrations/openai/profile", {
+          model: openaiDraft.model,
+          label: openaiDraft.label,
+          confirm: true,
+        });
+        if (!saved) return;
+      }
+      if (openaiDraft.enabled !== (openai.enabled === true)) {
+        if (!confirmEnable) {
+          setConfirmEnable(true);
+          return;
+        }
+        const saved = await send("/api/integrations/openai/enabled", { enabled: openaiDraft.enabled, confirm: true });
+        if (!saved) return;
+      }
     }
     closePanel();
+  }
+
+  async function testOpenAIInModal() {
+    const keyEntered = isNewSecret(openaiDraft.apiKey);
+    if (keyEntered) {
+      const saved = await send("/api/integrations/openai", {
+        api_key: openaiDraft.apiKey,
+        model: openaiDraft.model,
+        label: openaiDraft.label,
+        enabled: true,
+      });
+      if (!saved) return;
+      setOpenaiDraft((prev) => ({ ...prev, enabled: true, apiKey: MASK_VALUE }));
+    } else {
+      if (!status.openai?.enabled) {
+        const saved = await send("/api/integrations/openai/enabled", { enabled: true, confirm: true });
+        if (!saved) return;
+      }
+      if (openaiDraft.model !== (status.openai?.model || "gpt-4o-mini")) {
+        const saved = await send("/api/integrations/openai/profile", {
+          model: openaiDraft.model,
+          label: openaiDraft.label,
+          confirm: true,
+        });
+        if (!saved) return;
+      }
+    }
+    await send("/api/integrations/openai/test");
   }
 
   async function saveUpstox(event) {
     event.preventDefault();
-    if (upstoxDraft.accessToken.trim()) {
+    const upstox = status.upstox;
+    const tokenEntered = Boolean(upstoxDraft.accessToken.trim());
+    if (!upstox.configured && !tokenEntered) {
+      setError("Enter an Upstox access token before saving.");
+      return;
+    }
+    if (tokenEntered) {
       const saved = await send("/api/integrations/upstox", {
         access_token: upstoxDraft.accessToken,
         label: upstoxDraft.label,
-        enabled: status.upstox?.enabled === true,
+        enabled: upstoxDraft.enabled === true,
       });
       if (!saved) return;
-    }
-    if (upstoxDraft.enabled !== (status.upstox?.enabled === true)) {
-      const saved = await send("/api/integrations/upstox/enabled", {
-        enabled: upstoxDraft.enabled,
-        confirm: true,
-      });
-      if (!saved) return;
+    } else {
+      if (upstoxDraft.label !== (upstox?.label || "")) {
+        const saved = await send("/api/integrations/upstox/profile", {
+          label: upstoxDraft.label,
+          confirm: true,
+        });
+        if (!saved) return;
+      }
+      if (upstoxDraft.enabled !== (upstox?.enabled === true)) {
+        const saved = await send("/api/integrations/upstox/enabled", {
+          enabled: upstoxDraft.enabled,
+          confirm: true,
+        });
+        if (!saved) return;
+      }
     }
     closePanel();
+  }
+
+  async function testUpstoxInModal() {
+    const tokenEntered = isNewSecret(upstoxDraft.accessToken);
+    if (tokenEntered) {
+      const saved = await send("/api/integrations/upstox", {
+        access_token: upstoxDraft.accessToken,
+        label: upstoxDraft.label,
+        enabled: true,
+      });
+      if (!saved) return;
+      setUpstoxDraft((prev) => ({ ...prev, enabled: true, accessToken: MASK_VALUE }));
+    } else {
+      if (!status.upstox?.enabled) {
+        const saved = await send("/api/integrations/upstox/enabled", { enabled: true, confirm: true });
+        if (!saved) return;
+      }
+    }
+    await send("/api/integrations/upstox/test");
   }
 
   async function saveKite(event) {
     event.preventDefault();
-    if (kiteDraft.apiKey.trim() || kiteDraft.accessToken.trim()) {
+    const kite = status.kite;
+    const credsEntered = isNewSecret(kiteDraft.apiKey) || isNewSecret(kiteDraft.accessToken);
+    if (!kite.configured && !credsEntered) {
+      setError("Enter Kite API Key and Access Token before saving.");
+      return;
+    }
+    if (credsEntered) {
       const saved = await send("/api/integrations/kite", {
         api_key: kiteDraft.apiKey,
         access_token: kiteDraft.accessToken,
         label: kiteDraft.label,
-        enabled: status.kite?.enabled === true,
+        enabled: kiteDraft.enabled === true,
       });
       if (!saved) return;
-    }
-    if (kiteDraft.enabled !== (status.kite?.enabled === true)) {
-      const saved = await send("/api/integrations/kite/enabled", {
-        enabled: kiteDraft.enabled,
-        confirm: true,
-      });
-      if (!saved) return;
+    } else {
+      if (kiteDraft.label !== (kite?.label || "")) {
+        const saved = await send("/api/integrations/kite/profile", {
+          label: kiteDraft.label,
+          confirm: true,
+        });
+        if (!saved) return;
+      }
+      if (kiteDraft.enabled !== (kite?.enabled === true)) {
+        const saved = await send("/api/integrations/kite/enabled", {
+          enabled: kiteDraft.enabled,
+          confirm: true,
+        });
+        if (!saved) return;
+      }
     }
     closePanel();
   }
 
+  async function testKiteInModal() {
+    const credsEntered = isNewSecret(kiteDraft.apiKey) || isNewSecret(kiteDraft.accessToken);
+    if (credsEntered) {
+      const saved = await send("/api/integrations/kite", {
+        api_key: kiteDraft.apiKey,
+        access_token: kiteDraft.accessToken,
+        label: kiteDraft.label,
+        enabled: true,
+      });
+      if (!saved) return;
+      setKiteDraft((prev) => ({ ...prev, enabled: true, apiKey: MASK_VALUE, accessToken: MASK_VALUE }));
+    } else {
+      if (!status.kite?.enabled) {
+        const saved = await send("/api/integrations/kite/enabled", { enabled: true, confirm: true });
+        if (!saved) return;
+      }
+    }
+    await send("/api/integrations/kite/test");
+  }
+
   async function saveAngelOne(event) {
     event.preventDefault();
-    if (angeloneDraft.apiKey.trim() || angeloneDraft.jwtToken.trim() || angeloneDraft.clientCode.trim()) {
+    const angelone = status.angelone;
+    const credsEntered = isNewSecret(angeloneDraft.apiKey) || isNewSecret(angeloneDraft.jwtToken) || (angeloneDraft.clientCode.trim() && !hasMask(angeloneDraft.clientCode));
+    if (!angelone.configured && !credsEntered) {
+      setError("Enter Angel One API Key, Client Code, and JWT Token before saving.");
+      return;
+    }
+    if (credsEntered) {
       const saved = await send("/api/integrations/angelone", {
         api_key: angeloneDraft.apiKey,
         client_code: angeloneDraft.clientCode,
         jwt_token: angeloneDraft.jwtToken,
         label: angeloneDraft.label,
-        enabled: status.angelone?.enabled === true,
+        enabled: angeloneDraft.enabled === true,
       });
       if (!saved) return;
-    }
-    if (angeloneDraft.enabled !== (status.angelone?.enabled === true)) {
-      const saved = await send("/api/integrations/angelone/enabled", {
-        enabled: angeloneDraft.enabled,
-        confirm: true,
-      });
-      if (!saved) return;
+    } else {
+      if (angeloneDraft.label !== (angelone?.label || "")) {
+        const saved = await send("/api/integrations/angelone/profile", {
+          label: angeloneDraft.label,
+          confirm: true,
+        });
+        if (!saved) return;
+      }
+      if (angeloneDraft.enabled !== (angelone?.enabled === true)) {
+        const saved = await send("/api/integrations/angelone/enabled", {
+          enabled: angeloneDraft.enabled,
+          confirm: true,
+        });
+        if (!saved) return;
+      }
     }
     closePanel();
   }
 
+  async function testAngelOneInModal() {
+    const credsEntered = isNewSecret(angeloneDraft.apiKey) || isNewSecret(angeloneDraft.jwtToken);
+    if (credsEntered) {
+      const saved = await send("/api/integrations/angelone", {
+        api_key: angeloneDraft.apiKey,
+        client_code: angeloneDraft.clientCode,
+        jwt_token: angeloneDraft.jwtToken,
+        label: angeloneDraft.label,
+        enabled: true,
+      });
+      if (!saved) return;
+      setAngeloneDraft((prev) => ({ ...prev, enabled: true, apiKey: MASK_VALUE, jwtToken: MASK_VALUE }));
+    } else {
+      if (!status.angelone?.enabled) {
+        const saved = await send("/api/integrations/angelone/enabled", { enabled: true, confirm: true });
+        if (!saved) return;
+      }
+    }
+    await send("/api/integrations/angelone/test");
+  }
+
   async function saveGemini(event) {
-    event.preventDefault();
-    if (geminiDraft.apiKey.trim()) {
+    if (event) event.preventDefault();
+    const gemini = status.gemini;
+    const keyEntered = isNewSecret(geminiDraft.apiKey);
+    if (!gemini.configured && !keyEntered) {
+      setError("Enter a Gemini API key before saving.");
+      return;
+    }
+    if (keyEntered) {
       const saved = await send("/api/integrations/gemini", {
         api_key: geminiDraft.apiKey,
         model: geminiDraft.model,
         label: geminiDraft.label,
-        enabled: status.gemini?.enabled === true,
+        enabled: geminiDraft.enabled === true,
       });
       if (!saved) return;
-    }
-    if (geminiDraft.model !== (status.gemini?.model || "gemini-1.5-pro")) {
-      const saved = await send("/api/integrations/gemini/profile", {
-        model: geminiDraft.model,
-        label: geminiDraft.label,
-        confirm: true,
-      });
-      if (!saved) return;
-    }
-    if (geminiDraft.enabled !== (status.gemini?.enabled === true)) {
-      const saved = await send("/api/integrations/gemini/enabled", {
-        enabled: geminiDraft.enabled,
-        confirm: true,
-      });
-      if (!saved) return;
+    } else {
+      if (geminiDraft.model !== (gemini?.model || "gemini-2.5-flash") || geminiDraft.label !== (gemini?.label || "")) {
+        const saved = await send("/api/integrations/gemini/profile", {
+          model: geminiDraft.model,
+          label: geminiDraft.label,
+          confirm: true,
+        });
+        if (!saved) return;
+      }
+      if (geminiDraft.enabled !== (gemini?.enabled === true)) {
+        const saved = await send("/api/integrations/gemini/enabled", {
+          enabled: geminiDraft.enabled,
+          confirm: true,
+        });
+        if (!saved) return;
+      }
     }
     closePanel();
+  }
+
+  async function testGeminiInModal() {
+    const keyEntered = isNewSecret(geminiDraft.apiKey);
+    if (keyEntered) {
+      const saved = await send("/api/integrations/gemini", {
+        api_key: geminiDraft.apiKey,
+        model: geminiDraft.model,
+        label: geminiDraft.label,
+        enabled: true,
+      });
+      if (!saved) return;
+      setGeminiDraft((prev) => ({ ...prev, enabled: true, apiKey: MASK_VALUE }));
+    } else {
+      if (!status.gemini?.enabled) {
+        const saved = await send("/api/integrations/gemini/enabled", { enabled: true, confirm: true });
+        if (!saved) return;
+      }
+      if (geminiDraft.model !== (status.gemini?.model || "gemini-2.5-flash")) {
+        const saved = await send("/api/integrations/gemini/profile", {
+          model: geminiDraft.model,
+          label: geminiDraft.label,
+          confirm: true,
+        });
+        if (!saved) return;
+      }
+    }
+    await send("/api/integrations/gemini/test");
   }
 
   async function saveAgentConfig(event) {
@@ -614,6 +888,9 @@ export default function IntegrationsPage() {
                 enabled={groww.enabled}
                 configured={groww.configured}
                 connection={groww.last_test_ok}
+                lifecycleState={groww.lifecycle_state}
+                capabilities={groww.capabilities}
+                lastError={groww.last_test_ok === false ? groww.last_test_message : ""}
                 extraBadge={expiryLabel(groww.token_status?.status)}
                 extraKind={groww.token_status?.status === "VALID" ? "ok" : groww.token_status?.status === "EXPIRED" ? "bad" : "wait"}
                 historyBadge={historicalLabel(groww.permissions?.historical_candles)}
@@ -626,7 +903,17 @@ export default function IntegrationsPage() {
                 details={`${groww.connectivity?.endpoint || "No endpoint recorded"}. ${groww.connectivity?.does_not_prove || ""}`}
                 busy={busy}
                 onConfigure={openGroww}
-                onTest={() => send("/api/integrations/groww/test")}
+                onTest={async () => {
+                  setError("");
+                  if (!groww.enabled) {
+                    const enabled = await send("/api/integrations/groww/enabled", { enabled: true, confirm: true });
+                    if (!enabled) return;
+                  }
+                  await send("/api/integrations/groww/test");
+                }}
+                onConnect={() => connectProvider("groww")}
+                onDisconnect={() => disconnectProvider("groww")}
+                onRemove={() => setConfirmClearProvider("groww")}
                 onDiagnostics={() => document.getElementById("groww-diagnostics")?.scrollIntoView({ behavior: "smooth", block: "start" })}
               />
             ) : null}
@@ -639,6 +926,9 @@ export default function IntegrationsPage() {
                 enabled={kite.enabled}
                 configured={kite.configured}
                 connection={kite.last_test_ok}
+                lifecycleState={kite.lifecycle_state}
+                capabilities={kite.capabilities}
+                lastError={kite.last_test_ok === false ? kite.last_test_message : ""}
                 historyBadge="Historical Candles: /instruments/historical"
                 historyKind={kite.configured ? "ok" : "wait"}
                 facts={[
@@ -649,8 +939,17 @@ export default function IntegrationsPage() {
                 details={`${kite.connectivity?.endpoint || "api.kite.trade"}. Credentials are securely encrypted.`}
                 busy={busy}
                 onConfigure={openKite}
-                onTest={() => send("/api/integrations/kite/test")}
-                testDisabled={!kite.enabled}
+                onTest={async () => {
+                  if (!kite.enabled) {
+                    const enabled = await send("/api/integrations/kite/enabled", { enabled: true, confirm: true });
+                    if (!enabled) return;
+                  }
+                  await send("/api/integrations/kite/test");
+                }}
+                onConnect={() => connectProvider("kite")}
+                onDisconnect={() => disconnectProvider("kite")}
+                onRemove={() => setConfirmClearProvider("kite")}
+                testDisabled={!kite.configured}
               />
             ) : null}
 
@@ -662,6 +961,9 @@ export default function IntegrationsPage() {
                 enabled={upstox.enabled}
                 configured={upstox.configured}
                 connection={upstox.last_test_ok}
+                lifecycleState={upstox.lifecycle_state}
+                capabilities={upstox.capabilities}
+                lastError={upstox.last_test_ok === false ? upstox.last_test_message : ""}
                 historyBadge="Historical Candles: /v2/historical-candle"
                 historyKind={upstox.configured ? "ok" : "wait"}
                 facts={[
@@ -672,8 +974,17 @@ export default function IntegrationsPage() {
                 details={`${upstox.connectivity?.endpoint || "api.upstox.com/v2"}. Bearer token authenticated.`}
                 busy={busy}
                 onConfigure={openUpstox}
-                onTest={() => send("/api/integrations/upstox/test")}
-                testDisabled={!upstox.enabled}
+                onTest={async () => {
+                  if (!upstox.enabled) {
+                    const enabled = await send("/api/integrations/upstox/enabled", { enabled: true, confirm: true });
+                    if (!enabled) return;
+                  }
+                  await send("/api/integrations/upstox/test");
+                }}
+                onConnect={() => connectProvider("upstox")}
+                onDisconnect={() => disconnectProvider("upstox")}
+                onRemove={() => setConfirmClearProvider("upstox")}
+                testDisabled={!upstox.configured}
               />
             ) : null}
 
@@ -685,6 +996,9 @@ export default function IntegrationsPage() {
                 enabled={angelone.enabled}
                 configured={angelone.configured}
                 connection={angelone.last_test_ok}
+                lifecycleState={angelone.lifecycle_state}
+                capabilities={angelone.capabilities}
+                lastError={angelone.last_test_ok === false ? angelone.last_test_message : ""}
                 historyBadge="Historical Candles: /getCandleData"
                 historyKind={angelone.configured ? "ok" : "wait"}
                 facts={[
@@ -695,8 +1009,17 @@ export default function IntegrationsPage() {
                 details={`${angelone.connectivity?.endpoint || "apiconnect.angelone.in"}. JWT & PrivateKey authenticated.`}
                 busy={busy}
                 onConfigure={openAngelOne}
-                onTest={() => send("/api/integrations/angelone/test")}
-                testDisabled={!angelone.enabled}
+                onTest={async () => {
+                  if (!angelone.enabled) {
+                    const enabled = await send("/api/integrations/angelone/enabled", { enabled: true, confirm: true });
+                    if (!enabled) return;
+                  }
+                  await send("/api/integrations/angelone/test");
+                }}
+                onConnect={() => connectProvider("angelone")}
+                onDisconnect={() => disconnectProvider("angelone")}
+                onRemove={() => setConfirmClearProvider("angelone")}
+                testDisabled={!angelone.configured}
               />
             ) : null}
 
@@ -708,6 +1031,9 @@ export default function IntegrationsPage() {
                 enabled={openai.enabled}
                 configured={openai.configured}
                 connection={openai.last_test_ok}
+                lifecycleState={openai.lifecycle_state}
+                capabilities={openai.capabilities}
+                lastError={openai.last_test_ok === false ? openai.last_test_message : ""}
                 facts={[
                   ["Last test", `${connectionLabel(openai.last_test_ok)} · ${when(openai.last_test_at)}`],
                   ["Model", openai.model || "None"],
@@ -716,8 +1042,17 @@ export default function IntegrationsPage() {
                 details={`${openai.connectivity?.endpoint || "api.openai.com"}. ${openai.connectivity?.does_not_prove || ""}`}
                 busy={busy}
                 onConfigure={openOpenAI}
-                onTest={() => send("/api/integrations/openai/test")}
-                testDisabled={!openai.enabled}
+                onTest={async () => {
+                  if (!openai.enabled) {
+                    const enabled = await send("/api/integrations/openai/enabled", { enabled: true, confirm: true });
+                    if (!enabled) return;
+                  }
+                  await send("/api/integrations/openai/test");
+                }}
+                onConnect={() => connectProvider("openai")}
+                onDisconnect={() => disconnectProvider("openai")}
+                onRemove={() => setConfirmClearProvider("openai")}
+                testDisabled={!openai.configured}
               />
             ) : null}
 
@@ -725,20 +1060,32 @@ export default function IntegrationsPage() {
               <ProviderCard
                 mark={<GeminiMark />}
                 name="Google Gemini"
-                detail={gemini.model || "gemini-1.5-pro"}
+                detail={gemini.model || "gemini-2.5-flash"}
                 enabled={gemini.enabled}
                 configured={gemini.configured}
                 connection={gemini.last_test_ok}
+                lifecycleState={gemini.lifecycle_state}
+                capabilities={gemini.capabilities}
+                lastError={gemini.last_test_ok === false ? gemini.last_test_message : ""}
                 facts={[
                   ["Last test", `${connectionLabel(gemini.last_test_ok)} · ${when(gemini.last_test_at)}`],
-                  ["Model", gemini.model || "gemini-1.5-pro"],
+                  ["Model", gemini.model || "gemini-2.5-flash"],
                 ]}
                 detailsTitle="Connection details"
                 details={`${gemini.connectivity?.endpoint || "generativelanguage.googleapis.com"}. Google AI API.`}
                 busy={busy}
                 onConfigure={openGemini}
-                onTest={() => send("/api/integrations/gemini/test")}
-                testDisabled={!gemini.enabled}
+                onTest={async () => {
+                  if (!gemini.enabled) {
+                    const enabled = await send("/api/integrations/gemini/enabled", { enabled: true, confirm: true });
+                    if (!enabled) return;
+                  }
+                  await send("/api/integrations/gemini/test");
+                }}
+                onConnect={() => connectProvider("gemini")}
+                onDisconnect={() => disconnectProvider("gemini")}
+                onRemove={() => setConfirmClearProvider("gemini")}
+                testDisabled={!gemini.configured}
               />
             ) : null}
           </div>
@@ -805,31 +1152,23 @@ export default function IntegrationsPage() {
                 {Object.entries(agentsConfig.agents).map(([role, cfg]) => (
                   <tr key={role} style={{ borderBottom: "1px solid #2a2a30" }}>
                     <td style={{ padding: "8px", fontWeight: "bold" }}>
-                      {role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                      {cfg.display_name || role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
                     </td>
                     <td style={{ padding: "8px" }}>
                       <select
-                        value={cfg.provider}
-                        onChange={(e) => {
-                          const updated = { ...agentsConfig };
-                          updated.agents[role].provider = e.target.value;
-                          setAgentsConfig(updated);
-                        }}
+                        value={cfg.provider === "google" ? "gemini" : (cfg.provider || "openai")}
+                        onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], provider: e.target.value } } }))}
                         style={{ padding: "4px 6px" }}
                       >
                         <option value="openai">OpenAI</option>
-                        <option value="google">Google Gemini</option>
+                        <option value="gemini">Google Gemini</option>
                       </select>
                     </td>
                     <td style={{ padding: "8px" }}>
                       <input
                         type="text"
-                        value={cfg.model_id}
-                        onChange={(e) => {
-                          const updated = { ...agentsConfig };
-                          updated.agents[role].model_id = e.target.value;
-                          setAgentsConfig(updated);
-                        }}
+                        value={cfg.model ?? cfg.model_id ?? ""}
+                        onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], model: e.target.value } } }))}
                         style={{ width: "130px", padding: "4px 6px" }}
                       />
                     </td>
@@ -838,13 +1177,9 @@ export default function IntegrationsPage() {
                         type="number"
                         step="0.05"
                         min="0"
-                        max="1"
-                        value={cfg.temperature}
-                        onChange={(e) => {
-                          const updated = { ...agentsConfig };
-                          updated.agents[role].temperature = parseFloat(e.target.value) || 0;
-                          setAgentsConfig(updated);
-                        }}
+                        max="2"
+                        value={cfg.temperature ?? 0}
+                        onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], temperature: parseFloat(e.target.value) || 0 } } }))}
                         style={{ width: "60px", padding: "4px 6px" }}
                       />
                     </td>
@@ -852,54 +1187,38 @@ export default function IntegrationsPage() {
                       <input
                         type="number"
                         step="100"
-                        min="256"
-                        max="8192"
-                        value={cfg.max_output_tokens}
-                        onChange={(e) => {
-                          const updated = { ...agentsConfig };
-                          updated.agents[role].max_output_tokens = parseInt(e.target.value, 10) || 1024;
-                          setAgentsConfig(updated);
-                        }}
+                        min="100"
+                        max="8000"
+                        value={cfg.max_tokens ?? cfg.max_output_tokens ?? 1000}
+                        onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], max_tokens: parseInt(e.target.value, 10) || 1000 } } }))}
                         style={{ width: "70px", padding: "4px 6px" }}
                       />
                     </td>
                     <td style={{ padding: "8px" }}>
                       <select
-                        value={cfg.fallback_provider || ""}
-                        onChange={(e) => {
-                          const updated = { ...agentsConfig };
-                          updated.agents[role].fallback_provider = e.target.value || null;
-                          setAgentsConfig(updated);
-                        }}
+                        value={cfg.fallback_provider === "google" ? "gemini" : (cfg.fallback_provider || "")}
+                        onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], fallback_provider: e.target.value || null } } }))}
                         style={{ padding: "4px 6px" }}
                       >
                         <option value="">None</option>
                         <option value="openai">OpenAI</option>
-                        <option value="google">Google Gemini</option>
+                        <option value="gemini">Google Gemini</option>
                       </select>
                     </td>
                     <td style={{ padding: "8px" }}>
                       <input
                         type="text"
-                        value={cfg.fallback_model_id || ""}
+                        value={cfg.fallback_model ?? cfg.fallback_model_id ?? ""}
                         placeholder="Fallback Model"
-                        onChange={(e) => {
-                          const updated = { ...agentsConfig };
-                          updated.agents[role].fallback_model_id = e.target.value || null;
-                          setAgentsConfig(updated);
-                        }}
+                        onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], fallback_model: e.target.value || null } } }))}
                         style={{ width: "130px", padding: "4px 6px" }}
                       />
                     </td>
                     <td style={{ padding: "8px", textAlign: "center" }}>
                       <input
                         type="checkbox"
-                        checked={cfg.enabled}
-                        onChange={(e) => {
-                          const updated = { ...agentsConfig };
-                          updated.agents[role].enabled = e.target.checked;
-                          setAgentsConfig(updated);
-                        }}
+                        checked={Boolean(cfg.enabled)}
+                        onChange={(e) => setAgentsConfig((prev) => ({ ...prev, agents: { ...prev.agents, [role]: { ...prev.agents[role], enabled: e.target.checked } } }))}
                       />
                     </td>
                   </tr>
@@ -960,18 +1279,18 @@ export default function IntegrationsPage() {
                       {mName.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
                     </td>
                     <td style={{ padding: "8px" }}>
-                      {(evalData.mean_directional_accuracy * 100).toFixed(1)}%
+                      {evalData.mean_directional_accuracy != null ? `${(evalData.mean_directional_accuracy * 100).toFixed(1)}%` : "—"}
                     </td>
                     <td style={{ padding: "8px" }}>
-                      {(evalData.mean_balanced_accuracy * 100).toFixed(1)}%
+                      {evalData.mean_balanced_accuracy != null ? `${(evalData.mean_balanced_accuracy * 100).toFixed(1)}%` : "—"}
                     </td>
                     <td style={{ padding: "8px" }}>
-                      {evalData.mean_brier_score !== null ? evalData.mean_brier_score.toFixed(4) : "—"}
+                      {evalData.mean_brier_score != null ? evalData.mean_brier_score.toFixed(4) : "—"}
                     </td>
                     <td style={{ padding: "8px" }}>
                       {compResult.baseline_comparisons && compResult.baseline_comparisons[mName] ? (
                         <span>
-                          vs Majority: {(compResult.baseline_comparisons[mName].accuracy_vs_majority_diff * 100).toFixed(1)}% | vs Last Return: {(compResult.baseline_comparisons[mName].accuracy_vs_last_return_diff * 100).toFixed(1)}%
+                          vs Majority: {compResult.baseline_comparisons[mName].accuracy_vs_majority_diff != null ? `${(compResult.baseline_comparisons[mName].accuracy_vs_majority_diff * 100).toFixed(1)}%` : "—"} | vs Last Return: {compResult.baseline_comparisons[mName].accuracy_vs_last_return_diff != null ? `${(compResult.baseline_comparisons[mName].accuracy_vs_last_return_diff * 100).toFixed(1)}%` : "—"}
                         </span>
                       ) : "Baseline Anchor"}
                     </td>
@@ -1089,37 +1408,99 @@ export default function IntegrationsPage() {
             <div className="status-line"><span>API key</span><b>{secretIndicator(groww.api_key_configured)}</b></div>
             {growwDraft.method !== "access_token" ? (
               <label>
-                Replace API key
-                <input type="password" autoComplete="off" value={growwDraft.apiKey} placeholder={groww.api_key_configured ? "Saved · hidden" : "Enter API key"} onChange={(event) => setGrowwDraft({ ...growwDraft, apiKey: event.target.value })} />
+                API key {groww.api_key_configured ? <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: "normal" }}>(masked)</span> : null}
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={growwDraft.apiKey}
+                  placeholder={groww.api_key_configured ? "Saved · masked" : "Enter API key"}
+                  onFocus={(e) => { if (e.target.value.includes("•")) e.target.select(); }}
+                  onChange={(event) => setGrowwDraft({ ...growwDraft, apiKey: event.target.value })}
+                />
               </label>
             ) : null}
             <div className="status-line"><span>API secret</span><b>{secretIndicator(groww.api_secret_configured)}</b></div>
             {growwDraft.method === "api_key_secret" ? (
               <label>
-                Replace API secret
-                <input type="password" autoComplete="off" value={growwDraft.apiSecret} placeholder={groww.api_secret_configured ? "Saved · hidden" : "Enter API secret"} onChange={(event) => setGrowwDraft({ ...growwDraft, apiSecret: event.target.value })} />
+                API secret {groww.api_secret_configured ? <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: "normal" }}>(masked)</span> : null}
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={growwDraft.apiSecret}
+                  placeholder={groww.api_secret_configured ? "Saved · masked" : "Enter API secret"}
+                  onFocus={(e) => { if (e.target.value.includes("•")) e.target.select(); }}
+                  onChange={(event) => setGrowwDraft({ ...growwDraft, apiSecret: event.target.value })}
+                />
               </label>
             ) : null}
             <div className="status-line"><span>Access token</span><b>{secretIndicator(groww.access_token_configured)}</b></div>
             <div className="status-line"><span>Token expiry</span><b>{groww.token_status?.display_ist || "Not available"} · {expiryLabel(groww.token_status?.status)}</b></div>
             {growwDraft.method === "access_token" ? (
               <label>
-                Replace access token
-                <input type="password" autoComplete="off" value={growwDraft.accessToken} placeholder={groww.access_token_configured ? "Saved · hidden" : "Enter access token"} onChange={(event) => setGrowwDraft({ ...growwDraft, accessToken: event.target.value })} />
+                Access token {groww.access_token_configured ? <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: "normal" }}>(masked)</span> : null}
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={growwDraft.accessToken}
+                  placeholder={groww.access_token_configured ? "Saved · masked" : "Enter access token"}
+                  onFocus={(e) => { if (e.target.value.includes("•")) e.target.select(); }}
+                  onChange={(event) => setGrowwDraft({ ...growwDraft, accessToken: event.target.value })}
+                />
               </label>
             ) : null}
             <div className="status-line"><span>TOTP secret</span><b>{secretIndicator(groww.totp_secret_configured)}</b></div>
             {growwDraft.method === "totp" ? (
               <label>
-                Replace TOTP secret
-                <input type="password" autoComplete="off" value={growwDraft.totpSecret} placeholder={groww.totp_secret_configured ? "Saved · hidden" : "Enter TOTP secret"} onChange={(event) => setGrowwDraft({ ...growwDraft, totpSecret: event.target.value })} />
+                TOTP secret {groww.totp_secret_configured ? <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: "normal" }}>(masked)</span> : null}
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={growwDraft.totpSecret}
+                  placeholder={groww.totp_secret_configured ? "Saved · masked" : "Enter TOTP secret"}
+                  onFocus={(e) => { if (e.target.value.includes("•")) e.target.select(); }}
+                  onChange={(event) => setGrowwDraft({ ...growwDraft, totpSecret: event.target.value })}
+                />
               </label>
             ) : null}
             {confirmEnable ? <p className="note">Confirm to {growwDraft.enabled ? "enable" : "disable"} Groww. Enabling lets the app use stored credentials. Live trading stays off, and endpoint access is not guaranteed.</p> : null}
+            <p className="note" style={{ fontSize: "0.8rem", color: "var(--muted)", margin: "8px 0" }}>
+              💡 <strong>Disconnect vs Remove:</strong> Disconnect suspends active synchronization while keeping your encrypted credentials safe for later reconnection. Remove permanently deletes all stored credentials.
+            </p>
             <div className="actions">
               <button className="primary" type="submit" disabled={Boolean(busy)}>{confirmEnable ? "Confirm and save" : "Save changes"}</button>
-              <button type="button" onClick={() => send("/api/integrations/groww/test")} disabled={Boolean(busy)}>Test connection</button>
-              <button className="danger" type="button" onClick={async () => { if (!confirmClear) { setConfirmClear(true); return; } if (await send("/api/integrations/groww/clear")) closePanel(); }} disabled={Boolean(busy)}>{confirmClear ? "Confirm removal" : "Remove credentials"}</button>
+              <button
+                type="button"
+                onClick={testGrowwInModal}
+                disabled={Boolean(busy) || (!groww.configured && ![growwDraft.apiKey, growwDraft.apiSecret, growwDraft.accessToken, growwDraft.totpSecret].some((v) => v.trim()))}
+                title={(!groww.configured && ![growwDraft.apiKey, growwDraft.apiSecret, growwDraft.accessToken, growwDraft.totpSecret].some((v) => v.trim())) ? "Enter credentials first" : "Save and test Groww margin connection"}
+              >
+                Test connection
+              </button>
+              {groww.enabled ? (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await disconnectProvider("groww");
+                    closePanel();
+                  }}
+                  disabled={Boolean(busy)}
+                >
+                  Disconnect
+                </button>
+              ) : null}
+              {groww.configured ? (
+                <button
+                  className="danger"
+                  type="button"
+                  onClick={async () => {
+                    if (!confirmClear) { setConfirmClear(true); return; }
+                    if (await send("/api/integrations/groww/clear")) closePanel();
+                  }}
+                  disabled={Boolean(busy)}
+                >
+                  {confirmClear ? "Confirm permanent removal" : "Remove credentials"}
+                </button>
+              ) : null}
             </div>
           </form>
         </div>
@@ -1138,16 +1519,58 @@ export default function IntegrationsPage() {
             </button>
             <div className="status-line"><span>Access Token</span><b>{secretIndicator(upstox.access_token_configured)}</b></div>
             <label>
-              Replace Access Token
-              <input type="password" autoComplete="off" value={upstoxDraft.accessToken} placeholder={upstox.access_token_configured ? "Saved · hidden" : "Enter Upstox access token"} onChange={(e) => setUpstoxDraft({ ...upstoxDraft, accessToken: e.target.value })} />
+              Access Token {upstox.access_token_configured ? <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: "normal" }}>(masked)</span> : null}
+              <input
+                type="password"
+                autoComplete="off"
+                value={upstoxDraft.accessToken}
+                placeholder={upstox.access_token_configured ? "Saved · masked" : "Enter Upstox access token"}
+                onFocus={(e) => { if (e.target.value.includes("•")) e.target.select(); }}
+                onChange={(e) => setUpstoxDraft({ ...upstoxDraft, accessToken: e.target.value })}
+              />
             </label>
             <label>
               Label
               <input value={upstoxDraft.label} onChange={(e) => setUpstoxDraft({ ...upstoxDraft, label: e.target.value })} />
             </label>
+            <p className="note" style={{ fontSize: "0.8rem", color: "var(--muted)", margin: "8px 0" }}>
+              💡 <strong>Disconnect vs Remove:</strong> Disconnect suspends active market-data synchronization while preserving your token. Remove permanently deletes all stored credentials.
+            </p>
             <div className="actions">
               <button className="primary" type="submit" disabled={Boolean(busy)}>Save changes</button>
-              <button type="button" onClick={() => send("/api/integrations/upstox/test")} disabled={Boolean(busy) || !upstox.enabled}>Test connection</button>
+              <button
+                type="button"
+                onClick={testUpstoxInModal}
+                disabled={Boolean(busy) || (!upstoxDraft.accessToken.trim() && !upstox.access_token_configured)}
+                title={(!upstoxDraft.accessToken.trim() && !upstox.access_token_configured) ? "Enter access token first" : "Save and test Upstox connection"}
+              >
+                Test connection
+              </button>
+              {upstox.enabled ? (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await disconnectProvider("upstox");
+                    closePanel();
+                  }}
+                  disabled={Boolean(busy)}
+                >
+                  Disconnect
+                </button>
+              ) : null}
+              {upstox.configured ? (
+                <button
+                  className="danger"
+                  type="button"
+                  onClick={async () => {
+                    if (!confirmClear) { setConfirmClear(true); return; }
+                    if (await send("/api/integrations/upstox/clear")) closePanel();
+                  }}
+                  disabled={Boolean(busy)}
+                >
+                  {confirmClear ? "Confirm permanent removal" : "Remove credentials"}
+                </button>
+              ) : null}
             </div>
           </form>
         </div>
@@ -1166,21 +1589,70 @@ export default function IntegrationsPage() {
             </button>
             <div className="status-line"><span>API Key</span><b>{secretIndicator(kite.api_key_configured)}</b></div>
             <label>
-              Replace API Key
-              <input type="password" autoComplete="off" value={kiteDraft.apiKey} placeholder={kite.api_key_configured ? "Saved · hidden" : "Enter Kite API Key"} onChange={(e) => setKiteDraft({ ...kiteDraft, apiKey: e.target.value })} />
+              API Key {kite.api_key_configured ? <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: "normal" }}>(masked)</span> : null}
+              <input
+                type="password"
+                autoComplete="off"
+                value={kiteDraft.apiKey}
+                placeholder={kite.api_key_configured ? "Saved · masked" : "Enter Kite API Key"}
+                onFocus={(e) => { if (e.target.value.includes("•")) e.target.select(); }}
+                onChange={(e) => setKiteDraft({ ...kiteDraft, apiKey: e.target.value })}
+              />
             </label>
             <div className="status-line"><span>Access Token</span><b>{secretIndicator(kite.access_token_configured)}</b></div>
             <label>
-              Replace Access Token
-              <input type="password" autoComplete="off" value={kiteDraft.accessToken} placeholder={kite.access_token_configured ? "Saved · hidden" : "Enter Kite Access Token"} onChange={(e) => setKiteDraft({ ...kiteDraft, accessToken: e.target.value })} />
+              Access Token {kite.access_token_configured ? <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: "normal" }}>(masked)</span> : null}
+              <input
+                type="password"
+                autoComplete="off"
+                value={kiteDraft.accessToken}
+                placeholder={kite.access_token_configured ? "Saved · masked" : "Enter Kite Access Token"}
+                onFocus={(e) => { if (e.target.value.includes("•")) e.target.select(); }}
+                onChange={(e) => setKiteDraft({ ...kiteDraft, accessToken: e.target.value })}
+              />
             </label>
             <label>
               Label
               <input value={kiteDraft.label} onChange={(e) => setKiteDraft({ ...kiteDraft, label: e.target.value })} />
             </label>
+            <p className="note" style={{ fontSize: "0.8rem", color: "var(--muted)", margin: "8px 0" }}>
+              💡 <strong>Disconnect vs Remove:</strong> Disconnect suspends active market-data synchronization while preserving your credentials. Remove permanently deletes all stored credentials.
+            </p>
             <div className="actions">
               <button className="primary" type="submit" disabled={Boolean(busy)}>Save changes</button>
-              <button type="button" onClick={() => send("/api/integrations/kite/test")} disabled={Boolean(busy) || !kite.enabled}>Test connection</button>
+              <button
+                type="button"
+                onClick={testKiteInModal}
+                disabled={Boolean(busy) || ((!kiteDraft.apiKey.trim() || !kiteDraft.accessToken.trim()) && !kite.configured)}
+                title={((!kiteDraft.apiKey.trim() || !kiteDraft.accessToken.trim()) && !kite.configured) ? "Enter API Key and Access Token first" : "Save and test Kite connection"}
+              >
+                Test connection
+              </button>
+              {kite.enabled ? (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await disconnectProvider("kite");
+                    closePanel();
+                  }}
+                  disabled={Boolean(busy)}
+                >
+                  Disconnect
+                </button>
+              ) : null}
+              {kite.configured ? (
+                <button
+                  className="danger"
+                  type="button"
+                  onClick={async () => {
+                    if (!confirmClear) { setConfirmClear(true); return; }
+                    if (await send("/api/integrations/kite/clear")) closePanel();
+                  }}
+                  disabled={Boolean(busy)}
+                >
+                  {confirmClear ? "Confirm permanent removal" : "Remove credentials"}
+                </button>
+              ) : null}
             </div>
           </form>
         </div>
@@ -1199,8 +1671,15 @@ export default function IntegrationsPage() {
             </button>
             <div className="status-line"><span>API Key</span><b>{secretIndicator(angelone.api_key_configured)}</b></div>
             <label>
-              Replace API Key
-              <input type="password" autoComplete="off" value={angeloneDraft.apiKey} placeholder={angelone.api_key_configured ? "Saved · hidden" : "Enter Angel One API Key"} onChange={(e) => setAngeloneDraft({ ...angeloneDraft, apiKey: e.target.value })} />
+              API Key {angelone.api_key_configured ? <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: "normal" }}>(masked)</span> : null}
+              <input
+                type="password"
+                autoComplete="off"
+                value={angeloneDraft.apiKey}
+                placeholder={angelone.api_key_configured ? "Saved · masked" : "Enter Angel One API Key"}
+                onFocus={(e) => { if (e.target.value.includes("•")) e.target.select(); }}
+                onChange={(e) => setAngeloneDraft({ ...angeloneDraft, apiKey: e.target.value })}
+              />
             </label>
             <div className="status-line"><span>Client Code</span><b>{angelone.client_code ? "Saved" : "Missing"}</b></div>
             <label>
@@ -1209,16 +1688,58 @@ export default function IntegrationsPage() {
             </label>
             <div className="status-line"><span>JWT Token</span><b>{secretIndicator(angelone.jwt_token_configured)}</b></div>
             <label>
-              Replace JWT Token
-              <input type="password" autoComplete="off" value={angeloneDraft.jwtToken} placeholder={angelone.jwt_token_configured ? "Saved · hidden" : "Enter JWT Token"} onChange={(e) => setAngeloneDraft({ ...angeloneDraft, jwtToken: e.target.value })} />
+              JWT Token {angelone.jwt_token_configured ? <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: "normal" }}>(masked)</span> : null}
+              <input
+                type="password"
+                autoComplete="off"
+                value={angeloneDraft.jwtToken}
+                placeholder={angelone.jwt_token_configured ? "Saved · masked" : "Enter JWT Token"}
+                onFocus={(e) => { if (e.target.value.includes("•")) e.target.select(); }}
+                onChange={(e) => setAngeloneDraft({ ...angeloneDraft, jwtToken: e.target.value })}
+              />
             </label>
             <label>
               Label
               <input value={angeloneDraft.label} onChange={(e) => setAngeloneDraft({ ...angeloneDraft, label: e.target.value })} />
             </label>
+            <p className="note" style={{ fontSize: "0.8rem", color: "var(--muted)", margin: "8px 0" }}>
+              💡 <strong>Disconnect vs Remove:</strong> Disconnect suspends active market-data synchronization while preserving your credentials. Remove permanently deletes all stored credentials.
+            </p>
             <div className="actions">
               <button className="primary" type="submit" disabled={Boolean(busy)}>Save changes</button>
-              <button type="button" onClick={() => send("/api/integrations/angelone/test")} disabled={Boolean(busy) || !angelone.enabled}>Test connection</button>
+              <button
+                type="button"
+                onClick={testAngelOneInModal}
+                disabled={Boolean(busy) || ((!angeloneDraft.apiKey.trim() || !angeloneDraft.jwtToken.trim()) && !angelone.configured)}
+                title={((!angeloneDraft.apiKey.trim() || !angeloneDraft.jwtToken.trim()) && !angelone.configured) ? "Enter API Key and JWT Token first" : "Save and test Angel One connection"}
+              >
+                Test connection
+              </button>
+              {angelone.enabled ? (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await disconnectProvider("angelone");
+                    closePanel();
+                  }}
+                  disabled={Boolean(busy)}
+                >
+                  Disconnect
+                </button>
+              ) : null}
+              {angelone.configured ? (
+                <button
+                  className="danger"
+                  type="button"
+                  onClick={async () => {
+                    if (!confirmClear) { setConfirmClear(true); return; }
+                    if (await send("/api/integrations/angelone/clear")) closePanel();
+                  }}
+                  disabled={Boolean(busy)}
+                >
+                  {confirmClear ? "Confirm permanent removal" : "Remove credentials"}
+                </button>
+              ) : null}
             </div>
           </form>
         </div>
@@ -1237,22 +1758,106 @@ export default function IntegrationsPage() {
             </button>
             <div className="status-line"><span>API key</span><b>{secretIndicator(gemini.api_key_configured)}</b></div>
             <label>
-              Replace API key
-              <input type="password" autoComplete="off" value={geminiDraft.apiKey} placeholder={gemini.api_key_configured ? "Saved · hidden" : "Enter Gemini API key"} onChange={(e) => setGeminiDraft({ ...geminiDraft, apiKey: e.target.value })} />
+              API key {gemini.api_key_configured ? <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: "normal" }}>(masked)</span> : null}
+              <input
+                type="password"
+                autoComplete="off"
+                value={geminiDraft.apiKey}
+                placeholder={gemini.api_key_configured ? "Saved · masked" : "Enter Gemini API key"}
+                onFocus={(e) => { if (e.target.value.includes("•")) e.target.select(); }}
+                onChange={(e) => setGeminiDraft({ ...geminiDraft, apiKey: e.target.value })}
+              />
             </label>
-            <label>
-              Model
-              <select value={geminiDraft.model} onChange={(e) => setGeminiDraft({ ...geminiDraft, model: e.target.value })}>
-                {GEMINI_MODELS.map((item) => <option key={item} value={item}>{item}</option>)}
-              </select>
-            </label>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "10px" }}>
+              <span style={{ fontSize: "0.85rem", fontWeight: 600 }}>Model</span>
+              <button
+                type="button"
+                onClick={() => refreshModels("gemini", geminiDraft.apiKey)}
+                disabled={loadingModels}
+                style={{ fontSize: "0.78rem", padding: "3px 8px", background: "var(--card-subtle, #131c31)", border: "1px solid var(--line)", borderRadius: "6px", cursor: "pointer", color: "var(--ink, #f8fafc)" }}
+                title="Query live models from Google AI using the configured or entered API key"
+              >
+                {loadingModels ? "⏳ Fetching..." : "🔄 Query Live Models"}
+              </button>
+            </div>
+            <select
+              value={geminiModels.some(m => m.id === geminiDraft.model) ? geminiDraft.model : "custom"}
+              onChange={(e) => {
+                if (e.target.value !== "custom") {
+                  setGeminiDraft({ ...geminiDraft, model: e.target.value, customModelActive: false });
+                } else {
+                  setGeminiDraft({ ...geminiDraft, customModelActive: true });
+                }
+              }}
+              style={{ marginTop: "4px", width: "100%" }}
+            >
+              <optgroup label="Available Gemini Models">
+                {geminiModels.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.label || item.id}
+                  </option>
+                ))}
+              </optgroup>
+              <option value="custom">Custom / Fine-Tuned Model...</option>
+            </select>
+            {modelsStatusMessage ? (
+              <small style={{ display: "block", color: "var(--muted)", marginTop: "4px", fontSize: "0.75rem" }}>
+                ℹ️ {modelsStatusMessage}
+              </small>
+            ) : null}
+            {(!geminiModels.some(m => m.id === geminiDraft.model) || geminiDraft.customModelActive) ? (
+              <label style={{ marginTop: "8px" }}>
+                Custom Model ID
+                <input
+                  type="text"
+                  placeholder="e.g. gemini-2.5-pro-preview or tunedModels/custom-model"
+                  value={geminiDraft.model}
+                  onChange={(e) => setGeminiDraft({ ...geminiDraft, model: e.target.value, customModelActive: true })}
+                />
+              </label>
+            ) : null}
             <label>
               Label
               <input value={geminiDraft.label} onChange={(e) => setGeminiDraft({ ...geminiDraft, label: e.target.value })} />
             </label>
+            <p className="note" style={{ fontSize: "0.8rem", color: "var(--muted)", margin: "8px 0" }}>
+              💡 <strong>Disconnect vs Remove:</strong> Disconnect stops AI agent usage while preserving your API key. Remove permanently erases the key from encrypted storage.
+            </p>
             <div className="actions">
               <button className="primary" type="submit" disabled={Boolean(busy)}>Save changes</button>
-              <button type="button" onClick={() => send("/api/integrations/gemini/test")} disabled={Boolean(busy) || !gemini.enabled}>Test connection</button>
+              <button
+                type="button"
+                onClick={testGeminiInModal}
+                disabled={Boolean(busy) || (!geminiDraft.apiKey.trim() && !gemini.api_key_configured)}
+                title={(!geminiDraft.apiKey.trim() && !gemini.api_key_configured) ? "Enter an API key first" : "Save and test Gemini model connectivity"}
+              >
+                Test connection
+              </button>
+              {gemini.enabled ? (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await disconnectProvider("gemini");
+                    closePanel();
+                  }}
+                  disabled={Boolean(busy)}
+                >
+                  Disconnect
+                </button>
+              ) : null}
+              {gemini.configured ? (
+                <button
+                  className="danger"
+                  type="button"
+                  onClick={async () => {
+                    if (!confirmClear) { setConfirmClear(true); return; }
+                    if (await send("/api/integrations/gemini/clear")) closePanel();
+                  }}
+                  disabled={Boolean(busy)}
+                >
+                  {confirmClear ? "Confirm permanent removal" : "Remove credentials"}
+                </button>
+              ) : null}
             </div>
           </form>
         </div>
@@ -1271,32 +1876,144 @@ export default function IntegrationsPage() {
             </button>
             <div className="status-line"><span>API key</span><b>{secretIndicator(openai.api_key_configured)}</b></div>
             <label>
-              Replace API key
-              <input type="password" autoComplete="off" value={openaiDraft.apiKey} placeholder={openai.api_key_configured ? "Saved · hidden" : "Enter API key"} onChange={(event) => setOpenaiDraft({ ...openaiDraft, apiKey: event.target.value })} />
+              API key {openai.api_key_configured ? <span style={{ fontSize: "0.75rem", color: "var(--muted)", fontWeight: "normal" }}>(masked)</span> : null}
+              <input
+                type="password"
+                autoComplete="off"
+                value={openaiDraft.apiKey}
+                placeholder={openai.api_key_configured ? "Saved · masked" : "Enter API key"}
+                onFocus={(e) => { if (e.target.value.includes("•")) e.target.select(); }}
+                onChange={(event) => setOpenaiDraft({ ...openaiDraft, apiKey: event.target.value })}
+              />
             </label>
-            <label>
-              Model
-              <select value={openaiDraft.model} onChange={(event) => setOpenaiDraft({ ...openaiDraft, model: event.target.value })}>
-                {MODELS.map((item) => <option key={item} value={item}>{item}</option>)}
-              </select>
-            </label>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "10px" }}>
+              <span style={{ fontSize: "0.85rem", fontWeight: 600 }}>Model</span>
+              <button
+                type="button"
+                onClick={() => refreshModels("openai", openaiDraft.apiKey)}
+                disabled={loadingModels}
+                style={{ fontSize: "0.78rem", padding: "3px 8px", background: "var(--card-subtle, #131c31)", border: "1px solid var(--line)", borderRadius: "6px", cursor: "pointer", color: "var(--ink, #f8fafc)" }}
+                title="Query live models from OpenAI using the configured or entered API key"
+              >
+                {loadingModels ? "⏳ Fetching..." : "🔄 Query Live Models"}
+              </button>
+            </div>
+            <select
+              value={openaiDraft.model}
+              onChange={(event) => setOpenaiDraft({ ...openaiDraft, model: event.target.value })}
+              style={{ marginTop: "4px", width: "100%" }}
+            >
+              {openaiModels.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label || item.id}
+                </option>
+              ))}
+            </select>
+            {modelsStatusMessage ? (
+              <small style={{ display: "block", color: "var(--muted)", marginTop: "4px", fontSize: "0.75rem" }}>
+                ℹ️ {modelsStatusMessage}
+              </small>
+            ) : null}
             <label>
               Label
               <input value={openaiDraft.label} onChange={(event) => setOpenaiDraft({ ...openaiDraft, label: event.target.value })} />
             </label>
             {confirmEnable ? <p className="note">Confirm to {openaiDraft.enabled ? "enable" : "disable"} OpenAI. This does not request a completion.</p> : null}
+            <p className="note" style={{ fontSize: "0.8rem", color: "var(--muted)", margin: "8px 0" }}>
+              💡 <strong>Disconnect vs Remove:</strong> Disconnect stops AI agent usage while preserving your API key. Remove permanently erases the key from encrypted storage.
+            </p>
             <div className="actions">
               <button className="primary" type="submit" disabled={Boolean(busy)}>{confirmEnable ? "Confirm and save" : "Save changes"}</button>
-              <button type="button" onClick={() => send("/api/integrations/openai/test")} disabled={Boolean(busy) || !openai.enabled}>Test connection</button>
+              <button
+                type="button"
+                onClick={testOpenAIInModal}
+                disabled={Boolean(busy) || (!openaiDraft.apiKey.trim() && !openai.api_key_configured)}
+                title={(!openaiDraft.apiKey.trim() && !openai.api_key_configured) ? "Enter an API key first" : "Save and test OpenAI model connectivity"}
+              >
+                Test connection
+              </button>
+              {openai.enabled ? (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await disconnectProvider("openai");
+                    closePanel();
+                  }}
+                  disabled={Boolean(busy)}
+                >
+                  Disconnect
+                </button>
+              ) : null}
+              {openai.configured ? (
+                <button
+                  className="danger"
+                  type="button"
+                  onClick={async () => {
+                    if (!confirmClear) { setConfirmClear(true); return; }
+                    if (await send("/api/integrations/openai/clear")) closePanel();
+                  }}
+                  disabled={Boolean(busy)}
+                >
+                  {confirmClear ? "Confirm permanent removal" : "Remove credentials"}
+                </button>
+              ) : null}
             </div>
           </form>
+        </div>
+      ) : null}
+
+      {confirmClearProvider ? (
+        <div className="modal-backdrop" onClick={() => setConfirmClearProvider(null)}>
+          <div className="modal" role="dialog" aria-labelledby="clear-dialog-title" onClick={(e) => e.stopPropagation()}>
+            <div className="section-head">
+              <h2 id="clear-dialog-title" style={{ color: "var(--red, #f87171)" }}>Remove {confirmClearProvider.toUpperCase()} Credentials?</h2>
+              <button type="button" onClick={() => setConfirmClearProvider(null)}>Close</button>
+            </div>
+            <p style={{ fontSize: "0.9rem", lineHeight: 1.5, margin: "12px 0" }}>
+              <strong>Permanent Deletion:</strong> This action permanently deletes your saved encrypted credentials, API keys, and session tokens for <strong>{confirmClearProvider.toUpperCase()}</strong>.
+            </p>
+            <p style={{ fontSize: "0.85rem", color: "var(--muted)", margin: "0 0 16px" }}>
+              💡 If you only want to stop background synchronization and deactivate the provider while retaining your credentials for later use, click <strong>Cancel</strong> and use <strong>Disconnect</strong> instead.
+            </p>
+            <div className="actions" style={{ display: "flex", gap: "10px", justifyContent: "flex-end" }}>
+              <button type="button" onClick={() => setConfirmClearProvider(null)}>Cancel</button>
+              <button type="button" className="danger" onClick={() => removeProvider(confirmClearProvider)} disabled={Boolean(busy)}>
+                Permanently Delete Credentials
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
     </main>
   );
 }
 
-function ProviderCard({ mark, name, detail, enabled, configured, connection, extraBadge, extraKind, historyBadge, historyKind, facts, detailsTitle, details, busy, onConfigure, onTest, onDiagnostics, testDisabled }) {
+function ProviderCard({
+  mark,
+  name,
+  detail,
+  enabled,
+  configured,
+  connection,
+  lifecycleState,
+  capabilities,
+  lastError,
+  extraBadge,
+  extraKind,
+  historyBadge,
+  historyKind,
+  facts,
+  detailsTitle,
+  details,
+  busy,
+  onConfigure,
+  onTest,
+  onConnect,
+  onDisconnect,
+  onRemove,
+  onDiagnostics,
+  testDisabled,
+}) {
   const connectionKind = connection === true ? "ok" : connection === false ? "bad" : "idle";
   return (
     <section className="provider-card">
@@ -1308,14 +2025,41 @@ function ProviderCard({ mark, name, detail, enabled, configured, connection, ext
             <small>{detail}</small>
           </div>
         </div>
-        <span className={pillClass(enabled ? "ok" : "wait")}>{integrationLabel(enabled)}</span>
+        <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {lifecycleState ? (
+            <span className={pillClass(lifecycleKind(lifecycleState))}>{lifecycleLabel(lifecycleState)}</span>
+          ) : null}
+          <span className={pillClass(enabled ? "ok" : "wait")}>{integrationLabel(enabled)}</span>
+        </div>
       </div>
       <div className="badge-row">
         <span className={pillClass(configured ? "ok" : "idle")}>{credentialLabel(configured)}</span>
-        <span className={pillClass(connectionKind)}>{connectionLabel(connection)}</span>
+        {connection !== null && connection !== undefined ? (
+          <span className={pillClass(connectionKind)}>{connectionLabel(connection)}</span>
+        ) : null}
+        {capabilities?.authentication ? (
+          <span className={pillClass(capabilities.authentication === "verified" ? "ok" : capabilities.authentication === "rejected" ? "bad" : "wait")}>
+            Auth: {capabilities.authentication === "verified" ? "Verified" : capabilities.authentication === "rejected" ? "Failed" : "Not Tested"}
+          </span>
+        ) : null}
+        {capabilities?.market_data ? (
+          <span className={pillClass(capabilities.market_data === "verified" ? "ok" : capabilities.market_data === "rejected" ? "bad" : "wait")}>
+            Market Data: {capabilities.market_data === "verified" ? "Verified" : capabilities.market_data === "rejected" ? "Failed" : "Not Tested"}
+          </span>
+        ) : null}
+        {capabilities?.model_lookup ? (
+          <span className={pillClass(capabilities.model_lookup === "verified" ? "ok" : capabilities.model_lookup === "rejected" ? "bad" : "wait")}>
+            Model: {capabilities.model_lookup === "verified" ? "Verified" : capabilities.model_lookup === "rejected" ? "Failed" : "Not Tested"}
+          </span>
+        ) : null}
         {extraBadge ? <span className={pillClass(extraKind)}>{extraBadge}</span> : null}
         {historyBadge ? <span className={pillClass(historyKind)}>{historyBadge}</span> : null}
       </div>
+      {lastError ? (
+        <p className="note" style={{ color: "#f87171", background: "rgba(239, 68, 68, 0.1)", border: "1px solid rgba(239, 68, 68, 0.2)", borderRadius: "6px", padding: "6px 10px", margin: "6px 0 10px", fontSize: "0.82rem" }}>
+          ⚠️ <strong>Last Error:</strong> {lastError}
+        </p>
+      ) : null}
       <dl className="meta-row">
         {facts.map(([label, value]) => (
           <div key={label}><dt>{label}</dt><dd>{value}</dd></div>
@@ -1328,6 +2072,20 @@ function ProviderCard({ mark, name, detail, enabled, configured, connection, ext
       <div className="card-actions">
         <button type="button" className="primary" onClick={onConfigure} disabled={Boolean(busy)}>Configure</button>
         <button type="button" onClick={onTest} disabled={Boolean(busy) || testDisabled}>Test connection</button>
+        {enabled && onDisconnect ? (
+          <button type="button" onClick={onDisconnect} disabled={Boolean(busy)} title="Disconnect stops background usage while retaining credentials">
+            Disconnect
+          </button>
+        ) : !enabled && configured && onConnect ? (
+          <button type="button" onClick={onConnect} disabled={Boolean(busy)} title="Connect re-enables provider operations using saved credentials">
+            Connect
+          </button>
+        ) : null}
+        {configured && onRemove ? (
+          <button type="button" className="danger" onClick={onRemove} disabled={Boolean(busy)} title="Permanently delete stored credentials">
+            Remove
+          </button>
+        ) : null}
         {onDiagnostics ? <button type="button" onClick={onDiagnostics}>Diagnostics</button> : null}
       </div>
     </section>

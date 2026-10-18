@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, Integer, Numeric, String, Text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Date, DateTime, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -212,3 +212,112 @@ class WatchlistSuggestion(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class RawResponseArtifact(Base):
+    __tablename__ = "raw_response_artifacts"
+
+    artifact_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    candle_interval: Mapped[str] = mapped_column(String(16), nullable=False)
+    requested_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    requested_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    file_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    raw_byte_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    candle_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MarketCandle(Base):
+    __tablename__ = "market_candles"
+    __table_args__ = (
+        UniqueConstraint("symbol", "interval", "timestamp", name="uq_market_candles_symbol_interval_ts"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    interval: Mapped[str] = mapped_column(String(16), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    open: Mapped[Decimal] = mapped_column(Numeric(20, 4), nullable=False)
+    high: Mapped[Decimal] = mapped_column(Numeric(20, 4), nullable=False)
+    low: Mapped[Decimal] = mapped_column(Numeric(20, 4), nullable=False)
+    close: Mapped[Decimal] = mapped_column(Numeric(20, 4), nullable=False)
+    volume: Mapped[Decimal | None] = mapped_column(Numeric(20, 4), nullable=True)
+    open_interest: Mapped[Decimal | None] = mapped_column(Numeric(20, 4), nullable=True)
+    session_type: Mapped[str] = mapped_column(String(32), nullable=False, default="REGULAR")
+    is_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    raw_artifact_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class CandleConflictAudit(Base):
+    __tablename__ = "candle_conflict_audit"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    interval: Mapped[str] = mapped_column(String(16), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    existing_ohlcv: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    incoming_ohlcv: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    resolution: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    incoming_artifact_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class IngestionRun(Base):
+    __tablename__ = "ingestion_runs"
+
+    run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    interval: Mapped[str] = mapped_column(String(16), nullable=False)
+    requested_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    requested_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING")
+    total_chunks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completed_chunks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    missing_ranges: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    completed_ranges: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    candles_ingested: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    conflicts_detected: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class DatasetProvenanceRecord(Base):
+    __tablename__ = "dataset_provenance"
+
+    dataset_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    version: Mapped[str] = mapped_column(String(32), nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), nullable=False)
+    interval: Mapped[str] = mapped_column(String(16), nullable=False)
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    candle_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    quality_report: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    source_artifact_hashes: Mapped[list] = mapped_column(JSONB, nullable=False)
+    verification_level: Mapped[str] = mapped_column(String(32), nullable=False)
+    verification_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class BenchmarkCacheRecord(Base):
+    __tablename__ = "benchmark_cache"
+
+    cache_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    dataset_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    model_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    feature_config: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    target: Mapped[str] = mapped_column(String(32), nullable=False)
+    eval_settings: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    metrics: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    invalidated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    invalidation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_accessed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+

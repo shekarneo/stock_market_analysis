@@ -70,17 +70,23 @@ async def lifespan(app: FastAPI):
         session = get_session_factory()()
         try:
             ensure_seed(session, settings)
+            from app.integrations.service import ensure_env_credentials_loaded
+            ensure_env_credentials_loaded(session, settings)
             session.commit()
         finally:
             session.close()
     except Exception:
         log.exception("database unavailable at startup")
-    from app.market.poller import start_market_poller, stop_market_poller
-    start_market_poller(settings)
-    try:
+    import os
+    if not os.environ.get("PYTEST_CURRENT_TEST") and not os.environ.get("TESTING"):
+        from app.market.poller import start_market_poller, stop_market_poller
+        start_market_poller(settings)
+        try:
+            yield
+        finally:
+            stop_market_poller()
+    else:
         yield
-    finally:
-        stop_market_poller()
 
 
 
@@ -676,6 +682,99 @@ def refuse_live_order(
         server_flag=settings.live_order_server_flag,
     )
     return {"placed": False}
+
+
+@app.get("/api/research/paper-readiness")
+def read_paper_readiness(
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+) -> dict:
+    """Audit the 8 readiness gates for paper trading."""
+    read_session(request, settings)
+    from app.research.paper_readiness_audit import audit_paper_trading_readiness
+    report = audit_paper_trading_readiness(session)
+    return report.model_dump()
+
+
+@app.get("/api/forecasting/multi-asset/benchmark")
+def read_multi_asset_benchmark(
+    request: Request,
+    settings: Settings = Depends(settings_dep),
+) -> dict:
+    """Read M40 multi-asset cross-validation and M41 factor attribution benchmarks."""
+    read_session(request, settings)
+    import json
+    from app.settings import REPO_ROOT
+    benchmark_file = REPO_ROOT / "var/datasets/m40_multi_asset_benchmark.json"
+    attribution_file = REPO_ROOT / "var/datasets/m41_factor_attribution_results.json"
+    benchmark_data = json.loads(benchmark_file.read_text(encoding="utf-8")) if benchmark_file.exists() else {}
+    attribution_data = json.loads(attribution_file.read_text(encoding="utf-8")) if attribution_file.exists() else {}
+    return {
+        "benchmark": benchmark_data,
+        "attribution": attribution_data,
+    }
+
+
+@app.get("/api/execution/multi-asset/simulation")
+def read_multi_asset_simulation(
+    request: Request,
+    settings: Settings = Depends(settings_dep),
+) -> dict:
+    """Read M42 tax-accurate multi-asset paper trading simulation results."""
+    read_session(request, settings)
+    import json
+    from app.settings import REPO_ROOT
+    sim_file = REPO_ROOT / "var/datasets/m42_multi_asset_simulation_results.json"
+    sim_data = json.loads(sim_file.read_text(encoding="utf-8")) if sim_file.exists() else {}
+    return sim_data
+
+
+@app.get("/api/forecasting/instruments")
+def read_forecasting_instruments(
+    request: Request,
+    settings: Settings = Depends(settings_dep),
+) -> dict:
+    """Return configured primary tradable instruments with session status and metadata."""
+    read_session(request, settings)
+    from app.forecasting.instrument_hub import get_supported_instruments
+    return {"instruments": get_supported_instruments()}
+
+
+@app.get("/api/forecasting/instrument-forecast")
+def read_instrument_forecast(
+    request: Request,
+    instrument: str = "NIFTY",
+    settings: Settings = Depends(settings_dep),
+) -> dict:
+    """Calculate or retrieve independent forecast and evidence for the requested instrument."""
+    read_session(request, settings)
+    from app.forecasting.instrument_hub import get_instrument_forecast
+    return get_instrument_forecast(instrument)
+
+
+@app.get("/api/forecasting/instrument-backtest")
+def read_instrument_backtest(
+    request: Request,
+    instrument: str = "NIFTY",
+    settings: Settings = Depends(settings_dep),
+) -> dict:
+    """Retrieve independent walk-forward backtest report for the requested instrument."""
+    read_session(request, settings)
+    from app.forecasting.instrument_hub import get_instrument_backtest
+    return get_instrument_backtest(instrument)
+
+
+@app.get("/api/market/data-health")
+def read_market_data_health(
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+) -> dict:
+    """Retrieve comprehensive data health, provenance, and session audits across instruments."""
+    read_session(request, settings)
+    from app.forecasting.instrument_hub import get_instrument_data_health
+    return get_instrument_data_health(session)
 
 
 def create_app() -> FastAPI:

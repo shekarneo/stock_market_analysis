@@ -10,12 +10,34 @@ import {
   growwSavePlan,
   historicalLabel,
   integrationLabel,
+  lifecycleKind,
+  lifecycleLabel,
   maskedSecret,
   openaiSavePlan,
   safetySummary,
   secretIndicator,
   wallSpanMinutes,
 } from "./labels.mjs";
+
+test("lifecycle states accurately distinguish all lifecycle phases", () => {
+  assert.equal(lifecycleLabel("CONNECTED"), "Connected");
+  assert.equal(lifecycleKind("CONNECTED"), "ok");
+
+  assert.equal(lifecycleLabel("CONFIGURED"), "Configured (Not Tested)");
+  assert.equal(lifecycleKind("CONFIGURED"), "wait");
+
+  assert.equal(lifecycleLabel("CONNECTION_FAILED"), "Connection Failed");
+  assert.equal(lifecycleKind("CONNECTION_FAILED"), "bad");
+
+  assert.equal(lifecycleLabel("EXPIRED_OR_REAUTH_REQUIRED"), "Token Expired (Reauth Required)");
+  assert.equal(lifecycleKind("EXPIRED_OR_REAUTH_REQUIRED"), "bad");
+
+  assert.equal(lifecycleLabel("DISCONNECTED"), "Disconnected");
+  assert.equal(lifecycleKind("DISCONNECTED"), "idle");
+
+  assert.equal(lifecycleLabel("NOT_CONFIGURED"), "Not Configured");
+  assert.equal(lifecycleKind("NOT_CONFIGURED"), "idle");
+});
 
 test("connection success is separate from integration enablement", () => {
   assert.equal(connectionLabel(true), "Connection Successful");

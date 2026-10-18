@@ -18,6 +18,7 @@ class AnalysisState(TypedDict, total=False):
     include_macro: bool
     include_derivatives: bool
     include_inference: bool
+    include_forecast: bool
     accepted: list[dict]
     rejected: list[dict]
     evidence: list[dict]

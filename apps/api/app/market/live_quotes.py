@@ -40,6 +40,22 @@ def stored_observations(path: Path | None = None) -> list[dict]:
                     obs.append(o)
         except Exception:
             pass
+    if path is None:
+        try:
+            from app.market.macro_series import get_macro_observations
+            for o in get_macro_observations():
+                if o.get("instrument") and o["instrument"] not in insts:
+                    insts.add(o["instrument"])
+                    obs.append(o)
+        except Exception:
+            pass
+        try:
+            from app.market.groww_options import load_stored_option_chain_observation
+            chain_obs = load_stored_option_chain_observation()
+            if chain_obs and not any(o.get("category") == "DERIVATIVES" for o in obs):
+                obs.append(chain_obs)
+        except Exception:
+            pass
     return obs
 
 
@@ -125,7 +141,17 @@ def run_live_read(session, settings, *, caller, retrieved_at: datetime, path: Pa
 
     classified = classify_token_expiry(expiry, retrieved_at)
     if classified["status"] != "VALID":
-        return _done(base, classified["code"], classified["message"])
+        if row.auth_method == "totp":
+            try:
+                from app.integrations.service import groww_read_token
+                token = groww_read_token(session, settings, caller=caller)
+                session.refresh(row)
+                expiry = row.token_expiry
+                classified = classify_token_expiry(expiry, retrieved_at)
+            except Exception as renew_exc:
+                return _done(base, "TOKEN_EXPIRED", f"Groww TOTP auto-renewal failed: {renew_exc}")
+        if classified["status"] != "VALID":
+            return _done(base, classified["code"], classified["message"])
     try:
         secrets = decrypt_secrets(settings, row.ciphertext)
     except SecretBoxError as exc:
@@ -133,7 +159,16 @@ def run_live_read(session, settings, *, caller, retrieved_at: datetime, path: Pa
     secret_values = [value for value in secrets.values() if isinstance(value, str)]
     token = secrets.get("access_token") or ""
     if not token:
-        return _done(base, "TOKEN_NOT_REUSABLE", "No stored access token is available. No token was exchanged.")
+        if row.auth_method == "totp":
+            try:
+                from app.integrations.service import groww_read_token
+                token = groww_read_token(session, settings, caller=caller)
+                secrets = decrypt_secrets(settings, row.ciphertext)
+                secret_values = [value for value in secrets.values() if isinstance(value, str)]
+            except Exception as renew_exc:
+                return _done(base, "TOKEN_NOT_REUSABLE", f"Groww TOTP token acquisition failed: {renew_exc}")
+        else:
+            return _done(base, "TOKEN_NOT_REUSABLE", "No stored access token is available. No token was exchanged.")
     try:
         quote_response = read_documented_quote(caller, token)
     except TimeoutError:
@@ -145,9 +180,26 @@ def run_live_read(session, settings, *, caller, retrieved_at: datetime, path: Pa
     if quote.get("ok"):
         base["quotes"].append(quote["quote"])
     else:
-        base["errors"].append({"instrument": "NIFTY", "code": quote["code"], "message": quote["message"]})
-        if quote["code"] in {"AUTHENTICATION_FAILED", "RATE_LIMITED"}:
-            return _done(base, quote["code"], quote["message"], secrets=secret_values, calls=1)
+        # If token was rejected and method is TOTP, retry once with a fresh token
+        if quote["code"] == "AUTHENTICATION_FAILED" and row.auth_method == "totp":
+            try:
+                from app.integrations.service import _groww_access_token, _store_derived_token
+                token, expiry, exchanged = _groww_access_token(caller, row, secrets, retrieved_at, force_exchange=True)
+                _store_derived_token(session, settings, row, secrets, token, expiry)
+                quote_response = read_documented_quote(caller, token)
+                quote = _normalize_quote(quote_response, retrieved_at)
+                if quote.get("ok"):
+                    base["quotes"].append(quote["quote"])
+                else:
+                    base["errors"].append({"instrument": "NIFTY", "code": quote["code"], "message": quote["message"]})
+                    return _done(base, quote["code"], quote["message"], secrets=secret_values, calls=2)
+            except Exception:
+                base["errors"].append({"instrument": "NIFTY", "code": quote["code"], "message": quote["message"]})
+                return _done(base, quote["code"], quote["message"], secrets=secret_values, calls=1)
+        else:
+            base["errors"].append({"instrument": "NIFTY", "code": quote["code"], "message": quote["message"]})
+            if quote["code"] in {"AUTHENTICATION_FAILED", "RATE_LIMITED"}:
+                return _done(base, quote["code"], quote["message"], secrets=secret_values, calls=1)
     try:
         ltp_response = read_documented_ltp(caller, token)
     except TimeoutError:
@@ -194,7 +246,8 @@ def _normalize_quote(result, retrieved_at: datetime) -> dict:
     if failed:
         return failed
     payload = _payload(result.body)
-    price = _number(payload.get("last_price"))
+    raw_price = payload.get("last_price") if payload.get("last_price") is not None else payload.get("ltp")
+    price = _number(raw_price)
     stamp = payload.get("last_trade_time")
     if price is None:
         return {"ok": False, "code": "SCHEMA_MISMATCH", "message": "The quote is missing a numeric last_price."}

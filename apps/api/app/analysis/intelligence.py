@@ -91,11 +91,12 @@ def build_intelligence(
         "global_context": _named(rows, "GLOBAL_MARKET"),
         "markets": markets,
         "breadth_flows": {
-            "status": "MISSING_DATA",
-            "vix": next((r for r in rows if r.get("instrument") == "INDIA_VIX"), None),
+            "status": "PRESENT" if (any(r.get("instrument") in {"INDIA_VIX", "VIX", "INDIAVIX"} for r in rows) or any(r.get("instrument") in {"BANKNIFTY", "NIFTYIT", "NIFTYMETAL", "NIFTYAUTO", "BANKEX"} for r in rows)) else "MISSING_DATA",
+            "vix": next((r for r in rows if r.get("instrument") in {"INDIA_VIX", "VIX", "INDIAVIX"}), None),
+            "sectors": [r.get("instrument") for r in rows if r.get("instrument") in {"BANKNIFTY", "NIFTYIT", "NIFTYMETAL", "NIFTYAUTO", "BANKEX"}],
             "breadth": None,
-            "flows": None,
-            "reason": "No breadth or FII/DII flow series was supplied.",
+            "flows": next((r for r in rows if r.get("instrument") in {"FII_DII", "FII_DII_FLOWS"}), None),
+            "reason": "Observed VIX and sectoral indices. Advance/decline breadth series pending." if (any(r.get("instrument") in {"INDIA_VIX", "VIX", "INDIAVIX"} for r in rows)) else "No breadth or FII/DII flow series was supplied.",
         },
         "scenarios": {
             "bullish": {
@@ -133,9 +134,28 @@ def build_intelligence(
         },
         "options": {
             "decision": "NO_TRADE",
-            "chain": "MISSING_DATA" if not any(row.get("category") == "DERIVATIVES" for row in rows) else data_class(next(row for row in rows if row.get("category") == "DERIVATIVES")),
+            "chain": "MISSING_DATA" if not next((r for r in rows if r.get("category") == "DERIVATIVES"), None) else data_class(next(r for r in rows if r.get("category") == "DERIVATIVES")),
             "premium": None,
-            "reason": "News sentiment cannot authorize a trade. Required option inputs are not a verified chain.",
+            "reason": (
+                "News sentiment cannot authorize a trade. Required option inputs are not a verified chain."
+                if not next((r for r in rows if r.get("category") == "DERIVATIVES"), None)
+                else "Observed options chain telemetry is unverified provider data. Live options execution remains locked."
+            ),
+            "metrics": (
+                {
+                    "instrument": next(r for r in rows if r.get("category") == "DERIVATIVES").get("instrument"),
+                    "expiry": next(r for r in rows if r.get("category") == "DERIVATIVES").get("expiry"),
+                    "underlying_price": next(r for r in rows if r.get("category") == "DERIVATIVES").get("underlying_price"),
+                    "strike_count": next(r for r in rows if r.get("category") == "DERIVATIVES").get("strike_count"),
+                    "pcr_oi": next(r for r in rows if r.get("category") == "DERIVATIVES").get("pcr_oi"),
+                    "pcr_volume": next(r for r in rows if r.get("category") == "DERIVATIVES").get("pcr_volume"),
+                    "atm_strike": next(r for r in rows if r.get("category") == "DERIVATIVES").get("atm_strike"),
+                    "atm_iv": next(r for r in rows if r.get("category") == "DERIVATIVES").get("atm_iv"),
+                    "max_pain_strike": next(r for r in rows if r.get("category") == "DERIVATIVES").get("max_pain_strike"),
+                }
+                if any(r.get("category") == "DERIVATIVES" for r in rows)
+                else None
+            ),
         },
         "risk": {"veto": True, "code": "EXPECTED_NET_UNAVAILABLE", "decision": "NO_TRADE"},
         "decision": {
@@ -750,17 +770,104 @@ def _stages(rows, news, geopolitics, impact, missing) -> list[dict]:
     def stage(name: str, status: str, detail: str) -> dict:
         return {"name": name, "status": status, "detail": detail}
 
+    global_obs = [r for r in rows if r.get("category") == "GLOBAL_MARKET" and r.get("instrument") not in {"VIX", "INDIA_VIX"}]
+    global_detail = f"{len(global_obs)} global factor(s) observed ({', '.join(sorted({r.get('instrument') for r in global_obs}))})." if global_obs else "No global index is filled in."
+
+    macro_obs = [r for r in rows if r.get("category") == "MACRO"]
+    macro_detail = f"{len(macro_obs)} commodity/macro factor(s) observed ({', '.join(sorted({r.get('instrument') for r in macro_obs}))})." if macro_obs else "Yields stay missing unless a yield observation was supplied."
+
+    vix_item = next((r for r in rows if r.get("instrument") in {"INDIA_VIX", "VIX", "INDIAVIX"}), None)
+    sector_items = [r for r in rows if r.get("instrument") in {"BANKNIFTY", "NIFTYIT", "NIFTYMETAL", "NIFTYAUTO", "BANKEX"}]
+    has_vix = vix_item is not None
+    has_sec = len(sector_items) > 0
+    vix_val = vix_item.get("last_price") if vix_item else None
+    vix_text = f"India VIX ({vix_val})" if vix_val is not None else "India VIX"
+
+    if has_vix and has_sec:
+        stage8_status = "PRESENT"
+        stage8_detail = f"Observed {vix_text} and {len(sector_items)} sector index/indices."
+    elif has_vix and not has_sec:
+        stage8_status = "PARTIAL"
+        stage8_detail = f"Observed {vix_text}. No sector indices or market breadth series were supplied."
+    elif not has_vix and has_sec:
+        stage8_status = "PARTIAL"
+        stage8_detail = f"Observed {len(sector_items)} sector indices. India VIX was not supplied."
+    else:
+        stage8_status = "MISSING_DATA"
+        stage8_detail = "No breadth or sector series was supplied."
+
+    fii_item = next((r for r in rows if r.get("instrument") in {"FII_DII", "FII_DII_FLOWS"}), None)
+    fii_detail = (
+        f"Observed FII/DII net flows: {fii_item.get('last_price'):+.1f} Cr (NSE Official Report, EOD 17:30 IST)."
+        if fii_item
+        else "No flow series was supplied."
+    )
+
+    deriv_item = next((r for r in rows if r.get("category") == "DERIVATIVES"), None)
+    if deriv_item and (deriv_item.get("strike_count") or len(deriv_item.get("strikes") or {})) > 0:
+        strike_count = deriv_item.get("strike_count") or len(deriv_item.get("strikes") or {})
+        pcr = deriv_item.get("pcr_oi")
+        pcr_text = f"PCR(OI): {pcr:.2f}" if pcr is not None else "PCR: N/A"
+        iv = deriv_item.get("atm_iv")
+        iv_text = f", ATM IV: {iv:.1f}%" if iv is not None else ""
+        exp = deriv_item.get("expiry") or "N/A"
+        inst = deriv_item.get("instrument") or "NIFTY"
+        fresh = deriv_item.get("freshness") or "UNKNOWN"
+        ver = deriv_item.get("verification_status") or "UNVERIFIED"
+        if fresh == "STALE":
+            deriv_status = "STALE"
+            deriv_detail = f"Observed options chain for {inst} (expiry: {exp}, {strike_count} strikes) is STALE. Trading decisions stay blocked."
+        elif fresh == "CLOSED_SESSION_VALID":
+            deriv_status = "UNVERIFIED" if ver == "UNVERIFIED" else "PRESENT"
+            deriv_detail = f"Observed options chain for {inst} (expiry: {exp}, {strike_count} strikes, closed session valid, {pcr_text}{iv_text}). Unverified provider telemetry (fail-closed)."
+        elif ver == "VERIFIED":
+            deriv_status = "VERIFIED"
+            deriv_detail = f"Verified options chain for {inst} (expiry: {exp}, {strike_count} strikes, {pcr_text}{iv_text})."
+        else:
+            deriv_status = "UNVERIFIED"
+            deriv_detail = f"Observed options chain for {inst} (expiry: {exp}, {strike_count} strikes, {pcr_text}{iv_text}). Unverified provider telemetry (fail-closed)."
+    else:
+        deriv_status = "MISSING_DATA"
+        deriv_detail = "A derivatives note is not a verified chain." if not deriv_item else "Options chain contains no valid strikes."
+
+    # Status consistency for Indian Benchmark Indices
+    nifty_obs = next((r for r in rows if r.get("category") == "INDIAN_MARKET" and r.get("instrument") == "NIFTY"), None)
+    if nifty_obs:
+        p_n = nifty_obs.get("last_price")
+        p_n_str = f"₹{p_n:,.2f}" if p_n is not None else "N/A"
+        if nifty_obs.get("verification_status") == "VERIFIED":
+            nifty_status, nifty_detail = "VERIFIED", f"Verified NIFTY 50 spot print at {p_n_str}."
+        elif nifty_obs.get("provenance") == "SYNTHETIC":
+            nifty_status, nifty_detail = "SYNTHETIC", f"Synthetic print ({p_n_str}) is not a verified index. Real trading locked."
+        else:
+            nifty_status, nifty_detail = "UNVERIFIED", f"Observed NIFTY 50 spot at {p_n_str} (Groww live provider data, unverified by secondary reference)."
+    else:
+        nifty_status, nifty_detail = "MISSING_DATA", "No NIFTY 50 spot observation was supplied."
+
+    sensex_obs = next((r for r in rows if r.get("category") == "INDIAN_MARKET" and r.get("instrument") == "SENSEX"), None)
+    if sensex_obs:
+        p_s = sensex_obs.get("last_price")
+        p_s_str = f"₹{p_s:,.2f}" if p_s is not None else "N/A"
+        if sensex_obs.get("verification_status") == "VERIFIED":
+            sensex_status, sensex_detail = "VERIFIED", f"Verified SENSEX spot print at {p_s_str}."
+        elif sensex_obs.get("provenance") == "SYNTHETIC":
+            sensex_status, sensex_detail = "SYNTHETIC", f"Synthetic print ({p_s_str}) is not a verified index. Real trading locked."
+        else:
+            sensex_status, sensex_detail = "UNVERIFIED", f"Observed SENSEX spot at {p_s_str} (Groww live provider data, unverified by secondary reference)."
+    else:
+        sensex_status, sensex_detail = "MISSING_DATA", "No SENSEX spot observation was supplied."
+
     return [
         stage("Data validation", "COMPLETED", "Accepted rows are labeled. Rejected rows stay rejected."),
-        stage("Global markets and macro", "PRESENT" if has("GLOBAL_MARKET") else "MISSING_DATA", "No global index is filled in."),
+        stage("Global markets and macro", "PRESENT" if global_obs else "MISSING_DATA", global_detail),
         stage("Fresh verified news", "PRESENT" if news else "MISSING_DATA", "No authorized article was supplied." if "news" in missing else f"{len(news)} deduplicated item(s)."),
-        stage("Geopolitical and trade policy", "PRESENT" if geopolitics else "MISSING_DATA", "A category is interpreted only when the source supplied one."),
-        stage("Crude, currency and yields", "PRESENT" if has("MACRO") else "MISSING_DATA", "Yields stay missing unless a yield observation was supplied."),
-        stage("NIFTY 50", "PRESENT" if has("INDIAN_MARKET", "NIFTY") else "MISSING_DATA", "A synthetic print is not a verified index."),
-        stage("SENSEX", "PRESENT" if has("INDIAN_MARKET", "SENSEX") else "MISSING_DATA", "A synthetic print is not a verified index."),
-        stage("India VIX, breadth and sectors", "MISSING_DATA", "No breadth or sector series was supplied."),
-        stage("FII/DII flows", "MISSING_DATA", "No flow series was supplied."),
-        stage("Options chain and open interest", "PRESENT" if has("DERIVATIVES") else "MISSING_DATA", "A derivatives note is not a verified chain."),
+        stage("Geopolitical and trade policy", "PRESENT" if geopolitics else "MISSING_DATA", f"{len(geopolitics)} geopolitical policy event(s) confirmed." if geopolitics else "A category is interpreted only when the source supplied one."),
+        stage("Crude, currency and yields", "PRESENT" if macro_obs else "MISSING_DATA", macro_detail),
+        stage("NIFTY 50", nifty_status, nifty_detail),
+        stage("SENSEX", sensex_status, sensex_detail),
+        stage("India VIX, breadth and sectors", stage8_status, stage8_detail),
+        stage("FII/DII flows", "PRESENT" if fii_item else "MISSING_DATA", fii_detail),
+        stage("Options chain and open interest", deriv_status, deriv_detail),
         stage("Technical and price confirmation", "PRESENT" if impact else "MISSING_DATA", "Confirmation requires both a news item and a price observation."),
         stage("Quantitative forecasts", "MISSING_DATA", "Probabilities are null."),
         stage("Bullish, bearish and sideways scenarios", "MISSING_DATA", "Scenario probabilities are not invented."),

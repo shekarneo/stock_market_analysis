@@ -42,7 +42,11 @@ def assert_allowed(method: str, url: str) -> None:
         return
     if method == "GET" and _exact_groww(url, "/v1/live-data/ltp", LTP_PARAMS):
         return
+    if method == "GET" and _is_groww_option_chain_url(url):
+        return
     if method == "POST" and url == OPENAI_CHAT_URL:
+        return
+    if method == "GET" and (url == "https://api.openai.com/v1/models" or url == "https://api.openai.com/v1/models/"):
         return
     if method == "GET" and url.startswith(OPENAI_MODELS_URL) and url != OPENAI_MODELS_URL:
         rest = url[len(OPENAI_MODELS_URL) :]
@@ -108,6 +112,26 @@ def _historical_candles_url(url: str) -> bool:
     return len(keys) == len(CANDLE_QUERY) and set(keys) == set(CANDLE_QUERY)
 
 
+def _is_groww_option_chain_url(url: str) -> bool:
+    parts = urlsplit(url)
+    if parts.scheme != "https" or parts.netloc != "api.groww.in" or parts.fragment:
+        return False
+    segments = [s for s in parts.path.strip("/").split("/") if s]
+    # Format: /v1/option-chain/exchange/{exchange}/underlying/{underlying}
+    if len(segments) != 6:
+        return False
+    if segments[0] != "v1" or segments[1] != "option-chain" or segments[2] != "exchange" or segments[4] != "underlying":
+        return False
+    if segments[3] not in {"NSE", "BSE", "MCX"}:
+        return False
+    if not segments[5] or not segments[5].isalnum():
+        return False
+    pairs = parse_qsl(parts.query, keep_blank_values=True)
+    if len(pairs) != 1 or pairs[0][0] != "expiry_date" or not pairs[0][1]:
+        return False
+    return True
+
+
 @dataclass
 class HttpResult:
     status_code: int
@@ -149,3 +173,10 @@ class HttpxCaller:
         retry_after = response.headers.get("retry-after")
         safe_headers = {"retry-after": retry_after} if retry_after is not None else {}
         return HttpResult(status_code=response.status_code, body=body, text=response.text, raw=response.content, headers=safe_headers)
+
+    def get(self, url: str, *, headers: dict[str, str] | None = None, timeout: float = 10.0) -> HttpResult:
+        return self.send("GET", url, headers=headers or {}, json_body=None, timeout=timeout)
+
+    def post(self, url: str, *, headers: dict[str, str] | None = None, json: dict | None = None, timeout: float = 10.0) -> HttpResult:
+        return self.send("POST", url, headers=headers or {}, json_body=json, timeout=timeout)
+

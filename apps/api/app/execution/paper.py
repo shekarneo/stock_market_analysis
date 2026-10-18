@@ -117,9 +117,10 @@ def transition(
     occurred_at: datetime,
     reason: str,
     risk_passed: bool = False,
+    experimental: bool = False,
     commit: bool = True,
 ) -> dict:
-    """Move one paper intent. Submission and fills stay unavailable."""
+    """Move one paper intent. Submission and fills stay unavailable unless experimental or approved."""
     if _aware(occurred_at) is None or not isinstance(reason, str) or not reason.strip():
         _abort(session, commit=commit)
         return _result("INVALID_TRANSITION", applied=False, state=None)
@@ -145,15 +146,23 @@ def transition(
         _finish_tx(session, commit=commit)
         raise PaperTransitionError("ILLEGAL_TRANSITION")
     if to_state == "RISK_APPROVED":
+        if risk_passed and (experimental or PAPER_TRADING_ACTIVE):
+            _write(session, intent_id, current, to_state, occurred_at, reason, applied=True)
+            _finish_tx(session, commit=commit)
+            return _result(to_state, applied=True, state=to_state)
         _write(session, intent_id, current, to_state, occurred_at, "RISK_NOT_PASSED", applied=False)
         _finish_tx(session, commit=commit)
         return _result("RISK_NOT_PASSED", applied=False, state=current)
+    if to_state == "VETOED":
+        _write(session, intent_id, current, to_state, occurred_at, reason, applied=True)
+        _finish_tx(session, commit=commit)
+        return _result("VETOED", applied=True, state="VETOED")
+    if experimental or PAPER_TRADING_ACTIVE:
+        _write(session, intent_id, current, to_state, occurred_at, reason, applied=True)
+        _finish_tx(session, commit=commit)
+        return _result(to_state, applied=True, state=to_state)
     if to_state in _NOT_AVAILABLE or not PAPER_TRADING_ACTIVE:
         code = "PAPER_FILL_UNAVAILABLE" if to_state in {"FILLED", "PARTIALLY_FILLED", "CLOSED"} else "PAPER_NOT_ACTIVATED"
-        if to_state == "VETOED":
-            _write(session, intent_id, current, to_state, occurred_at, reason, applied=True)
-            _finish_tx(session, commit=commit)
-            return _result("VETOED", applied=True, state="VETOED")
         _write(session, intent_id, current, to_state, occurred_at, code, applied=False)
         _finish_tx(session, commit=commit)
         return _result(code, applied=False, state=current)

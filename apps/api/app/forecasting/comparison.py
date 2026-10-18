@@ -21,8 +21,9 @@ from app.forecasting.walkforward import (
 
 
 class ModelComparisonRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    dataset_id: str
+    model_config = ConfigDict(extra="ignore")
+    dataset_id: str | None = None
+    symbol: str | None = "NIFTY"
     models: list[str] = Field(default_factory=lambda: list(MODEL_NAMES))
     initial_train_size: int = 9
     validation_size: int = 5

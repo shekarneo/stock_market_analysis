@@ -42,7 +42,7 @@ class ExchangeCalendar:
         self.listed_sessions = set(listed_sessions)
         self.closed_dates = set(closed_dates)
 
-    def assess(self, moment: datetime) -> CalendarAssessment:
+    def assess(self, moment: datetime, *, authoritative: bool = False) -> CalendarAssessment:
         local = moment.astimezone(IST)
         day = local.date()
         if day in self.listed_sessions:
@@ -50,8 +50,8 @@ class ExchangeCalendar:
         elif day in self.closed_dates:
             state = CalendarState.NOT_A_SESSION
         else:
-            state = CalendarState.UNKNOWN
-        return CalendarAssessment(state=state, authoritative=False, limitation=self.limitation)
+            state = CalendarState.LISTED_SESSION if (authoritative and day.weekday() < 5) else CalendarState.UNKNOWN
+        return CalendarAssessment(state=state, authoritative=authoritative, limitation=self.limitation)
 
     def in_regular_window(self, moment: datetime) -> bool:
         local = moment.astimezone(IST)

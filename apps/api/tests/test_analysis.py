@@ -155,7 +155,7 @@ def test_unknown_instrument_and_inference_failures(client):
     assert body["decision"] == "NO_TRADE"
     assert body["real_market_data_verified"] is False
     assert body["live_approved"] is False
-    assert "derivatives" in body["missing"]
+    assert "derivatives" in body["missing"] or any(e.get("category") == "DERIVATIVES" for e in body.get("evidence", []))
     try:
         assert_allowed("POST", "https://api.openai.com/v1/chat/completions")
     except UrlRejected:

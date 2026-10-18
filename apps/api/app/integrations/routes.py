@@ -19,6 +19,9 @@ from app.integrations.http import HttpxCaller
 from app.integrations.service import (
     IntegrationError,
     clear_provider,
+    disconnect_provider,
+    get_available_gemini_models,
+    get_available_openai_models,
     read_status,
     save_angelone,
     save_gemini,
@@ -31,6 +34,7 @@ from app.integrations.service import (
     set_openai_enabled,
     set_openai_profile,
     set_provider_enabled,
+    set_provider_profile,
     run_angelone_test,
     run_gemini_test,
     run_groww_test,
@@ -61,6 +65,11 @@ class GrowwBody(BaseModel):
     api_secret: str | None = None
     access_token: str | None = None
     totp_secret: str | None = None
+
+
+class ModelsQueryBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    api_key: str | None = None
 
 
 class OpenAIBody(BaseModel):
@@ -98,7 +107,7 @@ class AngelOneBody(BaseModel):
 class GeminiBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     api_key: str
-    model: str = "gemini-1.5-pro"
+    model: str = "gemini-2.5-flash"
     label: str = ""
     enabled: bool = False
 
@@ -119,6 +128,12 @@ class EnabledBody(BaseModel):
 class OpenAIProfileBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: str
+    label: str = ""
+    confirm: bool = False
+
+
+class ProfileBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     label: str = ""
     confirm: bool = False
 
@@ -191,6 +206,21 @@ def post_groww_clear(
     principal = require_csrf(request, settings)
     status = clear_provider(session, "groww")
     _audit(session, principal.get("sub", "operator"), "integrations.groww.clear", "groww", {"configured": False})
+    return status
+
+
+@router.post("/api/integrations/groww/disconnect")
+def post_groww_disconnect(
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    try:
+        status = disconnect_provider(session, "groww")
+    except IntegrationError as exc:
+        _fail(exc)
+    _audit(session, principal.get("sub", "operator"), "integrations.groww.disconnect", "groww", {"enabled": False})
     return status
 
 
@@ -394,6 +424,21 @@ def post_openai_clear(
     return status
 
 
+@router.post("/api/integrations/openai/disconnect")
+def post_openai_disconnect(
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    try:
+        status = disconnect_provider(session, "openai")
+    except IntegrationError as exc:
+        _fail(exc)
+    _audit(session, principal.get("sub", "operator"), "integrations.openai.disconnect", "openai", {"enabled": False})
+    return status
+
+
 @router.post("/api/integrations/openai/enabled")
 def post_openai_enabled(
     body: EnabledBody,
@@ -454,6 +499,15 @@ def post_openai_test(
     return _test_response(status)
 
 
+@router.post("/api/integrations/openai/models")
+def post_openai_models(
+    body: ModelsQueryBody = ModelsQueryBody(),
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    return get_available_openai_models(session, settings, draft_api_key=body.api_key)
+
+
 # ----------------------------------------------------------------------
 # UPSTOX ROUTES
 # ----------------------------------------------------------------------
@@ -503,6 +557,22 @@ def post_upstox_enabled(
     return status
 
 
+@router.post("/api/integrations/upstox/profile")
+def post_upstox_profile(
+    body: ProfileBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    try:
+        status = set_provider_profile(session, "upstox", body.label, confirm=body.confirm)
+    except IntegrationError as exc:
+        _fail(exc)
+    _audit(session, principal.get("sub", "operator"), "integrations.upstox.profile", "upstox", {"label": body.label})
+    return status
+
+
 @router.post("/api/integrations/upstox/test")
 def post_upstox_test(
     request: Request,
@@ -533,6 +603,22 @@ def put_kite(
     except (IntegrationError, SecretBoxError) as exc:
         _fail(exc)
     _audit(session, principal.get("sub", "operator"), "integrations.kite.save", "kite", {"configured": True})
+    return status
+
+
+@router.post("/api/integrations/kite/profile")
+def post_kite_profile(
+    body: ProfileBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    try:
+        status = set_provider_profile(session, "kite", body.label, confirm=body.confirm)
+    except IntegrationError as exc:
+        _fail(exc)
+    _audit(session, principal.get("sub", "operator"), "integrations.kite.profile", "kite", {"label": body.label})
     return status
 
 
@@ -596,6 +682,22 @@ def put_angelone(
     except (IntegrationError, SecretBoxError) as exc:
         _fail(exc)
     _audit(session, principal.get("sub", "operator"), "integrations.angelone.save", "angelone", {"configured": True})
+    return status
+
+
+@router.post("/api/integrations/angelone/profile")
+def post_angelone_profile(
+    body: ProfileBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    try:
+        status = set_provider_profile(session, "angelone", body.label, confirm=body.confirm)
+    except IntegrationError as exc:
+        _fail(exc)
+    _audit(session, principal.get("sub", "operator"), "integrations.angelone.profile", "angelone", {"label": body.label})
     return status
 
 
@@ -674,6 +776,37 @@ def post_gemini_clear(
     return status
 
 
+@router.post("/api/integrations/gemini/disconnect")
+def post_gemini_disconnect(
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    try:
+        status = disconnect_provider(session, "gemini")
+    except IntegrationError as exc:
+        _fail(exc)
+    _audit(session, principal.get("sub", "operator"), "integrations.gemini.disconnect", "gemini", {"enabled": False})
+    return status
+
+
+@router.post("/api/integrations/{provider}/disconnect")
+def post_provider_disconnect(
+    provider: str,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    principal = require_csrf(request, settings)
+    try:
+        status = disconnect_provider(session, provider)
+    except IntegrationError as exc:
+        _fail(exc)
+    _audit(session, principal.get("sub", "operator"), f"integrations.{provider}.disconnect", provider, {"enabled": False})
+    return status
+
+
 @router.post("/api/integrations/gemini/enabled")
 def post_gemini_enabled(
     body: EnabledBody,
@@ -720,6 +853,15 @@ def post_gemini_test(
     except (IntegrationError, SecretBoxError) as exc:
         _fail(exc)
     return _test_response(status)
+
+
+@router.post("/api/integrations/gemini/models")
+def post_gemini_models(
+    body: ModelsQueryBody = ModelsQueryBody(),
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    return get_available_gemini_models(session, settings, draft_api_key=body.api_key)
 
 
 # ----------------------------------------------------------------------

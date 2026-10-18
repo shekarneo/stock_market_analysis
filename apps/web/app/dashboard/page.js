@@ -3,6 +3,10 @@
 import { useState } from "react";
 
 import V6Desk from "../components/V6Desk";
+import V6IntelligenceHub from "../components/V6IntelligenceHub";
+import InstrumentSelector from "../components/InstrumentSelector";
+import MultiInstrumentOverviewCard from "../components/MultiInstrumentOverviewCard";
+import InstrumentForecastCard from "../components/InstrumentForecastCard";
 import ResearchBoard, { BlockerList, csrf } from "../components/ResearchBoard";
 import ReadState from "../components/ReadState";
 import { useRead } from "../components/useRead";
@@ -11,6 +15,7 @@ import { flagLabel } from "../research/status.mjs";
 import { observationClass, valueText } from "../research/present.mjs";
 
 export default function DashboardPage() {
+  const { quotes } = useMarketData();
   return (
     <ResearchBoard
       title="Trade desk"
@@ -20,11 +25,19 @@ export default function DashboardPage() {
         <>
           <div className="session-ribbon">
             <strong>Standing aside</strong>
-            <span>Capital, charges, and an approved forecast are still open, so the ticket stays at stand aside.</span>
+            <span>
+              {status.experimental_paper_execution === "Enabled"
+                ? "Experimental paper execution is enabled with virtual risk controls. No eligible paper trade signal qualifies under current consensus (standing aside)."
+                : "Experimental paper execution is blocked: virtual risk controls (capital, max positions, loss limits) must be configured."}
+            </span>
             <span className="pill bad"><i />NO TRADE</span>
           </div>
+          <InstrumentSelector />
+          <MultiInstrumentOverviewCard />
+          <InstrumentForecastCard />
           <TradeTicket status={status} />
           <Snapshot />
+          <V6IntelligenceHub liveQuotes={quotes} />
           <V6Desk />
           <LiveQuotes />
           <DeskSummary />
@@ -36,9 +49,10 @@ export default function DashboardPage() {
 }
 
 function TradeTicket({ status }) {
-  const { quotes } = useMarketData();
-  const niftyLive = quotes.find((q) => q.instrument === "NIFTY");
-  const sensexLive = quotes.find((q) => q.instrument === "SENSEX");
+  const { quotes, spots } = useMarketData();
+  const niftyLive = quotes.find((q) => q.instrument === "NIFTY") || (spots["NIFTY"] ? { instrument: "NIFTY", last_price: spots["NIFTY"] } : null);
+  const sensexLive = quotes.find((q) => q.instrument === "SENSEX") || (spots["SENSEX"] ? { instrument: "SENSEX", last_price: spots["SENSEX"] } : null);
+  const isPaperEnabled = status.experimental_paper_execution === "Enabled" || status.paper_trading_active;
 
   return (
     <section className="trade-ticket" aria-labelledby="ticket-heading">
@@ -63,21 +77,29 @@ function TradeTicket({ status }) {
         <div><dt>Structure</dt><dd>not set</dd></div>
         <div><dt>Size</dt><dd>not set</dd></div>
         <div><dt>Expected net</dt><dd>not set</dd></div>
-        <div><dt>Capital</dt><dd>{valueText(status.risk_capital_inr)}</dd></div>
-        <div><dt>Forecast</dt><dd>{flagLabel(status.forecast_ready)}</dd></div>
+        <div><dt>Paper Capital</dt><dd>{valueText(status.risk_capital_inr)}</dd></div>
+        <div><dt>Paper Book</dt><dd>{isPaperEnabled ? "Enabled" : "Blocked"}</dd></div>
       </dl>
-      <BlockerList blockers={status.blockers} />
+      <div style={{ margin: "10px 0", padding: "10px 14px", background: "rgba(255,255,255,0.03)", borderRadius: "6px", fontSize: "0.85rem", border: "1px solid var(--border)" }}>
+        <strong>Signal Status:</strong>{" "}
+        {isPaperEnabled ? (
+          <span style={{ color: "var(--accent, #38bdf8)" }}>No eligible paper trade — Consensus forecast indicates neutral market conditions (standing aside). No trade signal qualifies under virtual risk filters.</span>
+        ) : (
+          <span style={{ color: "var(--bad, #f87171)" }}>Paper execution blocked — Virtual account controls require configuration (risk capital, position limits, loss fraction).</span>
+        )}
+      </div>
+      <BlockerList blockers={isPaperEnabled ? status.experimental_blockers : status.blockers} />
     </section>
   );
 }
 
 function Snapshot() {
   const read = useRead("/api/market/snapshot");
-  const { liveData } = useMarketData();
+  const { liveData, spots } = useMarketData();
   const market = read.body;
   const quotes = market?.quotes || [];
   const live = liveData;
-  const hasLive = Array.isArray(live?.quotes) && live.quotes.length > 0;
+  const hasLive = (Array.isArray(live?.quotes) && live.quotes.length > 0) || Boolean(spots["NIFTY"]);
 
   return (
     <section aria-labelledby="snapshot-heading" data-testid="snapshot">
@@ -87,17 +109,17 @@ function Snapshot() {
       </div>
       <p>Last prices on the tape. A blank card has no print. The source class sits under the price so a fixture is not read as a live quote.</p>
       <ReadState phase={read.phase} error={read.error} onRetry={read.retry} loadingText="Loading the local snapshot…">
-        {market ? (
+        {market || hasLive ? (
           <>
-            <MarketBoard market={market} live={live} />
+            <MarketBoard market={market || {}} live={live} spots={spots} />
             <p>
-              Provider {hasLive ? "Groww Direct / Live Feed" : valueText(market.provider)}. Origin {hasLive ? "LIVE_FEED" : valueText(market.origin)}. Live market data {hasLive ? "true" : valueText(market.live_market_data)}. Orders enabled {valueText(market.orders_enabled)}. As of {hasLive ? valueText(live?.retrieved_at || market.as_of) : valueText(market.as_of)}.
+              Provider {hasLive ? "Groww Direct / Live Feed" : valueText(market?.provider)}. Origin {hasLive ? "LIVE_FEED" : valueText(market?.origin)}. Live market data {hasLive ? "true" : valueText(market?.live_market_data)}. Orders enabled {valueText(market?.orders_enabled)}. As of {hasLive ? valueText(live?.retrieved_at || market?.as_of) : valueText(market?.as_of)}.
             </p>
-            <p>Readiness {valueText(market.readiness?.data_ready)}. Proposal blocked {valueText(market.readiness?.proposal_blocked)}.</p>
+            <p>Readiness {valueText(market?.readiness?.data_ready)}. Proposal blocked {valueText(market?.readiness?.proposal_blocked)}.</p>
             <ul>
-              {(market.readiness?.reasons || []).map((reason) => <li key={reason}>{reason}</li>)}
+              {(market?.readiness?.reasons || []).map((reason) => <li key={reason}>{reason}</li>)}
             </ul>
-            {(market.readiness?.reasons || []).length === 0 ? <p>No readiness reasons were returned.</p> : null}
+            {(market?.readiness?.reasons || []).length === 0 ? <p>No readiness reasons were returned.</p> : null}
 
             {hasLive && (
               <div className="table-wrap" style={{ marginBottom: "1rem" }}>
@@ -222,9 +244,9 @@ function Snapshot() {
               </div>
               {quotes.length === 0 ? <p>No quotes were returned.</p> : null}
               <h3>Context</h3>
-              {(market.context || []).length === 0 ? <p>No context rows were returned.</p> : (
+              {(market?.context || []).length === 0 ? <p>No context rows were returned.</p> : (
                 <ul>
-                  {(market.context || []).map((row) => (
+                  {(market?.context || []).map((row) => (
                     <li key={row.code}>{valueText(row.code)}: {valueText(row.value)} {row.unit || ""}</li>
                   ))}
                 </ul>
@@ -232,9 +254,9 @@ function Snapshot() {
             </details>
 
             <h3>Retrieval failures</h3>
-            {(market.failures || []).length === 0 ? <p>No retrieval failures were returned.</p> : (
+            {(market?.failures || []).length === 0 ? <p>No retrieval failures were returned.</p> : (
               <ul>
-                {market.failures.map((failure) => (
+                {(market?.failures || []).map((failure) => (
                   <li key={`${failure.code}-${failure.message}`}>{valueText(failure.code)}: {valueText(failure.message)}</li>
                 ))}
               </ul>
@@ -259,19 +281,19 @@ const BOARD = [
   { id: "USDINR", label: "USD/INR", source: "context" },
 ];
 
-function MarketBoard({ market, live }) {
+function MarketBoard({ market, live, spots = {} }) {
   const quotes = Array.isArray(market.quotes) ? market.quotes : [];
   const context = Array.isArray(market.context) ? market.context : [];
   return (
     <div className="board" data-testid="market-board">
-      {BOARD.map((item) => <BoardCard key={item.id} item={item} quotes={quotes} context={context} live={live} />)}
+      {BOARD.map((item) => <BoardCard key={item.id} item={item} quotes={quotes} context={context} live={live} spots={spots} />)}
     </div>
   );
 }
 
-function BoardCard({ item, quotes, context, live }) {
+function BoardCard({ item, quotes, context, live, spots = {} }) {
   if (item.source === "quote") {
-    const liveQuote = live?.quotes?.find((q) => q.instrument === item.id);
+    const liveQuote = live?.quotes?.find((q) => q.instrument === item.id) || (spots[item.id] ? { instrument: item.id, last_price: spots[item.id] } : null);
     if (liveQuote) {
       return (
         <article className="quote-card">

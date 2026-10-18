@@ -11,8 +11,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
-
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.settings import REPO_ROOT
 
 CONFIG_PATH = REPO_ROOT / "var" / "config" / "agent_system_config.json"
@@ -42,6 +41,27 @@ class SingleAgentConfig(BaseModel):
     fallback_provider: str | None = None
     fallback_model: str | None = None
     description: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_keys(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        out = dict(data)
+        if "model_id" in out:
+            val = out.pop("model_id")
+            if "model" not in out and val is not None:
+                out["model"] = val
+        if "max_output_tokens" in out:
+            val = out.pop("max_output_tokens")
+            if "max_tokens" not in out and val is not None:
+                out["max_tokens"] = val
+        if "fallback_model_id" in out:
+            val = out.pop("fallback_model_id")
+            if "fallback_model" not in out and val is not None:
+                out["fallback_model"] = val
+        return out
+
 
 
 class MultiAgentSystemConfig(BaseModel):
