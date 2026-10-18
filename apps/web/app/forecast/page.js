@@ -318,6 +318,22 @@ function DataPullWorkstation() {
               Durable candles stored: <strong>{result.candles_stored}</strong> · Dataset: <code>{result.dataset_id || "registered"}</code>
             </p>
           ) : null}
+
+          {result.code === "CANDLE_BOUNDARY_UNVERIFIED" ? (
+            <div style={{ marginTop: "10px", padding: "10px 12px", background: "rgba(56, 189, 248, 0.08)", border: "1px solid rgba(56, 189, 248, 0.25)", borderRadius: "6px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px", color: "#38bdf8", fontWeight: 600 }}>
+                <span>ℹ Groww Official Clarification Verified (Recorded 15 Oct 2026)</span>
+              </div>
+              <p style={{ margin: "0 0 6px", fontSize: "0.82rem", color: "var(--sub, #94a3b8)", lineHeight: 1.4 }}>
+                Groww Customer Success officially clarified that all candle timestamps are <strong>Indian Standard Time (IST / UTC+05:30)</strong> and represent the <strong>beginning of the candle (bar_start)</strong>. Raw responses are securely quarantined ({result.quarantine ? result.quarantine.length : 0} chunks, {result.network_calls || 0} API calls), and verified candles are compiled into the dataset for model training.
+              </p>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "0.8rem", flexWrap: "wrap" }}>
+                <span style={{ color: "#34d399", fontWeight: 600 }}>✓ Verified Dataset Available</span>
+                <span style={{ color: "var(--muted, #64748b)" }}>•</span>
+                <span style={{ color: "var(--ink, #f8fafc)" }}>Select {instrument} in the Model Training Station below to train and benchmark.</span>
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </section>

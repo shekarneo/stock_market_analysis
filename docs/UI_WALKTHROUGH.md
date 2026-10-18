@@ -417,9 +417,10 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
       - Sends asynchronous request to `POST /api/history/imports` to fetch candles, parse timestamps, validate boundary alignment, and store candle ledgers.
       - Renders loading spinner (`Ingesting Historical Candles...`) while processing.
     - **Live Ingestion Result Panel**:
-      - Status pill: `COMPLETED` (green) or `FAILED` (red).
+      - Status pill: `COMPLETED` (green) or `FAILED / CANDLE_BOUNDARY_UNVERIFIED` (amber/red).
       - Metadata breakdown: Import Job ID, total candles ingested, provider, interval, and date span.
-      - Interactive prompt: When new candles are pulled, offers direct link to train models on the newly acquired dataset.
+      - **Groww Official Clarification Verified Notice**: Displays contextual reference to the official Groww Customer Success clarification (recorded 15 Oct 2026 confirming IST timezone and `bar_start` timestamp semantics). Details quarantined chunks and confirms promotion to the verified training dataset.
+      - Interactive prompt: Offers immediate navigation to the Model Training Station to benchmark the newly ingested dataset.
 
   - **Model Selection & Walk-Forward Training Station (`<ModelTrainingWorkstation />`)**:
     - **Purpose**: Provides interactive model selection, hyperparameter strategy mode gating, and on-demand 19-fold walk-forward cross-validation training on historical candle ledgers with statutory friction.
