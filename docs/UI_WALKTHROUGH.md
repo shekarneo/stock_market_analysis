@@ -137,13 +137,11 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
 ## 4. Primary Trading Desk Pages
 
 ### 4.1 Overview Desk (`/dashboard`)
-- **Purpose**: The central morning-to-evening cockpit providing a fast executive snapshot of the market tape, current desk recommendation, live quotes, and active blockers without duplicating full analysis or forecasting desks.
+- **Purpose**: The central executive single-pane cockpit providing a streamlined visual overview of market tape, forward forecast trajectory cones, visual 12-agent consensus decisions, and active order tickets without dense walls of text.
 - **Components & Options**:
-  1. **Session Ribbon**:
-     - Visual badge indicating current posture (`Standing aside`, `NO TRADE`).
-     - Dynamic Context Message:
-       - When experimental paper trading is enabled: explains that experimental paper execution is active with virtual risk controls, but consensus forecast indicates neutral conditions so the ticket stands aside.
-       - When experimental paper trading is blocked: explains that virtual risk controls (capital, max positions, loss limits) must be configured.
+  1. **Active Posture Ribbon**:
+     - Visual badge indicating current posture (`Active Posture`, `NO TRADE`).
+     - Dynamic status message detailing whether virtual paper execution is active with configured risk controls or blocked pending configuration.
   2. **Quick Desk Shortcuts**:
      - `🤖 Open 12-Agent Analysis Desk →` (`/analysis`): Opens the full 12-agent consensus and options recommendation desk.
      - `⚡ Live & Auto Trading →` (`/live`): Opens the live paper/auto execution and outcome evaluation desk.
@@ -151,28 +149,36 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
      - `🎯 Options Chain & Greeks →` (`/options`): Opens the live strike matrix and Black-Scholes Greeks workstation.
   3. **Multi-Instrument Overview Card (`<MultiInstrumentOverviewCard />`)**:
      - 3-card comparison grid for NIFTY 50, SENSEX, and CRUDEOIL MINI.
-     - Displays Spot LTP, Day Change (pts & %), Session Phase, and multi-horizon consensus forecast badges.
-  4. **Trade Ticket (`<TradeTicket />`)**:
-     - Order ticket layout showing current recommendation (`STAND ASIDE`).
-     - Live Spot ticker reference showing current Groww LTP and daily OHLC (Open, High, Low, Close).
-     - Metadata list: Side, Structure, Size, Expected Net, Paper Capital, and Paper Book status (`Enabled` / `Blocked`).
-     - **Signal Status Callout Box**:
-       - Displays `No eligible paper trade — Consensus forecast indicates neutral market conditions (standing aside). No trade signal qualifies under virtual risk filters.` when paper trading is enabled without an active directional edge.
-       - Displays `Paper execution blocked — Virtual account controls require configuration (risk capital, position limits, loss fraction).` when virtual controls are missing.
-     - **Blocker List (`<BlockerList />`)**: Shows active gate blockers. When experimental paper execution is enabled, filters out production model approval gates and shows only active experimental blockers.
-  5. **Desk Summary (`<DeskSummary />`)**:
-     - Verified Market News: Headlines ingested from Economic Times and financial feeds.
-     - Volatility & Breadth: Current India VIX level and sectoral index performance. Displays `—` (dash) if live VIX quotes are unretrieved (no fictitious values).
-     - Verified Market Macro Context: Displays live prices for INDIA_VIX, USDINR (Live FX / RBI Reference), MCX_CRUDE, MCX_GOLD, DOW_JONES, and GIFT_NIFTY, safely defaulting to `—` (dash) when quotes are unpopulated.
-     - Multi-Agent Consensus: Summary of stage 1–4 synthesis with direct link to `/analysis`.
-     - Book Posture: Final risk call.
-  6. **Tape Snapshot (`<Snapshot />`)**:
-     - Live market tape featuring 10 domestic and global benchmarks: NIFTY, SENSEX, CRUDE MINI, INDIA VIX, S&P 500, NASDAQ, DOW JONES, US VIX, CRUDE OIL, and live USD/INR (`ExchangeRate-API Live FX` / `ECB / RBI Reference FX`).
-     - Live Feed Table: Underlying, Last Price, Origin (`Groww Live`), Class (`LIVE FEED`), Quality (`GOOD`), and Event Time.
-     - Collapsible Synthetic Baseline: Archive of synthetic test fixtures used for offline compliance testing.
-  7. **Diagnostics Grid (`<LiveQuotes />` & `<Quarantine />`)**:
+     - Displays Spot LTP, Day Change (pts & %), Session Phase (`OPEN` / `CLOSED`), Trading Hours, Data Source, and options support status.
+  4. **Live Candlestick & Forward Projected Trend Chart (`<PredictedTrendChart />`)**:
+     - Embedded directly on the overview desk to provide visual price context.
+     - Renders verified historical candlesticks (selectable 20, 35, or 50 bars), live streaming spot quotes, vertical cyan `NOW (Live Spot)` boundary line, forward projected 4-step trajectory path, expanding $\pm 1\sigma$ volatility confidence corridor, and target/stop badges.
+  5. **Visual Multi-Agent Decision & Execution Cockpit (`<VisualAgentDecisionCard />`)**:
+     - **Purpose**: Translates complex 12-agent mathematical and regime assessments into high-impact visual indicators, meters, and cards instead of dense text paragraphs.
+     - **Execution & Context Toolbar**:
+       - `Instrument Selector Chips`: Instant toggles for `NIFTY`, `SENSEX`, and `CRUDE` syncing with `MarketDataContext`.
+       - `⚡ Run Live Analysis` Button: One-click CTA that triggers on-demand `POST /api/market-analysis` across all 12 specialist agents with an animated loading spinner.
+     - **Visual Executive Verdict Deck**:
+       - `Core Trade Decision Card`: High-impact stance badge (`🟢 STRONG BUY CE`, `🔴 STRONG BUY PE`, `🟡 STAND ASIDE · NO TRADE`) with deadband and safety gate indicators.
+       - `Consensus Spectrum Meter`: Horizontal visual spectrum bar (-10 to +10) with Red-to-Green gradient and dynamic pointer showing exact net directional score (e.g. `+3.5 Bullish` or `0.0 Neutral`).
+       - `Bayesian Epistemic Gate Meter`: Safety progress bar comparing composite epistemic uncertainty against the strict `0.65` cutoff threshold (`✓ Uncertainty Safe` vs `⚠️ Safety Veto Engaged`).
+       - `Quant-Agent Confluence Card`: Visual confluence badge comparing machine learning calibrated probabilities (e.g. `53.8% P(Up)`) against specialist consensus to flag alignment or veto divergence.
+     - **12 Specialist Perspectives Visual Grid**:
+       - Displays all 12 quantitative specialist agents (News Sentiment 📰, Global Macro 🌐, Intermarket & MCX 🛢️, Order Flow 📊, Options & Greeks ⚡, Trend & Momentum 📈, Mean Reversion 🔄, HTF Resampling ⏱, Quant ML Forecaster 🔬, Bayesian Gate 🛡️, Expected Payoff 💰, Consensus Arbiter ⚖️).
+       - Each card features: Agent Icon, Agent Name, Sub-Role, Visual Stance Badge (`BULLISH` in green, `BEARISH` in red, `NEUTRAL` in gray), and a visual confidence progress bar with percentage readout.
+       - `Grid / Compact View Toggle`: Allows switching between a detailed grid view and a space-saving compact matrix.
+  6. **Visual Order Ticket (`<TradeTicket />`)**:
+     - Clean, focused order ticket showing current recommendation (`STAND ASIDE`), live Groww spot reference tag, side, structure, paper capital, and paper book readiness.
+     - `Signal Status Badge`: Visually highlights paper filter qualification status.
+     - `Blocker List (`<BlockerList />`)`: Renders active pipeline gate blockers as visual tag chips.
+  7. **Market Tape & Verified Macro Indicators (`<Snapshot />`)**:
+     - `<MarketBoard />`: Real-time quote cards across 10 domestic and global benchmarks (NIFTY, SENSEX, CRUDE MINI, INDIA VIX, S&P 500, NASDAQ, DOW JONES, US VIX, CRUDE OIL, USD/INR).
+     - `Verified Market Macro Indicators Grid`: Clean visual cards displaying live prints for India VIX (NSE Volatility), USD/INR (RBI Reference), MCX Crude Oil, MCX Gold, Dow Jones, and GIFT Nifty.
+     - `Collapsible Feed Provenance & Compliance Archive`: Expandable `<details>` drawer cleanly archiving raw tick inspection tables, provider readiness metadata, and synthetic fixtures for compliance auditing without cluttering the executive view.
+  8. **Diagnostics Grid (`<LiveQuotes />` & `<Quarantine />`)**:
      - **Live Quotes Reader (`<LiveQuotes />`)**: Direct inspection of raw quotes retrieved from Groww with domestic indices, MCX commodities, global benchmarks, and sectoral/volatility prints, plus `Read Groww quotes` button.
      - **Quarantine Ledger (`<Quarantine />`)**: Table of any candle files quarantined due to invalid timestamp formatting, clock drift, or empty payloads.
+
 
 ---
 

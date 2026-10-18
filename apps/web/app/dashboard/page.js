@@ -4,6 +4,8 @@ import { useState } from "react";
 import Link from "next/link";
 
 import MultiInstrumentOverviewCard from "../components/MultiInstrumentOverviewCard";
+import PredictedTrendChart from "../components/PredictedTrendChart";
+import VisualAgentDecisionCard from "../components/VisualAgentDecisionCard";
 import ResearchBoard, { BlockerList } from "../components/ResearchBoard";
 import ReadState from "../components/ReadState";
 import { useRead } from "../components/useRead";
@@ -14,16 +16,16 @@ export default function DashboardPage() {
   return (
     <ResearchBoard
       title="Trade desk"
-      lede="Executive market overview, multi-instrument tape, and active order ticket. Deep-dive multi-agent synthesis, statistical forecasts, and auto-trading live in their dedicated desks."
+      lede="Executive single-pane cockpit: live candlestick forecasts, visual 12-agent consensus decisions, multi-instrument tape, and order ticket."
     >
       {({ status }) => (
         <>
           <div className="session-ribbon">
-            <strong>Standing aside</strong>
+            <strong>Active Posture</strong>
             <span>
               {status.experimental_paper_execution === "Enabled"
-                ? "Experimental paper execution is enabled with virtual risk controls. No eligible paper trade signal qualifies under current consensus (standing aside)."
-                : "Experimental paper execution is blocked: virtual risk controls (capital, max positions, loss limits) must be configured."}
+                ? "Virtual paper execution is enabled with active risk controls. Multi-agent consensus and forward trend projections are streaming live."
+                : "Virtual paper execution is blocked: configure virtual capital and loss limits in risk settings."}
             </span>
             <span className="pill bad"><i />NO TRADE</span>
           </div>
@@ -93,8 +95,9 @@ export default function DashboardPage() {
           </div>
 
           <MultiInstrumentOverviewCard />
+          <PredictedTrendChart />
+          <VisualAgentDecisionCard />
           <TradeTicket status={status} />
-          <DeskSummary />
           <Snapshot />
           <div className="v6-grid" style={{ marginTop: "16px" }}>
             <LiveQuotes />
@@ -105,6 +108,7 @@ export default function DashboardPage() {
     </ResearchBoard>
   );
 }
+
 
 function TradeTicket({ status }) {
   const { quotes, spots } = useMarketData();
@@ -117,8 +121,8 @@ function TradeTicket({ status }) {
       <div>
         <p className="eyebrow">Order ticket</p>
         <h2 id="ticket-heading">NIFTY · stand aside</h2>
-        <p>
-          Long call and long put are the only structures this book will consider. Size, premium, and expected net stay blank until the analysis can price them.
+        <p style={{ color: "var(--sub, #94a3b8)", fontSize: "0.85rem", margin: "4px 0 8px" }}>
+          Single-leg long call / put execution under fail-closed virtual risk controls.
         </p>
         {niftyLive && (
           <p className="ticket-live-tag" style={{ color: "var(--accent, #38bdf8)", fontSize: "0.88rem", marginTop: "4px" }}>
@@ -138,12 +142,12 @@ function TradeTicket({ status }) {
         <div><dt>Paper Capital</dt><dd>{valueText(status.risk_capital_inr)}</dd></div>
         <div><dt>Paper Book</dt><dd>{isPaperEnabled ? "Enabled" : "Blocked"}</dd></div>
       </dl>
-      <div style={{ margin: "10px 0", padding: "10px 14px", background: "rgba(255,255,255,0.03)", borderRadius: "6px", fontSize: "0.85rem", border: "1px solid var(--border)" }}>
+      <div style={{ margin: "10px 0", padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderRadius: "6px", fontSize: "0.82rem", border: "1px solid var(--border)", display: "flex", alignItems: "center", gap: "8px" }}>
         <strong>Signal Status:</strong>{" "}
         {isPaperEnabled ? (
-          <span style={{ color: "var(--accent, #38bdf8)" }}>No eligible paper trade — Consensus forecast indicates neutral market conditions (standing aside). No trade signal qualifies under virtual risk filters.</span>
+          <span style={{ color: "var(--accent, #38bdf8)" }}>Neutral consensus standing aside — No signal qualifies under virtual risk filters.</span>
         ) : (
-          <span style={{ color: "var(--bad, #f87171)" }}>Paper execution blocked — Virtual account controls require configuration (risk capital, position limits, loss fraction).</span>
+          <span style={{ color: "var(--bad, #f87171)" }}>Paper execution blocked — Virtual controls require configuration.</span>
         )}
       </div>
       <BlockerList blockers={isPaperEnabled ? status.experimental_blockers : status.blockers} />
@@ -161,113 +165,168 @@ function Snapshot() {
 
   return (
     <section aria-labelledby="snapshot-heading" data-testid="snapshot">
-      <div className="verdict">
-        <h2 id="snapshot-heading">Tape</h2>
-        <strong>NO TRADE</strong>
+      <div className="verdict" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <h2 id="snapshot-heading" style={{ margin: 0 }}>Market Tape &amp; Global Benchmarks</h2>
+          <span style={{ fontSize: "0.78rem", color: "var(--sub, #94a3b8)" }}>
+            Real-time multi-market feed across domestic indices, MCX commodities, FX, and global equities.
+          </span>
+        </div>
+        <span className="pill bad"><i />NO TRADE</span>
       </div>
-      <p>Last prices on the tape. A blank card has no print. The source class sits under the price so a fixture is not read as a live quote.</p>
+
       <ReadState phase={read.phase} error={read.error} onRetry={read.retry} loadingText="Loading the local snapshot…">
         {market || hasLive ? (
           <>
             <MarketBoard market={market || {}} live={live} spots={spots} />
-            <p>
-              Provider {hasLive ? "Groww Direct / Live Feed" : valueText(market?.provider)}. Origin {hasLive ? "LIVE_FEED" : valueText(market?.origin)}. Live market data {hasLive ? "true" : valueText(market?.live_market_data)}. Orders enabled {valueText(market?.orders_enabled)}. As of {hasLive ? valueText(live?.retrieved_at || market?.as_of) : valueText(market?.as_of)}.
-            </p>
-            <p>Readiness {valueText(market?.readiness?.data_ready)}. Proposal blocked {valueText(market?.readiness?.proposal_blocked)}.</p>
-            <ul>
-              {(market?.readiness?.reasons || []).map((reason) => <li key={reason}>{reason}</li>)}
-            </ul>
-            {(market?.readiness?.reasons || []).length === 0 ? <p>No readiness reasons were returned.</p> : null}
 
+            {/* Visual Macro Indicator Cards Grid */}
             {hasLive && (
-              <div className="table-wrap" style={{ marginBottom: "1rem" }}>
-                <table>
-                  <caption>Live Market Quotes & Verified Feeds (Groww)</caption>
-                  <thead>
-                    <tr>
-                      <th>Underlying</th>
-                      <th>Last price</th>
-                      <th>Origin</th>
-                      <th>Class</th>
-                      <th>Quality</th>
-                      <th>Event time</th>
-                      <th>Feed status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(live.quotes || []).map((lq) => (
-                      <tr key={lq.instrument}>
-                        <td><strong>{lq.instrument}</strong></td>
-                        <td>₹{Number(lq.last_price).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
-                        <td>Groww Live</td>
-                        <td><span className="data-badge unverified">LIVE FEED</span></td>
-                        <td>GOOD</td>
-                        <td>{valueText(lq.event_timestamp || lq.retrieved_at)}</td>
-                        <td>{lq.ohlc ? `O: ₹${lq.ohlc.open} · H: ₹${lq.ohlc.high} · L: ₹${lq.ohlc.low}` : "Verified LTP"}</td>
-                      </tr>
-                    ))}
-                    {(live.sectoral_indices || []).filter((s) => s.instrument === "VIX").map((si) => (
-                      <tr key={si.instrument}>
-                        <td><strong>{si.name || si.instrument}</strong></td>
-                        <td>{Number(si.last_price).toLocaleString("en-IN", { minimumFractionDigits: 2 })} {si.unit || ""}</td>
-                        <td>Groww Market</td>
-                        <td><span className="data-badge unverified">{si.instrument === "VIX" ? "NSE VIX" : "SECTORAL"}</span></td>
-                        <td>GOOD</td>
-                        <td>{valueText(si.retrieved_at)}</td>
-                        <td>{si.day_change_text || "Sectoral Index"}</td>
-                      </tr>
-                    ))}
-                    {(live.commodities || []).filter((c) => c.instrument === "CRUDE" || c.instrument === "GOLD").map((co) => (
-                      <tr key={co.instrument}>
-                        <td><strong>{co.name || co.instrument}</strong></td>
-                        <td>₹{Number(co.last_price).toLocaleString("en-IN")} {co.unit || ""}</td>
-                        <td>MCX</td>
-                        <td><span className="data-badge unverified">COMMODITY</span></td>
-                        <td>GOOD</td>
-                        <td>{valueText(co.retrieved_at)}</td>
-                        <td>MCX Commodity Print</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div style={{ marginTop: "1rem", marginBottom: "1rem" }}>
+                <h3 style={{ fontSize: "0.92rem", fontWeight: 700, marginBottom: "8px", color: "var(--ink, #fff)" }}>
+                  🌐 Verified Market Macro Indicators
+                </h3>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "10px" }}>
+                  <div style={{ padding: "10px 12px", background: "rgba(18, 26, 43, 0.65)", borderRadius: "8px", border: "1px solid rgba(255, 255, 255, 0.08)" }}>
+                    <span style={{ fontSize: "0.68rem", color: "var(--sub, #94a3b8)", textTransform: "uppercase", fontWeight: 700 }}>India VIX</span>
+                    <div style={{ fontSize: "1.15rem", fontWeight: 800, color: "#f8fafc", margin: "2px 0" }}>
+                      {live.sectoral_indices?.find((s) => s.instrument === "VIX")?.last_price || "—"} <small style={{ fontSize: "0.72rem", color: "#94a3b8" }}>pts</small>
+                    </div>
+                    <span style={{ fontSize: "0.68rem", color: "#64748b" }}>NSE Volatility</span>
+                  </div>
+
+                  <div style={{ padding: "10px 12px", background: "rgba(18, 26, 43, 0.65)", borderRadius: "8px", border: "1px solid rgba(255, 255, 255, 0.08)" }}>
+                    <span style={{ fontSize: "0.68rem", color: "var(--sub, #94a3b8)", textTransform: "uppercase", fontWeight: 700 }}>USD / INR</span>
+                    <div style={{ fontSize: "1.15rem", fontWeight: 800, color: "#f8fafc", margin: "2px 0" }}>
+                      ₹{live.global_indices?.find((g) => g.instrument === "USDINR" || g.instrument === "USDINR_REF")?.last_price || "—"}
+                    </div>
+                    <span style={{ fontSize: "0.68rem", color: "#64748b" }}>RBI Reference FX</span>
+                  </div>
+
+                  <div style={{ padding: "10px 12px", background: "rgba(18, 26, 43, 0.65)", borderRadius: "8px", border: "1px solid rgba(255, 255, 255, 0.08)" }}>
+                    <span style={{ fontSize: "0.68rem", color: "var(--sub, #94a3b8)", textTransform: "uppercase", fontWeight: 700 }}>MCX Crude Oil</span>
+                    <div style={{ fontSize: "1.15rem", fontWeight: 800, color: "#f8fafc", margin: "2px 0" }}>
+                      ₹{live.commodities?.find((c) => c.instrument === "CRUDE" || c.instrument === "CRUDEOILMINI" || c.instrument === "CRUDEMINI")?.last_price || "—"} <small style={{ fontSize: "0.72rem", color: "#94a3b8" }}>₹/bbl</small>
+                    </div>
+                    <span style={{ fontSize: "0.68rem", color: "#64748b" }}>MCX Commodity Print</span>
+                  </div>
+
+                  <div style={{ padding: "10px 12px", background: "rgba(18, 26, 43, 0.65)", borderRadius: "8px", border: "1px solid rgba(255, 255, 255, 0.08)" }}>
+                    <span style={{ fontSize: "0.68rem", color: "var(--sub, #94a3b8)", textTransform: "uppercase", fontWeight: 700 }}>MCX Gold</span>
+                    <div style={{ fontSize: "1.15rem", fontWeight: 800, color: "#f8fafc", margin: "2px 0" }}>
+                      ₹{live.commodities?.find((c) => c.instrument === "GOLD" || c.instrument === "GOLDMINI")?.last_price || "—"} <small style={{ fontSize: "0.72rem", color: "#94a3b8" }}>₹/10g</small>
+                    </div>
+                    <span style={{ fontSize: "0.68rem", color: "#64748b" }}>MCX Commodity Print</span>
+                  </div>
+
+                  <div style={{ padding: "10px 12px", background: "rgba(18, 26, 43, 0.65)", borderRadius: "8px", border: "1px solid rgba(255, 255, 255, 0.08)" }}>
+                    <span style={{ fontSize: "0.68rem", color: "var(--sub, #94a3b8)", textTransform: "uppercase", fontWeight: 700 }}>Dow Jones</span>
+                    <div style={{ fontSize: "1.15rem", fontWeight: 800, color: "#f8fafc", margin: "2px 0" }}>
+                      {live.global_indices?.find((g) => g.instrument === "DJI")?.last_price || "—"} <small style={{ fontSize: "0.72rem", color: "#94a3b8" }}>pts</small>
+                    </div>
+                    <span style={{ fontSize: "0.68rem", color: "#64748b" }}>Global Benchmark</span>
+                  </div>
+
+                  <div style={{ padding: "10px 12px", background: "rgba(18, 26, 43, 0.65)", borderRadius: "8px", border: "1px solid rgba(255, 255, 255, 0.08)" }}>
+                    <span style={{ fontSize: "0.68rem", color: "var(--sub, #94a3b8)", textTransform: "uppercase", fontWeight: 700 }}>GIFT Nifty</span>
+                    <div style={{ fontSize: "1.15rem", fontWeight: 800, color: "#f8fafc", margin: "2px 0" }}>
+                      {live.global_indices?.find((g) => g.instrument === "GIFTNIFTY")?.last_price || "—"} <small style={{ fontSize: "0.72rem", color: "#94a3b8" }}>pts</small>
+                    </div>
+                    <span style={{ fontSize: "0.68rem", color: "#64748b" }}>NSE IX GIFT City</span>
+                  </div>
+                </div>
               </div>
             )}
 
-            {hasLive && (
-              <div style={{ marginBottom: "1.25rem" }}>
-                <h3>Verified Market Macro Context</h3>
-                <ul>
-                  <li>INDIA_VIX: {live.sectoral_indices?.find((s) => s.instrument === "VIX")?.last_price || "—"} pts (NSE VIX)</li>
-                  <li>USDINR: ₹{live.global_indices?.find((g) => g.instrument === "USDINR" || g.instrument === "USDINR_REF")?.last_price || "—"} INR per USD (Live FX / RBI Reference)</li>
-                  <li>MCX_CRUDE: ₹{live.commodities?.find((c) => c.instrument === "CRUDE" || c.instrument === "CRUDEOILMINI" || c.instrument === "CRUDEMINI")?.last_price || "—"} ₹/bbl (MCX Commodity)</li>
-                  <li>MCX_GOLD: ₹{live.commodities?.find((c) => c.instrument === "GOLD" || c.instrument === "GOLDMINI")?.last_price || "—"} ₹/10g (MCX Commodity)</li>
-                  <li>DOW_JONES: {live.global_indices?.find((g) => g.instrument === "DJI")?.last_price || "—"} pts (Global Benchmark)</li>
-                  <li>GIFT_NIFTY: {live.global_indices?.find((g) => g.instrument === "GIFTNIFTY")?.last_price || "—"} pts (NSE IX GIFT City)</li>
-                </ul>
-              </div>
-            )}
-
+            {/* Collapsible Feed Tables & Compliance Audit Dump */}
             <details
               style={{
                 marginTop: "1rem",
                 padding: "10px 14px",
                 border: "1px dashed var(--border, #334155)",
-                borderRadius: "6px",
+                borderRadius: "8px",
                 backgroundColor: "var(--card-bg, rgba(15, 23, 42, 0.4))",
               }}
-              open={!hasLive}
+              open={false}
             >
               <summary
                 style={{
                   cursor: "pointer",
                   color: "var(--sub, #94a3b8)",
-                  fontSize: "0.85rem",
+                  fontSize: "0.82rem",
                   fontWeight: 600,
                   outline: "none",
                 }}
               >
-                {hasLive ? "Synthetic Baseline & Compliance Fixture (Collapsible Archive)" : "Snapshot quotes and their source class"}
+                🔍 Feed Provenance, Raw Tick Tables &amp; Compliance Archive (Click to Expand) ▾
               </summary>
+
+              <div style={{ marginTop: "12px", fontSize: "0.82rem", color: "var(--sub, #94a3b8)" }}>
+                <p>
+                  Provider: <strong>{hasLive ? "Groww Direct / Live Feed" : valueText(market?.provider)}</strong> · Origin: <strong>{hasLive ? "LIVE_FEED" : valueText(market?.origin)}</strong> · Data Verified: <strong>{hasLive ? "true" : valueText(market?.live_market_data)}</strong> · Orders Enabled: <strong>{valueText(market?.orders_enabled)}</strong>
+                </p>
+                <p>
+                  Readiness: {valueText(market?.readiness?.data_ready)} · Proposal blocked: {valueText(market?.readiness?.proposal_blocked)}
+                </p>
+                <ul>
+                  {(market?.readiness?.reasons || []).map((reason) => <li key={reason}>{reason}</li>)}
+                </ul>
+              </div>
+
+              {hasLive && (
+                <div className="table-wrap" style={{ marginTop: "10px", marginBottom: "1rem" }}>
+                  <table>
+                    <caption>Live Market Quotes & Verified Feeds (Groww)</caption>
+                    <thead>
+                      <tr>
+                        <th>Underlying</th>
+                        <th>Last price</th>
+                        <th>Origin</th>
+                        <th>Class</th>
+                        <th>Quality</th>
+                        <th>Event time</th>
+                        <th>Feed status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(live.quotes || []).map((lq) => (
+                        <tr key={lq.instrument}>
+                          <td><strong>{lq.instrument}</strong></td>
+                          <td>₹{Number(lq.last_price).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</td>
+                          <td>Groww Live</td>
+                          <td><span className="data-badge unverified">LIVE FEED</span></td>
+                          <td>GOOD</td>
+                          <td>{valueText(lq.event_timestamp || lq.retrieved_at)}</td>
+                          <td>{lq.ohlc ? `O: ₹${lq.ohlc.open} · H: ₹${lq.ohlc.high} · L: ₹${lq.ohlc.low}` : "Verified LTP"}</td>
+                        </tr>
+                      ))}
+                      {(live.sectoral_indices || []).filter((s) => s.instrument === "VIX").map((si) => (
+                        <tr key={si.instrument}>
+                          <td><strong>{si.name || si.instrument}</strong></td>
+                          <td>{Number(si.last_price).toLocaleString("en-IN", { minimumFractionDigits: 2 })} {si.unit || ""}</td>
+                          <td>Groww Market</td>
+                          <td><span className="data-badge unverified">{si.instrument === "VIX" ? "NSE VIX" : "SECTORAL"}</span></td>
+                          <td>GOOD</td>
+                          <td>{valueText(si.retrieved_at)}</td>
+                          <td>{si.day_change_text || "Sectoral Index"}</td>
+                        </tr>
+                      ))}
+                      {(live.commodities || []).filter((c) => c.instrument === "CRUDE" || c.instrument === "GOLD").map((co) => (
+                        <tr key={co.instrument}>
+                          <td><strong>{co.name || co.instrument}</strong></td>
+                          <td>₹{Number(co.last_price).toLocaleString("en-IN")} {co.unit || ""}</td>
+                          <td>MCX</td>
+                          <td><span className="data-badge unverified">COMMODITY</span></td>
+                          <td>GOOD</td>
+                          <td>{valueText(co.retrieved_at)}</td>
+                          <td>MCX Commodity Print</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
               <div className="table-wrap" style={{ marginTop: "10px" }}>
                 <table>
                   <caption>Snapshot quotes and their source class</caption>
@@ -300,31 +359,14 @@ function Snapshot() {
                   </tbody>
                 </table>
               </div>
-              {quotes.length === 0 ? <p>No quotes were returned.</p> : null}
-              <h3>Context</h3>
-              {(market?.context || []).length === 0 ? <p>No context rows were returned.</p> : (
-                <ul>
-                  {(market?.context || []).map((row) => (
-                    <li key={row.code}>{valueText(row.code)}: {valueText(row.value)} {row.unit || ""}</li>
-                  ))}
-                </ul>
-              )}
             </details>
-
-            <h3>Retrieval failures</h3>
-            {(market?.failures || []).length === 0 ? <p>No retrieval failures were returned.</p> : (
-              <ul>
-                {(market?.failures || []).map((failure) => (
-                  <li key={`${failure.code}-${failure.message}`}>{valueText(failure.code)}: {valueText(failure.message)}</li>
-                ))}
-              </ul>
-            )}
           </>
         ) : null}
       </ReadState>
     </section>
   );
 }
+
 
 const BOARD = [
   { id: "NIFTY", label: "NIFTY 50", source: "quote" },
@@ -583,86 +625,6 @@ function LiveQuotes() {
         ) : null}
       </ReadState>
     </section>
-  );
-}
-
-function DeskSummary() {
-  const forecasts = useRead("/api/forecasts");
-  const options = useRead("/api/options/research");
-  const news = useRead("/api/news");
-  const { liveData } = useMarketData();
-  const approved = forecasts.body?.forecasts || [];
-  const newsItems = news.body?.items || [];
-  const secIndices = liveData?.sectoral_indices || [];
-  const vixItem = secIndices.find((s) => s.instrument === "VIX");
-
-  return (
-    <div className="v6-grid">
-      <section aria-labelledby="context-heading">
-        <h2 id="context-heading">Trade plan</h2>
-        <div className="stack">
-          <article className="brief">
-            <h3>Verified Market News</h3>
-            {newsItems.length > 0 ? (
-              <>
-                <p><strong>{newsItems.length} verified news articles</strong> ingested from Economic Times and financial feeds.</p>
-                <ul style={{ paddingLeft: "1.2rem", marginTop: "0.5rem" }}>
-                  {newsItems.slice(0, 2).map((item, idx) => (
-                    <li key={idx} style={{ fontSize: "0.85rem", marginBottom: "4px" }}>
-                      {item.claim} ({item.source_name})
-                    </li>
-                  ))}
-                </ul>
-              </>
-            ) : (
-              <p>Headlines for the thesis are on the analysis desk. A headline does not change the side of the ticket.</p>
-            )}
-          </article>
-          <article className="brief">
-            <h3>VIX, Breadth & Sectoral Context</h3>
-            {secIndices.length > 0 ? (
-              <div>
-                <p>
-                  <strong>India VIX:</strong> {vixItem ? `${vixItem.last_price} (${vixItem.day_change_text})` : "—"}
-                </p>
-                <p style={{ fontSize: "0.85rem", marginTop: "4px" }}>
-                  {secIndices.filter((s) => s.instrument !== "VIX").map((s) => `${s.name}: ${s.last_price} (${s.day_change_text})`).join(" · ")}
-                </p>
-              </div>
-            ) : (
-              <>
-                <p>No breadth or sector rows were returned.</p>
-                <p>FII/DII is not set. India VIX is shown above only when the snapshot includes it.</p>
-              </>
-            )}
-          </article>
-          <article className="brief">
-            <h3>Multi-Agent Scenarios</h3>
-            <p>Stage 1 News, Stage 2 Macro/Commodities, Stage 3 Technicals, and Stage 4 Risk consensus synthesized.</p>
-            <p>Automated scenario matrices and option strike recommendations are live on the <a href="/analysis">Analysis Desk</a>.</p>
-          </article>
-        </div>
-      </section>
-      <section aria-labelledby="summary-heading">
-        <h2 id="summary-heading">Book</h2>
-        <article className="brief">
-          <h3>Call</h3>
-          <p>NO TRADE. The ticket stays stand aside until the forecast and the risk book both allow a side.</p>
-        </article>
-        <article className="brief">
-          <h3>Quant forecast</h3>
-          <p>{forecasts.phase === "error" ? forecasts.error : approved.length === 0 ? "No approved forecast was returned." : `${approved.length} approved forecast rows.`}</p>
-        </article>
-        <article className="brief">
-          <h3>Options</h3>
-          <p>{options.phase === "error" ? options.error : `Decision ${valueText(options.body?.decision)}. Expected net ${options.body?.expected_net == null ? "not set" : valueText(options.body.expected_net)}.`}</p>
-        </article>
-        <article className="brief">
-          <h3>Outcome tracking</h3>
-          <p>Execution disabled by fail-closed gate. Real capital allocation required.</p>
-        </article>
-      </section>
-    </div>
   );
 }
 
