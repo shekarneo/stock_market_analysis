@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useRead } from "./useRead";
 import { valueText } from "../research/present.mjs";
