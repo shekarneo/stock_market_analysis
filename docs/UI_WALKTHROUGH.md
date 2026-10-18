@@ -201,7 +201,7 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   - `Market Quotes Feed`: Connection state (🟢 Live Active / 🟡 Polling), active quotes count, polling interval, and public Groww LTP reader status. Clarifies that this reads domestic public/cached market index snapshots and commodities, distinct from private broker trading authentication.
   - `Specialist Agents`: Status (🟢 12 Online), deterministic quant consensus engine mode, news item count.
   - `AI Commentary`: In-loop state (🟢 In-Loop with LLM commentary / ⚪ Standby with Zero-Hallucination Deterministic Quant Core). Clarifies that specialist multi-agent analysis runs mathematical and technical quant rules deterministically without requiring an LLM.
-  - `ML Forecasting`: Models ready count (🟢 Models Ready / 🟡 Fitted Active), model architecture, probability engines.
+  - `ML Forecasting`: Models ready count (🟢 Models Ready / 🟡 Fitted Active), model architecture, probability engines. **Interactive Deck Card**: Clicking this card activates the `📈 ML Forecasting & Trend Graph` tab, rendering the live candlestick forward trajectory chart and volatility confidence corridor.
 - **Institutional Desk Verdict Hero Banner**:
   - High-impact horizontal banner spanning the full desk width with accent color coding (Amber for Caution/Stand Aside, Emerald for Bullish Buy, Crimson for Bearish Sell).
   - Consensus Signal Badge (e.g., `⚠️ NO TRADE / CAUTION`, `🟢 STRONG_BUY_CE`, `🔴 STRONG_BUY_PE`).
@@ -211,18 +211,24 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
 - **Command Toolbar & Analysis Launcher**:
   - Quick Presets: `🇮🇳 All Indices (3)`, `🛢️ MCX Commodities (8)`, `🌐 All Markets (15)`, and `Clear`.
   - Granular Instrument Selector Chips: Select individual indices (NIFTY, SENSEX), MCX commodities (Crude Mini, Gold Mini, Silver Mini, NG Mini), and global benchmarks.
-  - Execution Options: `⚡ Combine ML Forecast with Agent Consensus (Quant Fusion)` toggle, `Include model commentary` toggle, `🔄 Auto-run Analysis` toggle (`imm_auto_run_analysis`), and `Analysis auto-run interval` dropdown (`Every 30s`, `Every 1m (60s)`, `Every 2m (120s)`, `Every 5m (300s)`, `Every 15m (900s)`, persisted in `imm_analysis_interval_sec`).
+  - Execution Options:
+    - `⚡ Combine ML Forecast with Agent Consensus (Quant Fusion)` toggle: Combines statistical model probabilities with the 12-agent consensus. When checked, automatically activates the forward forecast chart.
+    - `📈 Forecast Graph: Visible` inline toggle button: Appears alongside Quant Fusion to quickly show or hide the `<PredictedTrendChart />` directly above the trade decisions.
+    - `Include model commentary` toggle.
+    - `🔄 Auto-run Analysis` toggle (`imm_auto_run_analysis`), and `Analysis auto-run interval` dropdown (`Every 30s`, `Every 1m (60s)`, `Every 2m (120s)`, `Every 5m (300s)`, `Every 15m (900s)`, persisted in `imm_analysis_interval_sec`).
   - Primary CTA: `Run analysis (X Selected)` button with live execution feedback.
-- **5 Inner Desk Navigation Tabs**:
-  1. `🎯 Trade Decisions & Options`: Real spot-based option picks (ATM/OTM/ITM), strike targets, stop losses, and agent consensus.
-  2. `🤖 12 Specialist Agents`: The 12 quantitative specialist agents structured across 4 sequential analytical stages.
-  3. `📋 Master Dossier & Pipeline (Stages 0–14)`: Institutional audit dossier containing 4 sub-tabs:
+- **6 Inner Desk Navigation Tabs**:
+  1. `🎯 Trade Decisions & Options`: Real spot-based option picks (ATM/OTM/ITM), strike targets, stop losses, and agent consensus. When Quant Fusion is active, embeds `<PredictedTrendChart />` right above the decision matrix for instant trajectory and strike verification.
+  2. `📈 ML Forecasting & Trend Graph`: Dedicated full-width workspace view rendering `<PredictedTrendChart />` with live Groww candlesticks, lookback selector (20, 35, 50 bars), cyan `NOW (Live Spot)` boundary line, forward projected trend path, and dynamic $\pm 1\sigma$ volatility confidence cones.
+  3. `🤖 12 Specialist Agents`: The 12 quantitative specialist agents structured across 4 sequential analytical stages.
+  4. `📋 Master Dossier & Pipeline (Stages 0–14)`: Institutional audit dossier containing 4 sub-tabs:
      - `V6 Master Dossier (Stages 0–14)`: Granular stage-by-stage cards covering Data Quality, Executive View, Global Macro, Fresh News, Geopolitics, Energy & FX, NIFTY Spot, SENSEX Spot, VIX & Sectors, Options Chain & OI, Price Confirmation, Quantitative Forecasts, Scenario Calibration, Contrarian Scan, and Final Verdict.
      - `Pipeline Stages (19)`: Complete tabular audit of all 19 pipeline nodes, displaying stage number, stage name, status pill badge, and explicit audit justification detail.
      - `Contradictions & Red Team`: Explicit contrarian challenges comparing macro narratives against price actions and technical order flows.
      - `Raw Observations`: Inspection table of all raw ingested telemetry rows, timestamps, data classes, SHA-256 hashes, and verification provenance.
-  4. `📰 Headlines & News Wire`: Real-time news sentiment items with an embedded `⚙ Configure Feeds & Web Pages` collapsible drawer for `<NewsSourcesManager />`.
-  5. `🛡️ Risk & Contradictions`: Expected Net Payoff, statutory friction breakdown (STT, exchange turnover, GST, SEBI charges, stamp duty, slippage buffer), hard risk limits, and fail-closed safety gates.
+  5. `📰 Headlines & News Wire`: Real-time news sentiment items with an embedded `⚙ Configure Feeds & Web Pages` collapsible drawer for `<NewsSourcesManager />`.
+  6. `🛡️ Risk & Contradictions`: Expected Net Payoff, statutory friction breakdown (STT, exchange turnover, GST, SEBI charges, stamp duty, slippage buffer), hard risk limits, and fail-closed safety gates.
+
 - **Trade Recommendation Card**:
   - Recommended Contract (e.g., `NIFTY 23200 CE 24-OCT`).
   - Entry Spot & Estimated Premium.

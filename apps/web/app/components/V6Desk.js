@@ -7,6 +7,7 @@ import { valueText } from "../research/present.mjs";
 import { csrf } from "./ResearchBoard";
 import { useMarketData } from "./MarketDataContext";
 import NewsSourcesManager from "./NewsSourcesManager";
+import PredictedTrendChart from "./PredictedTrendChart";
 
 const INDICES_CHOICES = [
   { id: "NIFTY", label: "NIFTY", desc: "NSE Spot Index" },
@@ -150,6 +151,7 @@ export default function V6Desk({ defaultTab = "trades", hideTickers = false } = 
   const [selected, setSelected] = useState(CHOICES);
   const [commentary, setCommentary] = useState(false);
   const [quantFusion, setQuantFusion] = useState(true);
+  const [showForecastChart, setShowForecastChart] = useState(true);
   const [phase, setPhase] = useState("idle");
   const [error, setError] = useState("");
   const [report, setReport] = useState(null);
@@ -781,29 +783,38 @@ export default function V6Desk({ defaultTab = "trades", hideTickers = false } = 
 
           {/* 4. Statistical ML Model */}
           <div
+            onClick={() => setDeskTab("forecast")}
+            role="button"
+            tabIndex={0}
             style={{
               display: "flex",
               flexDirection: "column",
               gap: "4px",
-              background: "var(--card-subtle, #131c31)",
-              border: "1px solid var(--border, rgba(255, 255, 255, 0.08))",
+              background: deskTab === "forecast" ? "rgba(56, 189, 248, 0.12)" : "var(--card-subtle, #131c31)",
+              border: `1px solid ${deskTab === "forecast" ? "rgba(56, 189, 248, 0.45)" : "var(--border, rgba(255, 255, 255, 0.08))"}`,
               borderRadius: "10px",
               padding: "12px 14px",
+              cursor: "pointer",
+              transition: "all 0.15s ease",
             }}
+            title="Click to view Live ML Forecast Trend Chart and Volatility Cones"
           >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>ML Forecasting</span>
+              <span style={{ fontSize: "0.72rem", fontWeight: 700, color: deskTab === "forecast" ? "#38bdf8" : "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                ML Forecasting 📈
+              </span>
               <span style={{ fontSize: "0.7rem", fontWeight: 700, color: approved.length > 0 ? "#16a34a" : "#ca8a04", background: approved.length > 0 ? "rgba(22, 163, 74, 0.12)" : "rgba(202, 138, 4, 0.12)", padding: "1px 6px", borderRadius: "4px" }}>
                 {approved.length > 0 ? `🟢 ${approved.length} Models Ready` : "🟡 Fitted Active"}
               </span>
             </div>
             <span style={{ fontSize: "0.95rem", fontWeight: 700, color: "var(--ink, #f8fafc)" }}>
-              Logistic L2 + Persistence
+              {deskTab === "forecast" ? "Live Trend Chart Active" : "Logistic L2 + SOTA GBDT"}
             </span>
-            <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
-              Quant P(Up)/P(Down) Probabilities
+            <span style={{ fontSize: "0.72rem", color: deskTab === "forecast" ? "#38bdf8" : "var(--muted)" }}>
+              {deskTab === "forecast" ? "Showing forward trajectory cone" : "Quant P(Up)/P(Down) Probabilities"}
             </span>
           </div>
+
         </div>
 
         {/* 2. Institutional Desk Verdict Hero Banner */}
@@ -977,12 +988,35 @@ export default function V6Desk({ defaultTab = "trades", hideTickers = false } = 
                 <input
                   type="checkbox"
                   checked={quantFusion}
-                  onChange={(event) => setQuantFusion(event.target.checked)}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setQuantFusion(checked);
+                    if (checked) setShowForecastChart(true);
+                  }}
                 />
                 <span style={{ fontWeight: 650, color: quantFusion ? "var(--ink)" : "var(--muted)" }}>
                   ⚡ Combine ML Forecast with Agent Consensus (Quant Fusion)
                 </span>
               </label>
+              {quantFusion && (
+                <button
+                  type="button"
+                  onClick={() => setShowForecastChart((prev) => !prev)}
+                  style={{
+                    padding: "3px 9px",
+                    borderRadius: "6px",
+                    fontSize: "0.75rem",
+                    fontWeight: 650,
+                    background: showForecastChart ? "rgba(56, 189, 248, 0.18)" : "var(--surface)",
+                    border: "1px solid rgba(56, 189, 248, 0.35)",
+                    color: showForecastChart ? "#38bdf8" : "var(--muted)",
+                    cursor: "pointer",
+                  }}
+                >
+                  {showForecastChart ? "📈 Forecast Graph: Visible" : "📈 Show Forecast Graph"}
+                </button>
+              )}
+
               <label className="check pro-check" style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
                 <input type="checkbox" checked={commentary} onChange={(event) => setCommentary(event.target.checked)} />
                 <span>Include model commentary</span>
@@ -1051,6 +1085,14 @@ export default function V6Desk({ defaultTab = "trades", hideTickers = false } = 
         </button>
         <button
           type="button"
+          className={deskTab === "forecast" ? "active" : ""}
+          onClick={() => setDeskTab("forecast")}
+        >
+          <span>📈 ML Forecasting &amp; Trend Graph</span>
+          <span className="tab-chip">SOTA</span>
+        </button>
+        <button
+          type="button"
           className={deskTab === "risk" ? "active" : ""}
           onClick={() => setDeskTab("risk")}
         >
@@ -1060,6 +1102,31 @@ export default function V6Desk({ defaultTab = "trades", hideTickers = false } = 
 
       {/* 3. Tab Panel: Trade Decisions & Options */}
       <div style={{ display: deskTab === "trades" ? "block" : "none" }}>
+        {quantFusion && showForecastChart && (
+          <div style={{ marginBottom: "20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+              <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "#38bdf8", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                📈 Quant Fusion: Live Price Action &amp; Forward Projected Trajectory
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowForecastChart(false)}
+                style={{
+                  padding: "2px 8px",
+                  fontSize: "0.72rem",
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--sub, #94a3b8)",
+                  cursor: "pointer",
+                }}
+              >
+                Hide Graph ✕
+              </button>
+            </div>
+            <PredictedTrendChart />
+          </div>
+        )}
+
         {phase === "idle" ? (
           <div className="pro-welcome-card">
             <div className="pro-welcome-icon">🎯</div>
@@ -1098,6 +1165,18 @@ export default function V6Desk({ defaultTab = "trades", hideTickers = false } = 
           <InstrumentDecisions selected={selected} report={report} />
         ) : null}
       </div>
+
+      {/* Tab Panel: ML Forecasting & Trend Graph */}
+      <div style={{ display: deskTab === "forecast" ? "block" : "none" }}>
+        <div style={{ marginBottom: "14px" }}>
+          <h3 style={{ margin: 0, fontSize: "1.05rem" }}>Statistical ML Forecasting &amp; Forward Trajectory</h3>
+          <p className="subtle-text" style={{ margin: "3px 0 0 0" }}>
+            Live candlesticks from Groww API combined with SOTA forward-projected 1-hour trend trajectory, target spot, and dynamic &plusmn;1&sigma; volatility confidence cone.
+          </p>
+        </div>
+        <PredictedTrendChart />
+      </div>
+
 
       {/* 4. Tab Panel: Specialist Perspectives (12 Agents) */}
       <div style={{ display: deskTab === "agents" ? "block" : "none" }}>
