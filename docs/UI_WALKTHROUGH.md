@@ -410,7 +410,7 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
     - **Granular Candle Interval Dropdown**:
       - Granularities: `1m` (1 Minute - Scalping), `5m` (5 Minutes - Intraday), `15m` (15 Minutes - Standard M15 Model Benchmark), `1h` (1 Hour - Swing), and `1d` (1 Day - Positional).
     - **Date Range Presets & Selectors**:
-      - Quick preset buttons: `1M` (Last 30 Days), `3M` (Last 90 Days), `6M` (Last 180 Days), `1Y` (Last 365 Days) — automatically populates the start and end dates with single-click ease.
+      - Quick preset buttons: `1 Month` (30 Days), `3 Months` (90 Days), `6 Months` (180 Days), `1 Year (365d Max)` (365 Days) — interactive round pill buttons with active blue glow indicator (`#38bdf8`) reflecting current selection, automatically setting both start and end dates with single-click ease.
       - `Start Date` and `End Date` date picker inputs for arbitrary ISO date range configurations.
       - **Live Query Span & Auto-Clamp Strip**: Displays real-time day count difference (`Query Span: X days`). If the selected duration exceeds the 366-day statutory broker limit, a warning badge is highlighted alongside a one-click `⚡ Auto-clamp to 365 Days` button. Client-side pre-submission validation automatically caps ranges to 365 days to prevent `RANGE_TOO_LONG` API rejections.
     - **`Pull & Ingest Historical Data` Action Button**:

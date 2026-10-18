@@ -54,9 +54,29 @@ function DataPullWorkstation() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
 
+  const parseDateSafely = (val) => {
+    if (!val) return new Date("2026-10-16T15:30:00+05:30");
+    if (/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}$/.test(val)) {
+      const parts = val.split(/[\/\-]/);
+      return new Date(`${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}T15:30:00+05:30`);
+    }
+    if (/^\d{4}-\d{2}-\d{2}/.test(val)) {
+      return new Date(`${val.slice(0, 10)}T15:30:00+05:30`);
+    }
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? new Date("2026-10-16T15:30:00+05:30") : d;
+  };
+
+  const formatDateToISO = (d) => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
   const calculateDays = (sStr, eStr) => {
     if (!sStr || !eStr) return 0;
-    const ms = new Date(eStr).getTime() - new Date(sStr).getTime();
+    const ms = parseDateSafely(eStr).getTime() - parseDateSafely(sStr).getTime();
     return Math.round(ms / (1000 * 60 * 60 * 24));
   };
 
@@ -65,18 +85,17 @@ function DataPullWorkstation() {
   const isRangeInvalid = diffDays <= 0;
 
   const clampToLimit = () => {
-    const e = new Date(end || "2026-10-16");
-    const s = new Date(e);
-    s.setDate(s.getDate() - 365);
-    setStart(s.toISOString().slice(0, 10));
+    const anchorEnd = parseDateSafely(end);
+    const anchorStart = new Date(anchorEnd.getTime() - 365 * 24 * 60 * 60 * 1000);
+    setStart(formatDateToISO(anchorStart));
     setError("");
   };
 
   const setPresetDays = (days) => {
-    const e = new Date(end || "2026-10-16");
-    const s = new Date(e);
-    s.setDate(s.getDate() - days);
-    setStart(s.toISOString().slice(0, 10));
+    const anchorEnd = parseDateSafely(end);
+    const anchorStart = new Date(anchorEnd.getTime() - days * 24 * 60 * 60 * 1000);
+    setStart(formatDateToISO(anchorStart));
+    setEnd(formatDateToISO(anchorEnd));
     setError("");
   };
 
@@ -236,11 +255,42 @@ function DataPullWorkstation() {
 
         {/* Quick Date Range Presets */}
         <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "16px" }}>
-          <span style={{ fontSize: "0.78rem", color: "var(--muted, #64748b)" }}>Quick Presets:</span>
-          <button type="button" className="btn small secondary" onClick={() => setPresetDays(30)}>1 Month</button>
-          <button type="button" className="btn small secondary" onClick={() => setPresetDays(90)}>3 Months</button>
-          <button type="button" className="btn small secondary" onClick={() => setPresetDays(180)}>6 Months</button>
-          <button type="button" className="btn small secondary" onClick={() => setPresetDays(365)}>1 Year (365d Max)</button>
+          <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--sub, #94a3b8)", marginRight: "4px" }}>
+            Quick Presets:
+          </span>
+          {[
+            { label: "1 Month", days: 30 },
+            { label: "3 Months", days: 90 },
+            { label: "6 Months", days: 180 },
+            { label: "1 Year (365d Max)", days: 365 },
+          ].map((p) => {
+            const isActive = Math.abs(diffDays - p.days) <= 1;
+            return (
+              <button
+                key={p.days}
+                type="button"
+                onClick={(ev) => {
+                  ev.preventDefault();
+                  ev.stopPropagation();
+                  setPresetDays(p.days);
+                }}
+                style={{
+                  padding: "6px 14px",
+                  borderRadius: "999px",
+                  fontSize: "0.82rem",
+                  fontWeight: isActive ? 700 : 500,
+                  cursor: "pointer",
+                  border: isActive ? "1px solid #38bdf8" : "1px solid rgba(255, 255, 255, 0.15)",
+                  background: isActive ? "rgba(56, 189, 248, 0.2)" : "rgba(255, 255, 255, 0.06)",
+                  color: isActive ? "#38bdf8" : "var(--ink, #f8fafc)",
+                  boxShadow: isActive ? "0 0 10px rgba(56, 189, 248, 0.25)" : "none",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                {p.label}
+              </button>
+            );
+          })}
         </div>
 
         <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
