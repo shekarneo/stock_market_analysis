@@ -433,7 +433,16 @@ function ModelTrainingWorkstation() {
           folds: 19,
         }),
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        if (res.status === 504) {
+          throw new Error("Benchmark gateway timed out (504). Please try again or select another model.");
+        }
+        throw new Error(`Server returned non-JSON response (${res.status}): ${text.slice(0, 120)}`);
+      }
       if (!res.ok || !data.ok) {
         setError(data.message || data.code || `Training error (${res.status})`);
       } else {
@@ -478,7 +487,16 @@ function ModelTrainingWorkstation() {
           folds: 19,
         }),
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        if (res.status === 504) {
+          throw new Error("Multi-benchmark gateway timed out (504). Please narrow your selection or run fewer datasets simultaneously.");
+        }
+        throw new Error(`Server returned non-JSON response (${res.status}): ${text.slice(0, 120)}`);
+      }
       if (!res.ok || !data.ok) {
         setSuiteError(data.message || data.code || `Suite benchmark error (${res.status})`);
       } else {

@@ -292,6 +292,33 @@ def test_multi_benchmark_endpoint(client: TestClient):
     assert "NIFTY" in body["top_by_instrument"]
     assert "CRUDEOILMINI" in body["top_by_instrument"]
 
+    # Test full 9-model multi-dataset benchmark execution
+    res_full = client.post(
+        "/api/forecasting/multi-benchmark",
+        json={
+            "instruments": ["NIFTY", "SENSEX"],
+            "models": ["lightgbm", "xgboost", "catboost", "dlinear", "chronos", "random_forest", "mlp", "logistic_regression", "empirical_prior"],
+            "strategy_modes": ["regime_gated", "deadband", "raw"],
+        },
+    )
+    assert res_full.status_code == 200
+    body_full = res_full.json()
+    assert body_full["ok"] is True
+    assert len(body_full["leaderboard"]) == 54  # 2 instruments * 9 models * 3 modes = 54
+    assert body_full["instruments_evaluated"] == ["NIFTY", "SENSEX"] or set(body_full["instruments_evaluated"]) == {"NIFTY", "SENSEX"}
+
+    # Second call should be a cache hit and return immediately
+    res_cached = client.post(
+        "/api/forecasting/multi-benchmark",
+        json={
+            "instruments": ["NIFTY", "SENSEX"],
+            "models": ["lightgbm", "xgboost", "catboost", "dlinear", "chronos", "random_forest", "mlp", "logistic_regression", "empirical_prior"],
+            "strategy_modes": ["regime_gated", "deadband", "raw"],
+        },
+    )
+    assert res_cached.status_code == 200
+    assert res_cached.json()["total_combinations"] == 54
+
 
 def test_live_trend_chart_endpoint(client: TestClient):
     from tests.conftest import login

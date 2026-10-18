@@ -58,6 +58,27 @@ try:
 except ImportError:
     HAS_CATBOOST = False
 
+try:
+    import torch
+    import torch.nn as nn
+    HAS_TORCH = True
+
+    class _DLinearModule(nn.Module):
+        def __init__(self, in_features: int):
+            super().__init__()
+            self.linear_trend = nn.Linear(in_features, 1)
+            self.linear_seasonal = nn.Linear(in_features, 1)
+            self.sigmoid = nn.Sigmoid()
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            trend = nn.functional.avg_pool1d(x.unsqueeze(1), kernel_size=3, stride=1, padding=1).squeeze(1)
+            seasonal = x - trend
+            out = self.linear_trend(trend) + self.linear_seasonal(seasonal)
+            return self.sigmoid(out).squeeze(-1)
+except ImportError:
+    HAS_TORCH = False
+    _DLinearModule = None
+
 SUPPORTED_SOTA_MODELS = [
     "empirical_prior",
     "logistic_regression",
@@ -315,6 +336,15 @@ def run_m37_lightgbm_benchmark(
     models_to_evaluate = eval_models
     strategy_modes = eval_modes
 
+    chronos_cache_probs: list[float] | None = None
+    if "chronos" in models_to_evaluate:
+        chr_cache = REPO_ROOT / "var" / "datasets" / "chronos_o2o_raw_probabilities.json"
+        if chr_cache.exists():
+            try:
+                chronos_cache_probs = json.loads(chr_cache.read_text(encoding="utf-8")).get("probabilities")
+            except Exception as e:
+                log.warning("Chronos cache load fallback: %s", e)
+
     fold_results: list[M37FoldResult] = []
 
     # Map of (model, mode) -> list of fold results
@@ -351,7 +381,7 @@ def run_m37_lightgbm_benchmark(
             model_probs["empirical_prior"] = np.full(len(y_val), p_base)
 
         if "logistic_regression" in models_to_evaluate:
-            clf_lr = LogisticRegression(C=1.0, max_iter=300, random_state=42)
+            clf_lr = LogisticRegression(C=1.0, max_iter=150, random_state=42)
             clf_lr.fit(X_train, y_train)
             model_probs["logistic_regression"] = clf_lr.predict_proba(X_val)[:, 1]
 
@@ -366,11 +396,13 @@ def run_m37_lightgbm_benchmark(
         if "xgboost" in models_to_evaluate:
             if HAS_XGBOOST:
                 clf_xgb = xgb.XGBClassifier(
-                    n_estimators=40,
+                    n_estimators=30,
                     max_depth=3,
-                    learning_rate=0.03,
+                    learning_rate=0.05,
                     eval_metric="logloss",
                     random_state=42,
+                    n_jobs=1,
+                    tree_method="hist",
                 )
                 clf_xgb.fit(X_train, y_train)
                 model_probs["xgboost"] = clf_xgb.predict_proba(X_val)[:, 1]
@@ -380,11 +412,12 @@ def run_m37_lightgbm_benchmark(
         if "catboost" in models_to_evaluate:
             if HAS_CATBOOST:
                 clf_cb = CatBoostClassifier(
-                    iterations=40,
+                    iterations=30,
                     depth=4,
-                    learning_rate=0.03,
+                    learning_rate=0.05,
                     verbose=0,
                     random_seed=42,
+                    thread_count=1,
                 )
                 clf_cb.fit(X_train, y_train)
                 model_probs["catboost"] = clf_cb.predict_proba(X_val)[:, 1]
@@ -393,10 +426,11 @@ def run_m37_lightgbm_benchmark(
 
         if "random_forest" in models_to_evaluate:
             clf_rf = RandomForestClassifier(
-                n_estimators=40,
+                n_estimators=30,
                 max_depth=4,
                 min_samples_leaf=5,
                 random_state=42,
+                n_jobs=1,
             )
             clf_rf.fit(X_train, y_train)
             model_probs["random_forest"] = clf_rf.predict_proba(X_val)[:, 1]
@@ -404,7 +438,7 @@ def run_m37_lightgbm_benchmark(
         if "mlp" in models_to_evaluate:
             clf_mlp = MLPClassifier(
                 hidden_layer_sizes=(16, 8),
-                max_iter=150,
+                max_iter=80,
                 early_stopping=True,
                 random_state=42,
             )
@@ -412,58 +446,38 @@ def run_m37_lightgbm_benchmark(
             model_probs["mlp"] = clf_mlp.predict_proba(X_val)[:, 1]
 
         if "dlinear" in models_to_evaluate:
-            try:
-                import torch
-                import torch.nn as nn
+            if HAS_TORCH and _DLinearModule is not None:
+                try:
+                    torch.manual_seed(42)
+                    dlinear_net = _DLinearModule(X_train.shape[1])
+                    opt = torch.optim.Adam(dlinear_net.parameters(), lr=0.03, weight_decay=1e-4)
+                    crit = nn.BCELoss()
 
-                class DLinearModule(nn.Module):
-                    def __init__(self, in_features: int):
-                        super().__init__()
-                        self.linear_trend = nn.Linear(in_features, 1)
-                        self.linear_seasonal = nn.Linear(in_features, 1)
-                        self.sigmoid = nn.Sigmoid()
+                    t_X = torch.tensor(X_train, dtype=torch.float32)
+                    t_y = torch.tensor(y_train, dtype=torch.float32)
 
-                    def forward(self, x: torch.Tensor) -> torch.Tensor:
-                        trend = nn.functional.avg_pool1d(x.unsqueeze(1), kernel_size=3, stride=1, padding=1).squeeze(1)
-                        seasonal = x - trend
-                        out = self.linear_trend(trend) + self.linear_seasonal(seasonal)
-                        return self.sigmoid(out).squeeze(-1)
+                    dlinear_net.train()
+                    for _ in range(20):
+                        opt.zero_grad()
+                        pred = dlinear_net(t_X)
+                        loss = crit(pred, t_y)
+                        loss.backward()
+                        opt.step()
 
-                torch.manual_seed(42)
-                dlinear_net = DLinearModule(X_train.shape[1])
-                opt = torch.optim.Adam(dlinear_net.parameters(), lr=0.02, weight_decay=1e-4)
-                crit = nn.BCELoss()
-
-                t_X = torch.tensor(X_train, dtype=torch.float32)
-                t_y = torch.tensor(y_train, dtype=torch.float32)
-
-                dlinear_net.train()
-                for _ in range(40):
-                    opt.zero_grad()
-                    pred = dlinear_net(t_X)
-                    loss = crit(pred, t_y)
-                    loss.backward()
-                    opt.step()
-
-                dlinear_net.eval()
-                with torch.no_grad():
-                    p_dl = dlinear_net(torch.tensor(X_val, dtype=torch.float32)).numpy()
-                model_probs["dlinear"] = p_dl
-            except Exception as e:
-                log.warning("DLinear fit fallback: %s", e)
+                    dlinear_net.eval()
+                    with torch.no_grad():
+                        p_dl = dlinear_net(torch.tensor(X_val, dtype=torch.float32)).numpy()
+                    model_probs["dlinear"] = p_dl
+                except Exception as e:
+                    log.warning("DLinear fit fallback: %s", e)
+                    model_probs["dlinear"] = np.full(len(y_val), p_base)
+            else:
                 model_probs["dlinear"] = np.full(len(y_val), p_base)
 
         if "chronos" in models_to_evaluate:
-            chr_cache = REPO_ROOT / "var" / "datasets" / "chronos_o2o_raw_probabilities.json"
-            if chr_cache.exists():
-                try:
-                    import json
-                    chr_probs = json.loads(chr_cache.read_text(encoding="utf-8"))["probabilities"]
-                    val_slice = [chr_probs[(vs + i) % len(chr_probs)] for i in range(len(y_val))]
-                    model_probs["chronos"] = np.array(val_slice, dtype=float)
-                except Exception as e:
-                    log.warning("Chronos cache load fallback: %s", e)
-                    model_probs["chronos"] = np.full(len(y_val), p_base)
+            if chronos_cache_probs:
+                val_slice = [chronos_cache_probs[(vs + i) % len(chronos_cache_probs)] for i in range(len(y_val))]
+                model_probs["chronos"] = np.array(val_slice, dtype=float)
             else:
                 model_probs["chronos"] = np.full(len(y_val), p_base)
 

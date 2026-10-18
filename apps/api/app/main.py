@@ -909,6 +909,9 @@ class BenchmarkTrainRequest(BaseModel):
     folds: int = 19
 
 
+_BENCHMARK_REPORT_CACHE: dict[tuple, Any] = {}
+
+
 def resolve_dataset_file(inst: str) -> Path | None:
     sym = inst.upper().strip()
     if sym in {"NIFTY", "NSE-NIFTY", "NIFTY 50", "NIFTY50"}:
@@ -1086,16 +1089,29 @@ def multi_instrument_model_benchmark(
     leaderboard = []
     top_by_instrument = {}
 
-    for inst in requested_instruments:
+    import concurrent.futures
+
+    def _eval_instrument(inst: str):
         dataset_file = resolve_dataset_file(inst)
         if not dataset_file or not dataset_file.exists():
-            continue
+            return None
+
+        file_stat = dataset_file.stat()
+        cache_key = (
+            inst.upper(),
+            file_stat.st_mtime_ns,
+            file_stat.st_size,
+            tuple(dedup_models),
+            tuple(m.value for m in requested_modes),
+        )
+        if cache_key in _BENCHMARK_REPORT_CACHE:
+            return _BENCHMARK_REPORT_CACHE[cache_key]
 
         try:
             raw_data = json.loads(dataset_file.read_text(encoding="utf-8"))
             candles = raw_data.get("candles") or []
             if not candles:
-                continue
+                return None
 
             report = run_m37_lightgbm_benchmark(
                 candles_15m=candles,
@@ -1120,15 +1136,28 @@ def multi_instrument_model_benchmark(
                     "turnover_units": round(s.holdout_turnover_units, 2),
                     "total_candles": len(candles),
                 }
-                leaderboard.append(item)
                 instrument_strategies.append(item)
 
             if instrument_strategies:
                 top_inst = max(instrument_strategies, key=lambda x: (x["holdout_net_return_2bps"], x["holdout_accuracy"]))
-                top_by_instrument[inst.upper()] = top_inst
+                result = (inst.upper(), instrument_strategies, top_inst)
+                _BENCHMARK_REPORT_CACHE[cache_key] = result
+                return result
         except Exception as exc:
             log.warning("Benchmark error for %s: %s", inst, exc)
-            continue
+            return None
+        return None
+
+    # Execute instrument benchmarks concurrently to prevent gateway timeouts
+    worker_count = max(1, min(len(requested_instruments), 4))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
+        future_to_inst = {executor.submit(_eval_instrument, inst): inst for inst in requested_instruments}
+        for future in concurrent.futures.as_completed(future_to_inst):
+            res = future.result()
+            if res:
+                inst_sym, inst_strategies, top_inst = res
+                leaderboard.extend(inst_strategies)
+                top_by_instrument[inst_sym] = top_inst
 
     if not leaderboard:
         raise AppError("BENCHMARK_EMPTY", "No valid datasets could be evaluated. Ensure datasets are pulled and available on disk.", 400)
