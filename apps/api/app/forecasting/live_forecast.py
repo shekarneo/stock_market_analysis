@@ -309,32 +309,46 @@ def _resolve_trailing_features_and_meta(instrument: str) -> tuple[dict[str, floa
 
         if dataset_path.is_file():
             try:
+                from app.market.storage import parse_iso_or_epoch_to_ist
+
                 data = json.loads(dataset_path.read_text(encoding="utf-8"))
                 candles_data = data.get("regular_candles") or data.get("candles") or []
                 normalized = []
                 for c in candles_data[-30:]:
-                    b_start_str = c.get("bar_start") or c.get("timestamp")
-                    if not b_start_str:
-                        continue
-                    b_start = datetime.fromisoformat(str(b_start_str).replace("Z", "+00:00"))
-                    b_end_str = c.get("bar_end")
-                    b_end = (
-                        datetime.fromisoformat(str(b_end_str).replace("Z", "+00:00"))
-                        if b_end_str
-                        else b_start + timedelta(minutes=15)
-                    )
-                    normalized.append(
-                        {
-                            "bar_start": b_start.isoformat(),
-                            "bar_end": b_end.isoformat(),
-                            "open": float(c["open"]),
-                            "high": float(c["high"]),
-                            "low": float(c["low"]),
-                            "close": float(c["close"]),
-                            "volume": float(c["volume"]) if c.get("volume") is not None else None,
-                            "source_id": "derived_regular",
-                        }
-                    )
+                    if isinstance(c, (list, tuple)) and len(c) >= 5:
+                        b_start = parse_iso_or_epoch_to_ist(c[0])
+                        b_end = b_start + timedelta(minutes=15)
+                        normalized.append(
+                            {
+                                "bar_start": b_start.isoformat(),
+                                "bar_end": b_end.isoformat(),
+                                "open": float(c[1]),
+                                "high": float(c[2]),
+                                "low": float(c[3]),
+                                "close": float(c[4]),
+                                "volume": float(c[5]) if len(c) > 5 and c[5] is not None else None,
+                                "source_id": "derived_regular",
+                            }
+                        )
+                    elif isinstance(c, dict):
+                        b_start_str = c.get("bar_start") or c.get("timestamp")
+                        if not b_start_str:
+                            continue
+                        b_start = parse_iso_or_epoch_to_ist(b_start_str)
+                        b_end_str = c.get("bar_end")
+                        b_end = parse_iso_or_epoch_to_ist(b_end_str) if b_end_str else b_start + timedelta(minutes=15)
+                        normalized.append(
+                            {
+                                "bar_start": b_start.isoformat(),
+                                "bar_end": b_end.isoformat(),
+                                "open": float(c["open"]),
+                                "high": float(c["high"]),
+                                "low": float(c["low"]),
+                                "close": float(c["close"]),
+                                "volume": float(c["volume"]) if c.get("volume") is not None else None,
+                                "source_id": "derived_regular",
+                            }
+                        )
                 res, bar_end_iso, last_close = _compute_features_from_candle_dicts(inst, normalized)
                 if res is not None:
                     return res, bar_end_iso, last_close, "HISTORICAL_CANDLE_DATASET", False

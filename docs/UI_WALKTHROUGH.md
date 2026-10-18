@@ -695,7 +695,7 @@ Accessible via the collapsible `Tools Show (7) ▾` toggle in the left navigatio
   - `Model Selector & Dynamic Discovery (OpenAI & Gemini)`:
     - **Dynamic Discovery on Open**: Opening the modal queries the live provider API to fetch active account models.
     - `🔄 Query Live Models` button: Re-queries available models on-demand using either the saved credentials or a newly entered API key.
-    - **Google Gemini Catalog**: Supports live Google AI models (`gemini-flash-latest`, `gemini-3.8-flash`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.0-flash`, `gemini-2.0-flash-lite`, `gemini-1.5-pro`, etc.) plus custom/fine-tuned model names via `Custom / Fine-Tuned Model...`.
+    - **Google Gemini Catalog**: Supports live Google AI models (`gemini-flash-latest`, `gemini-flash-lite-latest`, `gemini-3.8-flash`, `gemini-3.1-flash-lite`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.0-flash`, `gemini-2.0-flash-lite`, `gemini-1.5-pro`, etc.) plus custom/fine-tuned model names via `Custom / Fine-Tuned Model...`.
     - **OpenAI Catalog**: Supports chat and reasoning intelligence models (`gpt-4o`, `gpt-4o-mini`, `o1`, `o1-mini`, `o1-preview`, etc.).
   - `Save Changes` button: Validates credentials upfront. Persists encrypted secrets, enablement switches, and profile labels.
   - `Test Connection` button: Runs real connection test directly from the modal. If new credentials were typed, automatically saves and enables them before running the test.
@@ -714,7 +714,7 @@ Accessible via the collapsible `Tools Show (7) ▾` toggle in the left navigatio
     7. `Risk & Uncertainty Analyst`: Stress testing and tail-risk gating.
     8. `Final Decision Agent`: Master consensus arbitrator enforcing fail-closed trade safety.
   - `Active Provider`: Select `OpenAI` (`openai`) or `Google Gemini` (`gemini`) per role.
-  - `Model` (`cfg.model`): Specify canonical model identifier (e.g. `gemini-flash-latest`, `gemini-3.8-flash`, `gpt-4o`, `gpt-4o-mini`, `o1`, `gemini-2.5-flash`, `gemini-1.5-pro`).
+  - `Model` (`cfg.model`): Specify canonical model identifier (e.g. `gemini-flash-latest`, `gemini-flash-lite-latest`, `gemini-3.8-flash`, `gemini-3.1-flash-lite`, `gpt-4o`, `gpt-4o-mini`, `o1`, `gemini-2.5-flash`, `gemini-1.5-pro`).
   - `Temperature` (`cfg.temperature`): Float input (`0.0` to `2.0`, step `0.05`) controlling deterministic vs. creative output.
   - `Max Tokens` (`cfg.max_tokens`): Output token limit (`100` to `8000`, step `100`).
   - `Fallback Provider & Model` (`cfg.fallback_provider`, `cfg.fallback_model`): Automatic failover provider and model when primary provider faces rate limits or outage.

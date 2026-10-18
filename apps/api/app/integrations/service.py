@@ -1296,7 +1296,9 @@ DEFAULT_OPENAI_MODELS = [
 
 DEFAULT_GEMINI_MODELS = [
     {"id": "gemini-flash-latest", "label": "gemini-flash-latest (Recommended Live Flash)", "recommended": True},
+    {"id": "gemini-flash-lite-latest", "label": "gemini-flash-lite-latest (High-Speed / High-Quota Lite)", "recommended": True},
     {"id": "gemini-3.8-flash", "label": "gemini-3.8-flash (Latest Generation Flash)", "recommended": True},
+    {"id": "gemini-3.1-flash-lite", "label": "gemini-3.1-flash-lite (Fast Low-Latency Lite)", "recommended": True},
     {"id": "gemini-2.5-pro", "label": "gemini-2.5-pro (Flagship Reasoning & Code)", "recommended": True},
     {"id": "gemini-2.5-flash", "label": "gemini-2.5-flash (Fast, Highly Capable)", "recommended": True},
     {"id": "gemini-2.0-flash", "label": "gemini-2.0-flash (High-Speed Multimodal)", "recommended": False},

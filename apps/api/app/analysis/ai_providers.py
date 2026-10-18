@@ -394,14 +394,15 @@ class GeminiModelProvider:
                     payload["generationConfig"]["maxOutputTokens"] = max(int(max_tokens), 1024)
                     resp = _send_once(clean_model, api_key, payload)
                     status_code = getattr(resp, "status_code", 0)
-                if status_code == 503 and self._explicit_key is None:
-                    alt_model = "gemini-3.8-flash" if clean_model != "gemini-3.8-flash" else "gemini-flash-latest"
+                if status_code in {429, 503} and self._explicit_key is None and clean_model != "gemini-flash-lite-latest":
+                    alt_model = "gemini-flash-lite-latest"
                     payload["generationConfig"]["maxOutputTokens"] = max(int(max_tokens), 1024)
                     resp = _send_once(alt_model, api_key, payload)
                     status_code = getattr(resp, "status_code", 0)
                     if status_code == 200:
                         clean_model = alt_model
                         model = alt_model
+                        break
                 if status_code in {429, 503} and idx + 1 < len(api_keys):
                     continue
                 break
