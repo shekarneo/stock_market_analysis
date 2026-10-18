@@ -650,13 +650,13 @@ def fuse_agents_and_forecast(agent_rec: dict, forecast_item: dict) -> dict:
     """Fuse multi-agent consensus score with quantitative model probability."""
     agent_bias = (agent_rec.get("bias") or "").upper()
     agent_dir = "BULLISH" if "BULL" in agent_bias else ("BEARISH" if "BEAR" in agent_bias else "NEUTRAL")
-    agent_score = agent_rec.get("total_score", 0)
+    agent_score = int(agent_rec.get("total_score") or 0)
 
-    model_dir = forecast_item.get("direction", "UNKNOWN")
+    raw_model_dir = forecast_item.get("direction", "UNKNOWN")
     p_up = forecast_item.get("probability_up")
 
     # If model is unavailable or has no probability, do not fabricate fusion
-    if p_up is None or model_dir == "UNKNOWN":
+    if p_up is None or raw_model_dir == "UNKNOWN":
         return {
             "confluence_status": "NO_MODEL_FORECAST",
             "fused_bias": agent_bias or "NEUTRAL",
@@ -668,39 +668,53 @@ def fuse_agents_and_forecast(agent_rec: dict, forecast_item: dict) -> dict:
             "confidence_boost": 1.0,
         }
 
+    p_up_pct = round(float(p_up) * 100.0, 1)
+    p_down_pct = round((1.0 - float(p_up)) * 100.0, 1)
+
+    # Treat near-50/50 probabilities (48.0% - 52.0%) as neutral coin-flip so 49.8% does not trigger a false BEARISH divergence
+    if 0.48 <= float(p_up) <= 0.52:
+        effective_model_dir = "NEUTRAL"
+    elif float(p_up) > 0.52:
+        effective_model_dir = "BULLISH"
+    else:
+        effective_model_dir = "BEARISH"
+
     # Confluence Check
-    if agent_dir == "BULLISH" and model_dir == "BULLISH":
+    if agent_dir == "BULLISH" and effective_model_dir == "BULLISH":
         fused_bias = "STRONG BULLISH (QUANT CONFLUENCE)"
         conviction = "HIGH CONFLUENCE"
         confluence_status = "ALIGNED"
         confluence_summary = (
-            f"High conviction confluence: 5-Agent consensus (Score +{agent_score}) and "
-            f"ML statistical forecast ({int(p_up * 100)}% P(Up)) are fully aligned."
+            f"High conviction confluence: Multi-Agent consensus (Score {agent_score:+d}) and "
+            f"ML statistical forecast ({p_up_pct}% P(Up)) are aligned BULLISH."
         )
         boost = 1.2
-    elif agent_dir == "BEARISH" and model_dir == "BEARISH":
+    elif agent_dir == "BEARISH" and effective_model_dir == "BEARISH":
         fused_bias = "STRONG BEARISH (QUANT CONFLUENCE)"
         conviction = "HIGH CONFLUENCE"
         confluence_status = "ALIGNED"
         confluence_summary = (
-            f"High conviction confluence: 5-Agent consensus (Score {agent_score}) and "
-            f"ML statistical forecast ({int((1 - p_up) * 100)}% P(Down)) are fully aligned."
+            f"High conviction confluence: Multi-Agent consensus (Score {agent_score:+d}) and "
+            f"ML statistical forecast ({p_down_pct}% P(Down)) are aligned BEARISH."
         )
         boost = 1.2
-    elif agent_dir != "NEUTRAL" and model_dir != "NEUTRAL" and agent_dir != model_dir:
+    elif agent_dir != "NEUTRAL" and effective_model_dir != "NEUTRAL" and agent_dir != effective_model_dir:
         fused_bias = f"{agent_bias} (MODEL DIVERGENCE)"
         conviction = "CAUTIOUS / REDUCED LOTS"
         confluence_status = "DIVERGENCE"
         confluence_summary = (
-            f"Divergence detected: Multi-Agent stance is {agent_dir}, but statistical model "
-            f"warns of short-term {model_dir} mean-reversion ({int(p_up * 100)}% P(Up)). Exercise strict stops."
+            f"Divergence detected: Multi-Agent stance is {agent_dir} (Score {agent_score:+d}), but statistical model "
+            f"warns of short-term {effective_model_dir} mean-reversion ({p_up_pct}% P(Up)). Exercise strict stops."
         )
         boost = 0.8
     else:
         fused_bias = agent_bias or "NEUTRAL / SLIGHT BULLISH"
-        conviction = "MODERATE"
+        conviction = agent_rec.get("conviction") or "MODERATE"
         confluence_status = "STANDARD"
-        confluence_summary = f"Standard execution: Multi-Agent ({agent_dir}) with neutral model backdrop."
+        confluence_summary = (
+            f"Standard confluence: Multi-Agent stance is {agent_dir} (Score {agent_score:+d}) "
+            f"with neutral ML statistical backdrop ({p_up_pct}% P(Up) / {p_down_pct}% P(Down))."
+        )
         boost = 1.0
 
     return {
@@ -710,7 +724,7 @@ def fuse_agents_and_forecast(agent_rec: dict, forecast_item: dict) -> dict:
         "confluence_summary": confluence_summary,
         "agent_score": agent_score,
         "model_probability_up": p_up,
-        "model_direction": model_dir,
+        "model_direction": effective_model_dir,
         "confidence_boost": boost,
     }
 

@@ -233,6 +233,10 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   - Target Spot & Target Premium.
   - Stop Loss Spot & Stop Loss Premium.
   - Risk/Reward Ratio (e.g., `1 : 2.4`).
+  - **Quant-Agent Fusion Banner (`recommendation.quant_fusion`)**:
+    - `Confluence Status Badge`: `🟢 HIGH CONFLUENCE (STRONG SIGNAL)` when Multi-Agent stance and ML forecast probability align (`>52%` Up or `<48%` Down), `🔵 STANDARD CONFLUENCE` when the ML model is in the neutral `48%–52%` deadband, or `⚠️ DIVERGENCE (CAUTION / VETO RISK)` when the ML model leans strongly against the Multi-Agent stance.
+    - `ML Model Prob`: Displays 1-decimal calibrated probabilities (`<up>% P(Up) / <down>% P(Down)`).
+    - `Agent Score`: Displays the signed Multi-Agent score (`+4`, `+2`, `-2`, etc.) propagated from `consensus.total_score`.
 - **12 Specialist Agent Cards**:
   - Stage 1: News Sentiment Agent, Macro Regime Agent, Foreign Flow (FII/DII) Agent.
   - Stage 2: Order Flow & Microstructure Agent, Volatility & Skew Agent, Intermarket Commodity Agent.

@@ -2402,7 +2402,7 @@ function ManualTradeCard({ instrument, meta, recommendation, dataClass }) {
             <div style={{ textAlign: "right" }}>
               <span style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem" }}>ML Model Prob:</span>
               <strong style={{ color: "#1e40af" }}>
-                {Math.round(recommendation.quant_fusion.model_probability_up * 100)}% P(Up) / {100 - Math.round(recommendation.quant_fusion.model_probability_up * 100)}% P(Down)
+                {(recommendation.quant_fusion.model_probability_up * 100).toFixed(1)}% P(Up) / {((1 - recommendation.quant_fusion.model_probability_up) * 100).toFixed(1)}% P(Down)
               </strong>
             </div>
             <div style={{ textAlign: "right" }}>
