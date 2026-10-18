@@ -20,19 +20,16 @@ const DESK = [
 ];
 
 const TOOLS = [
-  { href: "/history", label: "Market data" },
-  { href: "/studio", label: "Model studio" },
-  { href: "/backtest", label: "Walk-forward" },
-  { href: "/registry", label: "Registry" },
-  { href: "/paper", label: "Paper book" },
-  { href: "/settings", label: "Account" },
-  { href: "/settings/integrations", label: "API keys" },
+  { href: "/history", label: "Market Data & History", matchPaths: ["/history"] },
+  { href: "/backtest", label: "Backtest & Walk-Forward", matchPaths: ["/backtest", "/paper"] },
+  { href: "/studio", label: "Model Studio & Registry", matchPaths: ["/studio", "/registry"] },
+  { href: "/settings/integrations", label: "Settings & API Keys", matchPaths: ["/settings/integrations", "/integrations", "/settings"] },
 ];
 
 export default function Shell({ children }) {
   const path = usePathname();
   const session = useSession();
-  const isToolActive = TOOLS.some((t) => t.href === path);
+  const isToolActive = TOOLS.some((t) => t.matchPaths.includes(path));
   const [showTools, setShowTools] = useState(isToolActive);
   const {
     spots,
@@ -90,16 +87,19 @@ export default function Shell({ children }) {
             >
               <span>Tools</span>
               <span style={{ fontSize: "0.65rem", opacity: 0.7, textTransform: "none", letterSpacing: "normal" }}>
-                {showTools ? "Hide ▴" : "Show (7) ▾"}
+                {showTools ? "Hide ▴" : `Show (${TOOLS.length}) ▾`}
               </span>
             </button>
             {showTools && (
               <div style={{ display: "flex", flexDirection: "column", gap: "2px", marginTop: "4px" }}>
-                {TOOLS.map((link) => (
-                  <Link key={link.href} href={link.href} className={path === link.href ? "active" : undefined} aria-current={path === link.href ? "page" : undefined}>
-                    {link.label}
-                  </Link>
-                ))}
+                {TOOLS.map((link) => {
+                  const active = link.matchPaths.includes(path);
+                  return (
+                    <Link key={link.href} href={link.href} className={active ? "active" : undefined} aria-current={path === link.href ? "page" : undefined}>
+                      {link.label}
+                    </Link>
+                  );
+                })}
               </div>
             )}
           </div>

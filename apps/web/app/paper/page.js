@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import ResearchBoard from "../components/ResearchBoard";
 import { flagLabel } from "../research/status.mjs";
 import { intentIdProblem, valueText } from "../research/present.mjs";
@@ -84,6 +85,18 @@ export default function PaperPage() {
     >
       {({ status }) => (
         <section aria-labelledby="paper-desk-heading">
+          <div style={{ display: "flex", gap: "8px", background: "var(--card-subtle, #131c31)", padding: "4px", borderRadius: "10px", border: "1px solid var(--line)", marginBottom: "16px", flexWrap: "wrap", alignItems: "center" }}>
+            <Link href="/backtest" style={{ padding: "8px 16px", borderRadius: "8px", color: "var(--muted)", fontWeight: 650, fontSize: "0.85rem", textDecoration: "none" }}>
+              ← 📊 Walk-Forward &amp; Multi-Asset Backtest
+            </Link>
+            <span style={{ padding: "8px 16px", borderRadius: "8px", background: "rgba(255, 255, 255, 0.12)", color: "#ffffff", fontWeight: 650, fontSize: "0.85rem" }}>
+              📒 Paper Ledger &amp; Intent Audit Replay
+            </span>
+            <Link href="/live" style={{ marginLeft: "auto", padding: "8px 14px", borderRadius: "8px", color: "#34d399", fontWeight: 600, fontSize: "0.82rem", textDecoration: "none" }}>
+              ⚡ Open Active Live &amp; Auto Trading Desk →
+            </Link>
+          </div>
+
           {/* Operational Safety Status Ribbon */}
           <div className="session-ribbon" style={{ marginBottom: "20px" }}>
             <strong>Operational Mode: PAPER</strong>

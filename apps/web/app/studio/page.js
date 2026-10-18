@@ -126,6 +126,17 @@ export default function StudioPage() {
         <p className="eyebrow">Research</p>
         <h1>Forecast Model Studio</h1>
       </header>
+      <div style={{ display: "flex", gap: "8px", background: "var(--card-subtle, #131c31)", padding: "4px", borderRadius: "10px", border: "1px solid var(--line)", marginBottom: "16px", flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ padding: "8px 16px", borderRadius: "8px", background: "rgba(255, 255, 255, 0.12)", color: "#ffffff", fontWeight: 650, fontSize: "0.85rem" }}>
+          🔬 Forecast Model Studio &amp; Comparisons
+        </span>
+        <Link href="/registry" style={{ padding: "8px 16px", borderRadius: "8px", color: "var(--muted)", fontWeight: 650, fontSize: "0.85rem", textDecoration: "none" }}>
+          🏛️ Model Registry &amp; Execution Slots →
+        </Link>
+        <Link href="/forecast" style={{ marginLeft: "auto", padding: "8px 14px", borderRadius: "8px", color: "#c084fc", fontWeight: 600, fontSize: "0.82rem", textDecoration: "none" }}>
+          📈 Live Forecasts &amp; Accuracy →
+        </Link>
+      </div>
       <p className="note">
         Research only. Synthetic and documented-sample results are not market performance. A stored score is not
         profitability. Forecast ready, paper approval, live approval, and verified market data stay false. This page

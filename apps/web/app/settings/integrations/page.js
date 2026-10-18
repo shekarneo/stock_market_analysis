@@ -919,6 +919,14 @@ export default function IntegrationsPage() {
         <h1>API Integrations</h1>
         <p>Manage provider credentials, connection tests, and read-only diagnostics.</p>
       </header>
+      <div style={{ display: "flex", gap: "8px", background: "var(--card-subtle, #131c31)", padding: "4px", borderRadius: "10px", border: "1px solid var(--line)", marginBottom: "16px", flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ padding: "8px 16px", borderRadius: "8px", background: "rgba(255, 255, 255, 0.12)", color: "#ffffff", fontWeight: 650, fontSize: "0.85rem" }}>
+          🔑 API Keys, Brokers &amp; AI Agents
+        </span>
+        <Link href="/settings" style={{ padding: "8px 16px", borderRadius: "8px", color: "var(--muted)", fontWeight: 650, fontSize: "0.85rem", textDecoration: "none" }}>
+          👤 Operator Profile &amp; Account →
+        </Link>
+      </div>
       {notice ? <p className="notice">{notice}</p> : null}
       {error ? <p className="alert" role="alert">{error}</p> : null}
       {booting ? <p className="note">Checking the operator session.</p> : null}

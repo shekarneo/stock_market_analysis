@@ -64,6 +64,14 @@ export default function ProfilePage() {
         <h1>Profile</h1>
         <p>The operator account, API keys, and the session. Secrets are not shown after they are saved.</p>
       </header>
+      <div style={{ display: "flex", gap: "8px", background: "var(--card-subtle, #131c31)", padding: "4px", borderRadius: "10px", border: "1px solid var(--line)", marginBottom: "16px", flexWrap: "wrap", alignItems: "center" }}>
+        <Link href="/settings/integrations" style={{ padding: "8px 16px", borderRadius: "8px", color: "var(--muted)", fontWeight: 650, fontSize: "0.85rem", textDecoration: "none" }}>
+          🔑 API Keys, Brokers &amp; AI Agents
+        </Link>
+        <span style={{ padding: "8px 16px", borderRadius: "8px", background: "rgba(255, 255, 255, 0.12)", color: "#ffffff", fontWeight: 650, fontSize: "0.85rem" }}>
+          👤 Operator Profile &amp; Account
+        </span>
+      </div>
       {notice ? <p className="notice">{notice}</p> : null}
       {error ? <p className="error" role="alert">{error}</p> : null}
       {session.phase === "signed-out" ? (
@@ -115,17 +123,19 @@ export default function ProfilePage() {
         </section>
       ) : null}
       <section>
-        <h2>Risk & Capital Allocation</h2>
+        <h2>Risk &amp; Capital Allocation</h2>
         <p>Risk capital is enforced by fail-closed safety gates. Without explicit capital, all paper and live trading executions are blocked.</p>
         <div className="choice-row">
           <Link href="/risk">Configure Risk Capital in Portfolio</Link>
         </div>
       </section>
-      <section>
-        <h2>News Agent Sources &amp; Web Feeds</h2>
-        <p>Web pages and RSS feeds queried by the autonomous News &amp; Event Analyst. Add custom sources, disable links, or restore defaults.</p>
+      <details style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line, #1e293b)", borderRadius: "8px", padding: "14px 16px", marginBottom: "16px" }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700 }}>
+          📰 News Agent Sources &amp; Web Feeds Configuration
+        </summary>
+        <p style={{ marginTop: "8px", fontSize: "0.85rem", color: "var(--muted)" }}>Web pages and RSS feeds queried by the autonomous News &amp; Event Analyst. (Also accessible in Analysis Desk → Headlines &amp; News Wire).</p>
         <NewsSourcesManager />
-      </section>
+      </details>
       <section>
         <h2>API keys</h2>
         <p>Groww and OpenAI credentials are saved encrypted in the database. A saved key is not shown again. Live trading stays off.</p>

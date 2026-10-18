@@ -86,17 +86,14 @@ Located at the top of the canvas on all screens:
   6. `Options`: Interactive strike matrix, Black-Scholes Greeks, and spread strategies.
   7. `Positions & Capital`: Ledger capital allocation, risk limits, and gate blockers.
   8. `System`: Health checks, 8-gate readiness audit, and data provenance.
-- **Section `TOOLS`** (7 secondary diagnostics & engineering tools):
-  - **Collapsible Toggle**: Click `Tools Show (7) ▾` to expand; click `Tools Hide ▴` to collapse.
-  - Automatically expands if navigating directly to a tool page.
+- **Section `TOOLS`** (4 consolidated engineering & governance hubs):
+  - **Collapsible Toggle**: Click `Tools Show (4) ▾` to expand; click `Tools Hide ▴` to collapse.
+  - Automatically expands if navigating directly to any tool page (`/history`, `/backtest`, `/paper`, `/studio`, `/registry`, `/settings`, `/settings/integrations`).
   - When expanded, reveals:
-    1. `Market data` (`/history`): Historical imports, candle inspection, and quarantine.
-    2. `Model studio` (`/studio`): Model versioning, hyperparameter analysis, and comparisons.
-    3. `Walk-forward` (`/backtest`): 19-fold walk-forward validation and factor attribution.
-    4. `Registry` (`/registry`): Model execution slots and promotion governance.
-    5. `Paper book` (`/paper`): Simulated execution logs and audit intent replay.
-    6. `Account` (`/settings`): Operator profile, display name, and password change.
-    7. `API keys` (`/settings/integrations` & `/integrations`): Broker and LLM credential configuration, connection testing, and lifecycle management.
+    1. `Market Data & History` (`/history`): Interactive historical candle charts, data health audit, historical imports, and collapsible Groww/quarantine diagnostics.
+    2. `Backtest & Walk-Forward` (`/backtest` & `/paper`): 19-fold walk-forward validation, factor attribution, and a unified switcher to `Paper Ledger & Intent Audit Replay` (`/paper`).
+    3. `Model Studio & Registry` (`/studio` & `/registry`): Model versioning, side-by-side comparisons, and a unified switcher to `Model Registry & Execution Slots` (`/registry`).
+    4. `Settings & API Keys` (`/settings/integrations` & `/settings`): Broker/LLM credential configuration, AI Agent model mapping, and a unified switcher to `Operator Profile & Account` (`/settings`).
 - **Rail Footer**:
   - Signed-in user identity: Shows display name or username.
   - `Log out` button: Clears session cookie and redirects to `/`.
@@ -489,6 +486,10 @@ Accessible via the collapsible `Tools Show (7) ▾` toggle in the left navigatio
 
 ### 5.2 Model Studio & Benchmarking (`/studio`)
 - **Purpose**: Quantitative machine learning laboratory for model training, feature weight inspection, and cross-model benchmarking.
+- **Top Hub Switcher Bar**:
+  - `🔬 Forecast Model Studio & Comparisons` (Active view).
+  - `🏛️ Model Registry & Execution Slots →` link (`/registry`).
+  - `📈 Live Forecasts & Accuracy →` link (`/forecast`).
 - **Registered Models & Experiment Registry**:
   - Browse trained models (Logistic L2, LightGBM, Persistence, Random Forest).
   - `Register Experiment` button: Promotes an experiment to registered model status.
@@ -504,6 +505,9 @@ Accessible via the collapsible `Tools Show (7) ▾` toggle in the left navigatio
 
 ### 5.3 Walk-Forward Backtesting (`/backtest`)
 - **Purpose**: Rigorous 19-fold walk-forward cross-validation, higher-timeframe swing resampling, and factor attribution.
+- **Top Hub Switcher Bar**:
+  - `📊 Walk-Forward & Multi-Asset Backtest` (Active view).
+  - `📒 Paper Ledger & Intent Audit Replay →` link (`/paper`).
 - **Evaluation Runner**:
   - `Instrument`: `NIFTY 50`, `SENSEX`, or `CRUDE OIL MINI`.
   - `Provider`: Choose between `Synthetic Quiet-Day Fixture` (compliance testing) or `Historical Ingested Dataset` (real market validation).
@@ -518,6 +522,9 @@ Accessible via the collapsible `Tools Show (7) ▾` toggle in the left navigatio
 
 ### 5.4 Model Registry & Governance (`/registry`)
 - **Purpose**: Enforces formal regulatory separation between research models, paper trading, and live deployment.
+- **Top Hub Switcher Bar**:
+  - `← 🔬 Forecast Model Studio & Comparisons` link (`/studio`).
+  - `🏛️ Model Registry & Execution Slots` (Active view).
 - **Model Slots**:
   - `Paper Trading Slot`: Displays active model authorized for simulated trading (or `None (NOT_AVAILABLE)`).
   - `Live Trading Slot`: Displays active model for live orders (`Permanently Locked` in current build).
@@ -529,6 +536,10 @@ Accessible via the collapsible `Tools Show (7) ▾` toggle in the left navigatio
 
 ### 5.5 Paper Trading Simulation Desk (`/paper`)
 - **Purpose**: Zero-risk simulated execution environment modeling discrete Indian statutory charges, half-spread tick slippage, Half-Kelly position sizing, and sub-millisecond audit trails without live broker interaction. Strictly segregates the active live-data paper trading account from historical walk-forward replay benchmarks.
+- **Top Hub Switcher Bar**:
+  - `← 📊 Walk-Forward & Multi-Asset Backtest` link (`/backtest`).
+  - `📒 Paper Ledger & Intent Audit Replay` (Active view).
+  - `⚡ Open Active Live & Auto Trading Desk →` link (`/live`).
 - **Operational Safeguards Ribbon**:
   - `Operational Mode: PAPER`: Explains active virtual trading environment where real capital remains locked behind hardware/software kill switches. Fills are virtual only.
   - `LIVE BROKER LOCKED`: Prominent red badge confirming that real broker routing is disabled.
@@ -583,6 +594,9 @@ Accessible via the collapsible `Tools Show (7) ▾` toggle in the left navigatio
 ---
 
 ### 5.6 Account & Operator Profile (`/settings`)
+- **Top Hub Switcher Bar**:
+  - `🔑 API Keys, Brokers & AI Agents` link (`/settings/integrations`).
+  - `👤 Operator Profile & Account` (Active view).
 - **Purpose**: Operator profile settings, session management, and credential updates.
 - **Operator Card**:
   - Username, database storage status, account creation date, and last login timestamp.

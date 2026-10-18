@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 
 import ResearchBoard, { csrf } from "../components/ResearchBoard";
-import InstrumentSelector from "../components/InstrumentSelector";
 import InstrumentBacktestCard from "../components/InstrumentBacktestCard";
 import V6MultiAssetCard from "../components/V6MultiAssetCard";
 
@@ -15,7 +15,14 @@ export default function BacktestPage() {
     >
       {() => (
         <>
-          <InstrumentSelector />
+          <div style={{ display: "flex", gap: "8px", background: "var(--card-subtle, #131c31)", padding: "4px", borderRadius: "10px", border: "1px solid var(--line)", marginBottom: "20px", flexWrap: "wrap" }}>
+            <span style={{ padding: "8px 16px", borderRadius: "8px", background: "rgba(255, 255, 255, 0.12)", color: "#ffffff", fontWeight: 650, fontSize: "0.85rem" }}>
+              📊 Walk-Forward &amp; Multi-Asset Backtest
+            </span>
+            <Link href="/paper" style={{ padding: "8px 16px", borderRadius: "8px", color: "var(--muted)", fontWeight: 650, fontSize: "0.85rem", textDecoration: "none" }}>
+              📒 Paper Ledger &amp; Intent Audit Replay →
+            </Link>
+          </div>
           <InstrumentBacktestCard />
           <V6MultiAssetCard />
           <Runner />

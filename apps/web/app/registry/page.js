@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 import ResearchBoard from "../components/ResearchBoard";
 
@@ -10,7 +11,19 @@ export default function RegistryPage() {
       title="Model registry"
       lede="Approval for paper or live trading is refused by the registry. This page does not change a model status."
     >
-      {() => <Activations />}
+      {() => (
+        <>
+          <div style={{ display: "flex", gap: "8px", background: "var(--card-subtle, #131c31)", padding: "4px", borderRadius: "10px", border: "1px solid var(--line)", marginBottom: "16px", flexWrap: "wrap", alignItems: "center" }}>
+            <Link href="/studio" style={{ padding: "8px 16px", borderRadius: "8px", color: "var(--muted)", fontWeight: 650, fontSize: "0.85rem", textDecoration: "none" }}>
+              ← 🔬 Forecast Model Studio &amp; Comparisons
+            </Link>
+            <span style={{ padding: "8px 16px", borderRadius: "8px", background: "rgba(255, 255, 255, 0.12)", color: "#ffffff", fontWeight: 650, fontSize: "0.85rem" }}>
+              🏛️ Model Registry &amp; Execution Slots
+            </span>
+          </div>
+          <Activations />
+        </>
+      )}
     </ResearchBoard>
   );
 }

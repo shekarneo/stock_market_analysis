@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import InstrumentSelector from "../components/InstrumentSelector";
 import InstrumentHistoricalChart from "../components/InstrumentHistoricalChart";
 import InstrumentDataHealthCard from "../components/InstrumentDataHealthCard";
 
@@ -107,12 +106,11 @@ export default function HistoryPage() {
     <main>
       <header className="page-head">
         <p className="eyebrow">History</p>
-        <h1>Historical data & Market Health</h1>
+        <h1>Historical data &amp; Market Health</h1>
         <p>Independent multi-instrument data validation, historical interactive charts, session audits, and quarantine inspection.</p>
       </header>
 
-      {/* V6 Multi-Instrument Selector, Interactive Chart & Data Health */}
-      <InstrumentSelector />
+      {/* V6 Interactive Chart & Data Health (uses global sticky header InstrumentSelector) */}
       <InstrumentHistoricalChart />
       <InstrumentDataHealthCard />
       {ready ? null : (
@@ -122,20 +120,15 @@ export default function HistoryPage() {
         </section>
       )}
       {ready ? (
-        <section className="groww-contract-card" style={{ background: "rgba(16, 185, 129, 0.08)", border: "1px solid rgba(16, 185, 129, 0.3)", borderRadius: "8px", padding: "16px", marginBottom: "20px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
-            <div>
-              <h2 style={{ margin: 0, fontSize: "1.15rem", color: "#10b981" }}>📨 Groww Trading API Official Clarifications</h2>
-              <p style={{ margin: "4px 0 0", fontSize: "0.88rem", color: "var(--sub, #94a3b8)" }}>
-                Verified technical response from Groww Customer Success received regarding historical candle contracts.
-              </p>
-            </div>
-            <span className="pill ok"><i />GROWW SUPPORT CONFIRMED</span>
-          </div>
+        <details className="groww-contract-card" style={{ background: "rgba(16, 185, 129, 0.08)", border: "1px solid rgba(16, 185, 129, 0.3)", borderRadius: "8px", padding: "14px 16px", marginBottom: "20px" }}>
+          <summary style={{ cursor: "pointer", fontWeight: 700, color: "#10b981", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>📨 Groww Trading API Official Clarifications &amp; Provider Capability</span>
+            <span className="pill ok" style={{ fontSize: "0.72rem" }}><i />GROWW SUPPORT CONFIRMED</span>
+          </summary>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px", marginTop: "14px" }}>
             <div style={{ background: "rgba(0,0,0,0.2)", padding: "10px", borderRadius: "6px" }}>
               <strong>Timezone</strong>
-              <p style={{ margin: "4px 0 0", fontSize: "0.85rem" }}>Request & response timestamps in <strong>Indian Standard Time (IST)</strong>.</p>
+              <p style={{ margin: "4px 0 0", fontSize: "0.85rem" }}>Request &amp; response timestamps in <strong>Indian Standard Time (IST)</strong>.</p>
             </div>
             <div style={{ background: "rgba(0,0,0,0.2)", padding: "10px", borderRadius: "6px" }}>
               <strong>Candle Timestamps</strong>
@@ -150,47 +143,13 @@ export default function HistoryPage() {
               <p style={{ margin: "4px 0 0", fontSize: "0.85rem" }}>API may return unfinished candles; flagged by quarantine validator.</p>
             </div>
           </div>
-        </section>
-      ) : null}
-      {report ? (
-        <section>
-          <h2>Provider capability</h2>
-          <p className="note">
-            A retrieval calls the Groww Trading API and safely stores the raw payload in the quarantine repository with SHA-256 integrity checksums.
-          </p>
-          <p>Status: {report.blocking_code}</p>
-          <p>{report.blocking_reason}</p>
-          <p>Market data verified: {String(report.real_market_data_verified)}</p>
-          <p>Forecast ready: {String(report.forecast_ready)}</p>
-          <p>Paper approved: {String(report.paper_approved)}</p>
-          <p>Live approved: {String(report.live_approved)}</p>
-          <p>Documented NIFTY symbol: {report.instruments?.NIFTY?.groww_symbol}</p>
-          <p>Documented SENSEX symbol: {report.instruments?.SENSEX?.groww_symbol}</p>
-          <p>Support response received: {String(report.support_response_received)}</p>
-          <p>Trusted history: {report.verified_history?.status || "BLOCKED"}. A trusted dataset was created: {String(Boolean(report.verified_history?.trusted_dataset_created))}.</p>
-          <p>{report.verified_history?.reason}</p>
-          {report.verified_history?.minimum_evidence?.length ? (
-            <ul>
-              {report.verified_history.minimum_evidence.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          ) : null}
-          {report.verified_history?.requirements?.length ? (
-            <ul>
-              {report.verified_history.requirements.map((item) => (
-                <li key={item.id}>{item.status}: {item.id}</li>
-              ))}
-            </ul>
-          ) : null}
-          {report.outstanding_confirmations?.length ? (
-            <ul>
-              {report.outstanding_confirmations.map((item) => (
-                <li key={item.id}>{item.status}: {item.question}</li>
-              ))}
-            </ul>
-          ) : null}
-        </section>
+          {report && (
+            <div style={{ marginTop: "14px", paddingTop: "12px", borderTop: "1px solid rgba(255,255,255,0.08)", fontSize: "0.85rem" }}>
+              <p><strong>Provider Status:</strong> {report.blocking_code} — {report.blocking_reason}</p>
+              <p>Market data verified: {String(report.real_market_data_verified)} · Forecast ready: {String(report.forecast_ready)} · Trusted history: {report.verified_history?.status || "BLOCKED"}</p>
+            </div>
+          )}
+        </details>
       ) : null}
       {ready ? (
         <form onSubmit={submitImport}>
@@ -256,35 +215,21 @@ export default function HistoryPage() {
         </section>
       ) : null}
       {quarantine ? (
-        <section>
-          <h2>Quarantine diagnostic</h2>
-          <p className="note">
+        <details style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line, #1e293b)", borderRadius: "8px", padding: "14px 16px", marginBottom: "16px" }}>
+          <summary style={{ cursor: "pointer", fontWeight: 700 }}>
+            🔍 Quarantine Diagnostic Archive ({quarantine.records?.length || 0} raw payload records)
+          </summary>
+          <p className="note" style={{ marginTop: "10px" }}>
             This report reads the stored raw response. It does not send another Groww request and it does not create trusted candles.
           </p>
           {quarantine.records?.length ? quarantine.records.map((row) => (
-            <article key={row.quarantine_id}>
-              <p>{row.groww_symbol} {row.interval}. Candles {row.candle_count}. Label {row.label}.</p>
-              <p>Requested range {row.requested_start_sent} to {row.requested_end_sent}.</p>
-              <p>Response range {String(row.response_start_time)} to {String(row.response_end_time)}.</p>
-              <p>
-                {row.full_timestamp_list_stored
-                  ? `Raw timestamps: ${row.raw_timestamps.join(", ")}.`
-                  : `Full timestamp list was not stored in this record. First ${row.first_raw_timestamp || "none"}. Last ${row.last_raw_timestamp || "none"}.`}
-              </p>
-              <p>Quarantine {row.quarantine_id}.</p>
-              <p>Record checksum {row.checksum}.</p>
-              <p>Raw body SHA-256 {row.raw_body_sha256}.</p>
-              <p>Known format: {row.known?.timestamp_format_documented}. Observed offset: {row.known?.observed_offset}.</p>
-              <p>Unknown timezone: {row.unknown?.timestamp_timezone}. Unknown boundary: {row.unknown?.candle_boundary}. Unknown request inclusivity: {row.unknown?.request_boundary}.</p>
-              <p>Unknown partial candles: {row.unknown?.partial_candles}. Unknown session open: {row.unknown?.session_open_candle}. Unknown session close: {row.unknown?.session_close_candle}.</p>
-              <p>Rejection: {row.rejection_code}. {row.rejection_reason}</p>
-              <p>Passed checks: {(row.validation?.passed || []).map((item) => item.id).join(", ") || "none"}.</p>
-              <p>Failed checks: {(row.validation?.failed || []).map((item) => item.id).join(", ") || "none"}.</p>
-              <p>Undetermined checks: {(row.validation?.undetermined || []).map((item) => item.id).join(", ") || "none"}.</p>
-              <p>Forecast eligible: {String(row.forecast_eligible)}. Trusted dataset: {String(row.trusted_dataset_created)}.</p>
+            <article key={row.quarantine_id} style={{ padding: "10px 0", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+              <p><strong>{row.groww_symbol} {row.interval}</strong> · Candles: {row.candle_count} · Label: {row.label}</p>
+              <p style={{ fontSize: "0.85rem", color: "var(--muted)" }}>Range: {row.requested_start_sent} to {row.requested_end_sent} · Checksum: <code>{row.checksum?.slice(0, 16)}…</code></p>
+              <p style={{ fontSize: "0.85rem" }}>Rejection: {row.rejection_code} — {row.rejection_reason}</p>
             </article>
           )) : <p>No quarantined response is stored.</p>}
-        </section>
+        </details>
       ) : null}
       {datasets ? (
         <section>
