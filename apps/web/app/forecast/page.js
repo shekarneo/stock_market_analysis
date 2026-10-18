@@ -367,12 +367,47 @@ function DataPullWorkstation() {
 }
 
 function ModelTrainingWorkstation() {
+  const [tab, setTab] = useState("individual"); // "individual" | "suite"
+  
+  // Individual Model State
   const [instrument, setInstrument] = useState("NIFTY");
-  const [model, setModel] = useState("logistic_regression");
+  const [model, setModel] = useState("lightgbm");
   const [strategyMode, setStrategyMode] = useState("regime_gated");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
+
+  // End-to-End Suite State
+  const [selectedDatasets, setSelectedDatasets] = useState(["NIFTY", "BANKNIFTY", "SENSEX", "CRUDEOILMINI"]);
+  const [selectedModels, setSelectedModels] = useState(["lightgbm", "xgboost", "catboost", "random_forest", "mlp", "logistic_regression", "empirical_prior"]);
+  const [selectedModes, setSelectedModes] = useState(["regime_gated", "deadband", "raw"]);
+  const [suiteBusy, setSuiteBusy] = useState(false);
+  const [suiteResult, setSuiteResult] = useState(null);
+  const [suiteError, setSuiteError] = useState("");
+  const [leaderboardFilter, setLeaderboardFilter] = useState("ALL");
+
+  const SOTA_MODELS_CATALOG = [
+    { id: "lightgbm", name: "LightGBM GBDT (Leaf-Wise SOTA - M37)", tag: "GBDT SOTA" },
+    { id: "xgboost", name: "XGBoost Classifier (Regularized Boosting SOTA)", tag: "BOOSTING SOTA" },
+    { id: "catboost", name: "CatBoost Classifier (Symmetric Trees SOTA)", tag: "TREES SOTA" },
+    { id: "random_forest", name: "Random Forest Ensemble (Bagging SOTA)", tag: "BAGGING SOTA" },
+    { id: "mlp", name: "Deep Neural Net / MLP (Multi-Layer Perceptron)", tag: "NEURAL SOTA" },
+    { id: "logistic_regression", name: "Logistic Regression (L2 Newton Baseline - M3/M23)", tag: "BASELINE" },
+    { id: "empirical_prior", name: "Empirical Prior (Majority Baseline - M3)", tag: "CLIMATOLOGY" },
+  ];
+
+  const DATASETS_CATALOG = [
+    { id: "NIFTY", label: "NIFTY 50", exchange: "NSE", candles: "6,227 M15 Candles", ready: true },
+    { id: "BANKNIFTY", label: "BANK NIFTY", exchange: "NSE", candles: "6,227 M15 Candles", ready: true },
+    { id: "SENSEX", label: "BSE SENSEX", exchange: "BSE", candles: "6,831 M15 Candles", ready: true },
+    { id: "CRUDEOILMINI", label: "CRUDEOIL MINI", exchange: "MCX", candles: "6,227 M15 Candles", ready: true },
+  ];
+
+  const STRATEGY_MODES_CATALOG = [
+    { id: "regime_gated", label: "Regime-Gated Consensus (ATR/ADX Filter)", note: "Zero exposure in neutral/ranging market" },
+    { id: "deadband", label: "Deadband Neutral Filter (48%–52%)", note: "Neutralizes uncertain probabilities" },
+    { id: "raw", label: "Raw Directional (Unconstrained)", note: "Always +/- 1.0 direction" },
+  ];
 
   const handleTrainBenchmark = async (e) => {
     e.preventDefault();
@@ -407,170 +442,623 @@ function ModelTrainingWorkstation() {
     }
   };
 
+  const handleRunSuite = async (e) => {
+    e.preventDefault();
+    if (selectedDatasets.length === 0) {
+      setSuiteError("Select at least one dataset.");
+      return;
+    }
+    if (selectedModels.length === 0) {
+      setSuiteError("Select at least one SOTA model.");
+      return;
+    }
+    if (selectedModes.length === 0) {
+      setSuiteError("Select at least one strategy gating mode.");
+      return;
+    }
+    setSuiteBusy(true);
+    setSuiteError("");
+    setSuiteResult(null);
+    try {
+      const res = await fetch("/api/forecasting/multi-benchmark", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-csrf-token": csrf(),
+        },
+        body: JSON.stringify({
+          instruments: selectedDatasets,
+          models: selectedModels,
+          strategy_modes: selectedModes,
+          interval: "M15",
+          folds: 19,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setSuiteError(data.message || data.code || `Suite benchmark error (${res.status})`);
+      } else {
+        setSuiteResult(data);
+      }
+    } catch (err) {
+      setSuiteError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSuiteBusy(false);
+    }
+  };
+
+  const toggleDataset = (id) => {
+    setSelectedDatasets((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const toggleModel = (id) => {
+    setSelectedModels((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const toggleMode = (id) => {
+    setSelectedModes((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
   return (
     <section aria-labelledby="training-station-heading" style={{ background: "var(--card-subtle, #131c31)", border: "1px solid var(--line, #334155)", borderRadius: "12px", padding: "20px", marginBottom: "28px" }}>
+      {/* Header and Station Mode Switcher */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px", marginBottom: "16px" }}>
         <div>
           <h2 id="training-station-heading" style={{ margin: 0, fontSize: "1.2rem", fontWeight: 700, color: "var(--ink, #f8fafc)" }}>
-            🧠 Model Selection &amp; Walk-Forward Training Station
+            🧠 SOTA Model Walk-Forward &amp; End-to-End Benchmark Workstation
           </h2>
           <p style={{ margin: "4px 0 0", fontSize: "0.85rem", color: "var(--sub, #94a3b8)" }}>
-            Train and benchmark statistical and machine learning models across 19 expanding folds with exact Indian statutory friction accounting.
+            Train and benchmark SOTA machine learning architectures (LightGBM, XGBoost, CatBoost, Random Forest, Deep MLP) across 19 expanding folds with strict friction accounting.
           </p>
         </div>
-        <span className="pill ok"><i />WALK-FORWARD VERIFIED</span>
-      </div>
-
-      <form onSubmit={handleTrainBenchmark}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "14px", marginBottom: "16px" }}>
-          <div>
-            <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--sub, #94a3b8)", marginBottom: "4px" }}>
-              Target Asset
-            </label>
-            <select
-              value={instrument}
-              onChange={(e) => setInstrument(e.target.value)}
-              style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.9rem" }}
-            >
-              <option value="NIFTY">NIFTY 50 (6,227 Candles)</option>
-              <option value="BANKNIFTY">BANK NIFTY (6,227 Candles)</option>
-              <option value="SENSEX">BSE SENSEX (6,831 Candles - Ready)</option>
-              <option value="CRUDEOILMINI">CRUDEOIL MINI (6,227 Candles - Ready)</option>
-            </select>
-          </div>
-
-          <div>
-            <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--sub, #94a3b8)", marginBottom: "4px" }}>
-              Model Architecture
-            </label>
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.9rem" }}
-            >
-              <option value="logistic_regression">Logistic Regression (L2 Newton - M3/M23)</option>
-              <option value="lightgbm">LightGBM GBDT (HTF Resampled - M37)</option>
-              <option value="empirical_prior">Empirical Prior (Majority Baseline - M3)</option>
-            </select>
-          </div>
-
-          <div>
-            <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--sub, #94a3b8)", marginBottom: "4px" }}>
-              Strategy / Gating Mode
-            </label>
-            <select
-              value={strategyMode}
-              onChange={(e) => setStrategyMode(e.target.value)}
-              style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.9rem" }}
-            >
-              <option value="regime_gated">Regime-Gated Consensus (ATR/ADX Filter)</option>
-              <option value="deadband">Deadband Filter (48%–52% Neutral Zone)</option>
-              <option value="raw">Raw Directional (Unconstrained)</option>
-            </select>
-          </div>
-
-          <div>
-            <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--sub, #94a3b8)", marginBottom: "4px" }}>
-              Validation Scheme
-            </label>
-            <div style={{ padding: "8px 10px", background: "rgba(255,255,255,0.03)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--sub, #94a3b8)", fontSize: "0.85rem" }}>
-              19 Folds (14 Dev / 5 Holdout)
-            </div>
-          </div>
-        </div>
-
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
-          <small style={{ color: "var(--muted, #64748b)" }}>
-            ⚡ Friction hurdle: 2.0 bps (STT + NSE Fees + SEBI + GST + 0.05 Tick Slippage). Zero future lookahead.
-          </small>
-          <button type="submit" className="btn primary" disabled={busy} style={{ minWidth: "220px" }}>
-            {busy ? "Fitting & Benchmarking Folds…" : `⚡ Train & Benchmark ${model}`}
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button
+            type="button"
+            onClick={() => setTab("individual")}
+            className={`btn ${tab === "individual" ? "primary" : "secondary"}`}
+            style={{ fontSize: "0.82rem", padding: "6px 12px" }}
+          >
+            🎯 Individual Model
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("suite")}
+            className={`btn ${tab === "suite" ? "primary" : "secondary"}`}
+            style={{ fontSize: "0.82rem", padding: "6px 12px" }}
+          >
+            🚀 End-to-End Suite &amp; Leaderboard
           </button>
         </div>
-      </form>
+      </div>
 
-      {error ? (
-        <div style={{ marginTop: "16px", padding: "10px 14px", background: "rgba(239, 68, 68, 0.1)", border: "1px solid #ef4444", borderRadius: "6px", color: "#fca5a5", fontSize: "0.85rem" }}>
-          <strong>Error:</strong> {error}
-        </div>
-      ) : null}
+      {tab === "individual" ? (
+        /* INDIVIDUAL MODEL WORKSTATION */
+        <div>
+          <form onSubmit={handleTrainBenchmark}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "14px", marginBottom: "16px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--sub, #94a3b8)", marginBottom: "4px" }}>
+                  Target Asset
+                </label>
+                <select
+                  value={instrument}
+                  onChange={(e) => setInstrument(e.target.value)}
+                  style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.9rem" }}
+                >
+                  <option value="NIFTY">NIFTY 50 (6,227 Candles)</option>
+                  <option value="BANKNIFTY">BANK NIFTY (6,227 Candles)</option>
+                  <option value="SENSEX">BSE SENSEX (6,831 Candles - Ready)</option>
+                  <option value="CRUDEOILMINI">CRUDEOIL MINI (6,227 Candles - Ready)</option>
+                </select>
+              </div>
 
-      {result ? (
-        <div style={{ marginTop: "20px" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px", marginBottom: "16px" }}>
-            <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
-              <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Holdout Accuracy</span>
-              <strong style={{ fontSize: "1.4rem", color: result.holdout_accuracy >= 0.52 ? "#10b981" : "#f59e0b" }}>
-                {(result.holdout_accuracy * 100).toFixed(2)}%
-              </strong>
-              <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "2px" }}>Folds 15–19 Out-of-Sample</small>
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--sub, #94a3b8)", marginBottom: "4px" }}>
+                  Model Architecture
+                </label>
+                <select
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.9rem" }}
+                >
+                  {SOTA_MODELS_CATALOG.map((m) => (
+                    <option key={m.id} value={m.id}>{m.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--sub, #94a3b8)", marginBottom: "4px" }}>
+                  Strategy / Gating Mode
+                </label>
+                <select
+                  value={strategyMode}
+                  onChange={(e) => setStrategyMode(e.target.value)}
+                  style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.9rem" }}
+                >
+                  <option value="regime_gated">Regime-Gated Consensus (ATR/ADX Filter)</option>
+                  <option value="deadband">Deadband Filter (48%–52% Neutral Zone)</option>
+                  <option value="raw">Raw Directional (Unconstrained)</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", fontWeight: 600, color: "var(--sub, #94a3b8)", marginBottom: "4px" }}>
+                  Validation Scheme
+                </label>
+                <div style={{ padding: "8px 10px", background: "rgba(255,255,255,0.03)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--sub, #94a3b8)", fontSize: "0.85rem" }}>
+                  19 Expanding Folds (14 Dev / 5 Holdout)
+                </div>
+              </div>
             </div>
 
-            <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
-              <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Brier Skill Score</span>
-              <strong style={{ fontSize: "1.4rem", color: result.holdout_brier_skill_score > 0 ? "#10b981" : "#ef4444" }}>
-                {result.holdout_brier_skill_score > 0 ? "+" : ""}{result.holdout_brier_skill_score.toFixed(4)}
-              </strong>
-              <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "2px" }}>vs Climatological Baseline</small>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+              <small style={{ color: "var(--muted, #64748b)" }}>
+                ⚡ Friction hurdle: 2.0 bps (STT + Fees + SEBI + GST + Slippage). Zero lookahead.
+              </small>
+              <button type="submit" className="btn primary" disabled={busy} style={{ minWidth: "220px" }}>
+                {busy ? "Fitting & Benchmarking Folds…" : `⚡ Train & Benchmark ${model.toUpperCase()}`}
+              </button>
             </div>
+          </form>
 
-            <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
-              <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Holdout Net Return</span>
-              <strong style={{ fontSize: "1.4rem", color: result.holdout_net_return_2bps > 0 ? "#10b981" : "#ef4444" }}>
-                {result.holdout_net_return_2bps > 0 ? "+" : ""}{result.holdout_net_return_2bps.toFixed(2)}%
-              </strong>
-              <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "2px" }}>After 2 bps Friction</small>
+          {error ? (
+            <div style={{ marginTop: "16px", padding: "10px 14px", background: "rgba(239, 68, 68, 0.1)", border: "1px solid #ef4444", borderRadius: "6px", color: "#fca5a5", fontSize: "0.85rem" }}>
+              <strong>Error:</strong> {error}
             </div>
+          ) : null}
 
-            <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
-              <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Full Max Drawdown</span>
-              <strong style={{ fontSize: "1.4rem", color: "#f87171" }}>
-                {result.full_max_drawdown.toFixed(2)}%
-              </strong>
-              <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "2px" }}>Across 19 Expanding Folds</small>
-            </div>
-          </div>
+          {result ? (
+            <div style={{ marginTop: "20px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px", marginBottom: "16px" }}>
+                <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
+                  <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Holdout Accuracy</span>
+                  <strong style={{ fontSize: "1.4rem", color: result.holdout_accuracy >= 0.52 ? "#10b981" : "#f59e0b" }}>
+                    {(result.holdout_accuracy * 100).toFixed(2)}%
+                  </strong>
+                  <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "2px" }}>Folds 15–19 Out-of-Sample</small>
+                </div>
 
-          {result.all_strategies && result.all_strategies.length > 0 ? (
-            <div className="table-wrap">
-              <table>
-                <caption>Strategy Comparison Matrix ({result.instrument} · 19 Expanding Folds)</caption>
-                <thead>
-                  <tr>
-                    <th>Model</th>
-                    <th>Strategy Mode</th>
-                    <th>Holdout Accuracy</th>
-                    <th>Brier Skill Score</th>
-                    <th>Holdout Net Return (2bps)</th>
-                    <th>Full Net Return (2bps)</th>
-                    <th>Max Drawdown</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.all_strategies.map((row, idx) => {
-                    const isSelected = row.model_name === result.model_name && row.strategy_mode === result.strategy_mode;
-                    return (
-                      <tr key={idx} style={{ background: isSelected ? "rgba(59, 130, 246, 0.1)" : "transparent" }}>
-                        <td><strong>{row.model_name}</strong> {isSelected ? <span className="pill ok" style={{ fontSize: "0.65rem", padding: "1px 6px" }}>SELECTED</span> : null}</td>
-                        <td><code>{row.strategy_mode}</code></td>
-                        <td>{(row.holdout_accuracy * 100).toFixed(2)}%</td>
-                        <td>{row.holdout_brier_skill_score > 0 ? "+" : ""}{row.holdout_brier_skill_score.toFixed(4)}</td>
-                        <td style={{ color: row.holdout_net_return_2bps > 0 ? "#10b981" : "#ef4444", fontWeight: 600 }}>
-                          {row.holdout_net_return_2bps > 0 ? "+" : ""}{row.holdout_net_return_2bps.toFixed(2)}%
-                        </td>
-                        <td style={{ color: row.full_net_return_2bps > 0 ? "#10b981" : "#ef4444" }}>
-                          {row.full_net_return_2bps > 0 ? "+" : ""}{row.full_net_return_2bps.toFixed(2)}%
-                        </td>
-                        <td>{row.full_max_drawdown.toFixed(2)}%</td>
+                <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
+                  <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Brier Skill Score</span>
+                  <strong style={{ fontSize: "1.4rem", color: result.holdout_brier_skill_score > 0 ? "#10b981" : "#ef4444" }}>
+                    {result.holdout_brier_skill_score > 0 ? "+" : ""}{result.holdout_brier_skill_score.toFixed(4)}
+                  </strong>
+                  <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "2px" }}>vs Climatological Baseline</small>
+                </div>
+
+                <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
+                  <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Holdout Net Return</span>
+                  <strong style={{ fontSize: "1.4rem", color: result.holdout_net_return_2bps > 0 ? "#10b981" : "#ef4444" }}>
+                    {result.holdout_net_return_2bps > 0 ? "+" : ""}{result.holdout_net_return_2bps.toFixed(2)}%
+                  </strong>
+                  <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "2px" }}>After 2 bps Friction</small>
+                </div>
+
+                <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
+                  <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Full Max Drawdown</span>
+                  <strong style={{ fontSize: "1.4rem", color: "#f87171" }}>
+                    {result.full_max_drawdown.toFixed(2)}%
+                  </strong>
+                  <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "2px" }}>Across 19 Expanding Folds</small>
+                </div>
+              </div>
+
+              {result.all_strategies && result.all_strategies.length > 0 ? (
+                <div className="table-wrap">
+                  <table>
+                    <caption>Strategy Comparison Matrix ({result.instrument} · 19 Expanding Folds)</caption>
+                    <thead>
+                      <tr>
+                        <th>Model</th>
+                        <th>Strategy Mode</th>
+                        <th>Holdout Accuracy</th>
+                        <th>Brier Skill Score</th>
+                        <th>Holdout Net Return (2bps)</th>
+                        <th>Full Net Return (2bps)</th>
+                        <th>Max Drawdown</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody>
+                      {result.all_strategies.map((row, idx) => {
+                        const isSelected = row.model_name === result.model_name && row.strategy_mode === result.strategy_mode;
+                        return (
+                          <tr key={idx} style={{ background: isSelected ? "rgba(59, 130, 246, 0.1)" : "transparent" }}>
+                            <td><strong>{row.model_name}</strong> {isSelected ? <span className="pill ok" style={{ fontSize: "0.65rem", padding: "1px 6px" }}>SELECTED</span> : null}</td>
+                            <td><code>{row.strategy_mode}</code></td>
+                            <td>{(row.holdout_accuracy * 100).toFixed(2)}%</td>
+                            <td>{row.holdout_brier_skill_score > 0 ? "+" : ""}{row.holdout_brier_skill_score.toFixed(4)}</td>
+                            <td style={{ color: row.holdout_net_return_2bps > 0 ? "#10b981" : "#ef4444", fontWeight: 600 }}>
+                              {row.holdout_net_return_2bps > 0 ? "+" : ""}{row.holdout_net_return_2bps.toFixed(2)}%
+                            </td>
+                            <td style={{ color: row.full_net_return_2bps > 0 ? "#10b981" : "#ef4444" }}>
+                              {row.full_net_return_2bps > 0 ? "+" : ""}{row.full_net_return_2bps.toFixed(2)}%
+                            </td>
+                            <td>{row.full_max_drawdown.toFixed(2)}%</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>
-      ) : null}
+      ) : (
+        /* END-TO-END MULTI-DATASET & MODEL BENCHMARK SUITE */
+        <div>
+          <form onSubmit={handleRunSuite}>
+            {/* 1. Multi-Select Datasets */}
+            <div style={{ marginBottom: "16px", padding: "14px", background: "rgba(255,255,255,0.02)", border: "1px solid var(--line, #334155)", borderRadius: "8px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--ink, #f8fafc)" }}>
+                  1. Select Datasets ({selectedDatasets.length}/{DATASETS_CATALOG.length} selected)
+                </span>
+                <div style={{ display: "flex", gap: "6px" }}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDatasets(DATASETS_CATALOG.map((d) => d.id))}
+                    className="btn secondary"
+                    style={{ fontSize: "0.75rem", padding: "2px 8px" }}
+                  >
+                    Select All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDatasets([])}
+                    className="btn secondary"
+                    style={{ fontSize: "0.75rem", padding: "2px 8px" }}
+                  >
+                    Clear All
+                  </button>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px" }}>
+                {DATASETS_CATALOG.map((d) => {
+                  const active = selectedDatasets.includes(d.id);
+                  return (
+                    <label
+                      key={d.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "10px",
+                        padding: "8px 12px",
+                        background: active ? "rgba(59, 130, 246, 0.12)" : "var(--bg, #0f172a)",
+                        border: `1px solid ${active ? "var(--primary, #3b82f6)" : "var(--line, #334155)"}`,
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={active}
+                        onChange={() => toggleDataset(d.id)}
+                        style={{ cursor: "pointer" }}
+                      />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <strong style={{ fontSize: "0.88rem", color: "var(--ink, #f8fafc)" }}>{d.label}</strong>
+                          <span className="pill info" style={{ fontSize: "0.65rem", padding: "1px 5px" }}>{d.exchange}</span>
+                        </div>
+                        <small style={{ color: "var(--muted, #64748b)", fontSize: "0.75rem" }}>{d.candles}</small>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 2. Multi-Select SOTA Models */}
+            <div style={{ marginBottom: "16px", padding: "14px", background: "rgba(255,255,255,0.02)", border: "1px solid var(--line, #334155)", borderRadius: "8px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--ink, #f8fafc)" }}>
+                  2. Select SOTA Models ({selectedModels.length}/{SOTA_MODELS_CATALOG.length} selected)
+                </span>
+                <div style={{ display: "flex", gap: "6px" }}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedModels(SOTA_MODELS_CATALOG.map((m) => m.id))}
+                    className="btn secondary"
+                    style={{ fontSize: "0.75rem", padding: "2px 8px" }}
+                  >
+                    Select All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedModels([])}
+                    className="btn secondary"
+                    style={{ fontSize: "0.75rem", padding: "2px 8px" }}
+                  >
+                    Clear All
+                  </button>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "10px" }}>
+                {SOTA_MODELS_CATALOG.map((m) => {
+                  const active = selectedModels.includes(m.id);
+                  return (
+                    <label
+                      key={m.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "10px",
+                        padding: "8px 12px",
+                        background: active ? "rgba(16, 185, 129, 0.1)" : "var(--bg, #0f172a)",
+                        border: `1px solid ${active ? "#10b981" : "var(--line, #334155)"}`,
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={active}
+                        onChange={() => toggleModel(m.id)}
+                        style={{ cursor: "pointer" }}
+                      />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <strong style={{ fontSize: "0.85rem", color: "var(--ink, #f8fafc)" }}>{m.id.toUpperCase()}</strong>
+                          <span className={`pill ${m.tag.includes("SOTA") ? "ok" : "warn"}`} style={{ fontSize: "0.62rem", padding: "1px 5px" }}>
+                            {m.tag}
+                          </span>
+                        </div>
+                        <small style={{ color: "var(--sub, #94a3b8)", fontSize: "0.72rem", display: "block" }}>{m.name}</small>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 3. Multi-Select Strategy Gating Modes */}
+            <div style={{ marginBottom: "16px", padding: "14px", background: "rgba(255,255,255,0.02)", border: "1px solid var(--line, #334155)", borderRadius: "8px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+                <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--ink, #f8fafc)" }}>
+                  3. Select Strategy Gating Modes ({selectedModes.length}/{STRATEGY_MODES_CATALOG.length} selected)
+                </span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "10px" }}>
+                {STRATEGY_MODES_CATALOG.map((mode) => {
+                  const active = selectedModes.includes(mode.id);
+                  return (
+                    <label
+                      key={mode.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "10px",
+                        padding: "8px 12px",
+                        background: active ? "rgba(168, 85, 247, 0.12)" : "var(--bg, #0f172a)",
+                        border: `1px solid ${active ? "#a855f7" : "var(--line, #334155)"}`,
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={active}
+                        onChange={() => toggleMode(mode.id)}
+                        style={{ cursor: "pointer" }}
+                      />
+                      <div style={{ flex: 1 }}>
+                        <strong style={{ fontSize: "0.85rem", color: "var(--ink, #f8fafc)", display: "block" }}>{mode.label}</strong>
+                        <small style={{ color: "var(--muted, #64748b)", fontSize: "0.72rem" }}>{mode.note}</small>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Launch Button Strip */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
+              <span style={{ fontSize: "0.82rem", color: "var(--sub, #94a3b8)" }}>
+                Evaluating {selectedDatasets.length} datasets × {selectedModels.length} models × {selectedModes.length} modes across 19 walk-forward folds (2.0 bps hurdle).
+              </span>
+              <button
+                type="submit"
+                className="btn primary"
+                disabled={suiteBusy || selectedDatasets.length === 0 || selectedModels.length === 0}
+                style={{ minWidth: "260px", padding: "10px 18px", fontSize: "0.92rem", fontWeight: 700 }}
+              >
+                {suiteBusy ? "⏳ Executing Multi-Asset Walk-Forward Matrix…" : "🚀 Run End-to-End Walk-Forward Benchmark & Rank"}
+              </button>
+            </div>
+          </form>
+
+          {suiteError ? (
+            <div style={{ marginTop: "16px", padding: "10px 14px", background: "rgba(239, 68, 68, 0.1)", border: "1px solid #ef4444", borderRadius: "6px", color: "#fca5a5", fontSize: "0.85rem" }}>
+              <strong>Error:</strong> {suiteError}
+            </div>
+          ) : null}
+
+          {/* SUITE RESULTS & RANKED LEADERBOARD */}
+          {suiteResult ? (
+            <div style={{ marginTop: "24px" }}>
+              {/* Champion Summary Header Cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "12px", marginBottom: "18px" }}>
+                <div style={{ background: "rgba(16, 185, 129, 0.08)", border: "1px solid #10b981", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
+                  <span style={{ display: "block", fontSize: "0.72rem", color: "#34d399", textTransform: "uppercase", fontWeight: 700 }}>
+                    🏆 #1 Champion Model &amp; Strategy
+                  </span>
+                  <strong style={{ fontSize: "1.15rem", color: "var(--ink, #f8fafc)", display: "block", marginTop: "2px" }}>
+                    {suiteResult.champion.instrument} · {suiteResult.champion.model_name.toUpperCase()}
+                  </strong>
+                  <div style={{ fontSize: "0.8rem", color: "#10b981", fontWeight: 700, marginTop: "4px" }}>
+                    {suiteResult.champion.holdout_net_return_2bps > 0 ? "+" : ""}{suiteResult.champion.holdout_net_return_2bps.toFixed(2)}% Holdout Net Return
+                  </div>
+                  <small style={{ display: "block", color: "var(--sub, #94a3b8)", fontSize: "0.7rem", marginTop: "2px" }}>
+                    Mode: <code>{suiteResult.champion.strategy_mode}</code> · Acc: {(suiteResult.champion.holdout_accuracy * 100).toFixed(1)}%
+                  </small>
+                </div>
+
+                <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
+                  <span style={{ display: "block", fontSize: "0.72rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>
+                    🎯 Top Holdout Accuracy
+                  </span>
+                  <strong style={{ fontSize: "1.15rem", color: "#38bdf8", display: "block", marginTop: "2px" }}>
+                    {(suiteResult.highest_accuracy_model.holdout_accuracy * 100).toFixed(2)}%
+                  </strong>
+                  <div style={{ fontSize: "0.78rem", color: "var(--ink)", marginTop: "4px" }}>
+                    {suiteResult.highest_accuracy_model.instrument} · {suiteResult.highest_accuracy_model.model_name}
+                  </div>
+                  <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem" }}>
+                    BSS: {suiteResult.highest_accuracy_model.holdout_brier_skill_score > 0 ? "+" : ""}{suiteResult.highest_accuracy_model.holdout_brier_skill_score.toFixed(4)}
+                  </small>
+                </div>
+
+                <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
+                  <span style={{ display: "block", fontSize: "0.72rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>
+                    🛡 Lowest Max Drawdown
+                  </span>
+                  <strong style={{ fontSize: "1.15rem", color: "#f59e0b", display: "block", marginTop: "2px" }}>
+                    {suiteResult.lowest_drawdown_model.full_max_drawdown.toFixed(2)}%
+                  </strong>
+                  <div style={{ fontSize: "0.78rem", color: "var(--ink)", marginTop: "4px" }}>
+                    {suiteResult.lowest_drawdown_model.instrument} · {suiteResult.lowest_drawdown_model.model_name}
+                  </div>
+                  <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem" }}>
+                    Mode: <code>{suiteResult.lowest_drawdown_model.strategy_mode}</code>
+                  </small>
+                </div>
+
+                <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
+                  <span style={{ display: "block", fontSize: "0.72rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>
+                    📊 Evaluated Combinations
+                  </span>
+                  <strong style={{ fontSize: "1.4rem", color: "var(--ink)", display: "block", marginTop: "2px" }}>
+                    {suiteResult.total_combinations}
+                  </strong>
+                  <div style={{ fontSize: "0.78rem", color: "var(--sub)", marginTop: "4px" }}>
+                    Across {suiteResult.instruments_evaluated.length} Assets &amp; {suiteResult.models_evaluated.length} Models
+                  </div>
+                  <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem" }}>19 Folds Each</small>
+                </div>
+              </div>
+
+              {/* Best Model Per Instrument Strip */}
+              {suiteResult.top_by_instrument && Object.keys(suiteResult.top_by_instrument).length > 0 ? (
+                <div style={{ marginBottom: "18px" }}>
+                  <h3 style={{ fontSize: "0.92rem", fontWeight: 700, color: "var(--ink, #f8fafc)", marginBottom: "8px" }}>
+                    🥇 Top Champion Model by Instrument
+                  </h3>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "10px" }}>
+                    {Object.entries(suiteResult.top_by_instrument).map(([instKey, topRow]) => (
+                      <div key={instKey} style={{ padding: "10px 12px", background: "rgba(255,255,255,0.03)", border: "1px solid var(--line)", borderRadius: "6px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                          <strong style={{ color: "#38bdf8", fontSize: "0.85rem" }}>{instKey}</strong>
+                          <span className="pill ok" style={{ fontSize: "0.65rem", padding: "1px 5px" }}>Rank #{topRow.rank}</span>
+                        </div>
+                        <div style={{ fontSize: "0.82rem", color: "var(--ink)", fontWeight: 600 }}>
+                          {topRow.model_name.toUpperCase()} (<code>{topRow.strategy_mode}</code>)
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "4px", fontSize: "0.78rem" }}>
+                          <span style={{ color: topRow.holdout_net_return_2bps > 0 ? "#10b981" : "#ef4444", fontWeight: 700 }}>
+                            {topRow.holdout_net_return_2bps > 0 ? "+" : ""}{topRow.holdout_net_return_2bps.toFixed(2)}% Holdout
+                          </span>
+                          <span style={{ color: "var(--sub)" }}>
+                            Acc: {(topRow.holdout_accuracy * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Filter Bar and Leaderboard Table */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "10px" }}>
+                <h3 style={{ fontSize: "1rem", fontWeight: 700, margin: 0, color: "var(--ink, #f8fafc)" }}>
+                  🏆 Ranked SOTA Walk-Forward Leaderboard ({suiteResult.leaderboard.length} Ranked Configurations)
+                </h3>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <label style={{ fontSize: "0.8rem", color: "var(--sub)" }}>Filter Instrument:</label>
+                  <select
+                    value={leaderboardFilter}
+                    onChange={(e) => setLeaderboardFilter(e.target.value)}
+                    style={{ padding: "4px 8px", background: "var(--bg)", border: "1px solid var(--line)", borderRadius: "4px", color: "var(--ink)", fontSize: "0.82rem" }}
+                  >
+                    <option value="ALL">All Instruments</option>
+                    {suiteResult.instruments_evaluated.map((instCode) => (
+                      <option key={instCode} value={instCode}>{instCode}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="table-wrap">
+                <table>
+                  <caption>Complete Ranked Matrix: Sorted by Holdout Net Return after 2.0 bps Friction</caption>
+                  <thead>
+                    <tr>
+                      <th style={{ width: "60px", textAlign: "center" }}>Rank</th>
+                      <th>Instrument</th>
+                      <th>Model Architecture</th>
+                      <th>Strategy Mode</th>
+                      <th>Holdout Net Return (2bps)</th>
+                      <th>Full Net Return (2bps)</th>
+                      <th>Holdout Accuracy</th>
+                      <th>Brier Skill Score</th>
+                      <th>Max Drawdown</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {suiteResult.leaderboard
+                      .filter((row) => leaderboardFilter === "ALL" || row.instrument === leaderboardFilter)
+                      .map((row) => {
+                        const isChampion = row.rank === 1;
+                        const isTop3 = row.rank <= 3;
+                        return (
+                          <tr
+                            key={`${row.instrument}-${row.model_name}-${row.strategy_mode}`}
+                            style={{ background: isChampion ? "rgba(16, 185, 129, 0.08)" : isTop3 ? "rgba(59, 130, 246, 0.04)" : "transparent" }}
+                          >
+                            <td style={{ textAlign: "center", fontWeight: 700 }}>
+                              {row.rank === 1 ? "🥇 #1" : row.rank === 2 ? "🥈 #2" : row.rank === 3 ? "🥉 #3" : `#${row.rank}`}
+                            </td>
+                            <td><strong>{row.instrument}</strong></td>
+                            <td>
+                              <span style={{ fontWeight: 600 }}>{row.model_name.toUpperCase()}</span>
+                            </td>
+                            <td><code>{row.strategy_mode}</code></td>
+                            <td style={{ color: row.holdout_net_return_2bps > 0 ? "#10b981" : "#ef4444", fontWeight: 700 }}>
+                              {row.holdout_net_return_2bps > 0 ? "+" : ""}{row.holdout_net_return_2bps.toFixed(2)}%
+                            </td>
+                            <td style={{ color: row.full_net_return_2bps > 0 ? "#10b981" : "#ef4444" }}>
+                              {row.full_net_return_2bps > 0 ? "+" : ""}{row.full_net_return_2bps.toFixed(2)}%
+                            </td>
+                            <td>{(row.holdout_accuracy * 100).toFixed(2)}%</td>
+                            <td style={{ color: row.holdout_brier_skill_score > 0 ? "#10b981" : "#ef4444" }}>
+                              {row.holdout_brier_skill_score > 0 ? "+" : ""}{row.holdout_brier_skill_score.toFixed(4)}
+                            </td>
+                            <td>{row.full_max_drawdown.toFixed(2)}%</td>
+                            <td>
+                              {row.holdout_net_return_2bps > 0 ? (
+                                <span className="pill ok" style={{ fontSize: "0.65rem", padding: "1px 6px" }}>ALPHA+</span>
+                              ) : (
+                                <span className="pill warn" style={{ fontSize: "0.65rem", padding: "1px 6px" }}>NEGATIVE</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
     </section>
   );
 }

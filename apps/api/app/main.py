@@ -4,13 +4,16 @@ import logging
 from contextlib import asynccontextmanager
 
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
+
+from app.settings import REPO_ROOT
 
 from app.analysis.routes import router as analysis_router
 from app.account import account_status, authenticate, change_password, create_account, profile, update_profile
@@ -787,6 +790,42 @@ class BenchmarkTrainRequest(BaseModel):
     folds: int = 19
 
 
+def resolve_dataset_file(inst: str) -> Path | None:
+    sym = inst.upper().strip()
+    if sym in {"NIFTY", "NSE-NIFTY", "NIFTY 50", "NIFTY50"}:
+        p = REPO_ROOT / "var/datasets/derived_nifty_15m_m23_bc7d31bceebf13a3.json"
+        return p if p.exists() else None
+    elif sym in {"BANKNIFTY", "NSE-BANKNIFTY", "BANK NIFTY", "BANK"}:
+        p = REPO_ROOT / "var/datasets/derived_banknifty_15m_m40.json"
+        return p if p.exists() else None
+    elif sym in {"SENSEX", "BSE-SENSEX"}:
+        p = REPO_ROOT / "var/datasets/derived_sensex_15m.json"
+        return p if p.exists() else None
+    elif sym in {"CRUDEOILMINI", "MCX-CRUDEOILMINI", "CRUDE", "CRUDEOIL"}:
+        p = REPO_ROOT / "var/datasets/derived_crude_15m.json"
+        return p if p.exists() else None
+    return None
+
+
+def normalize_model_key(m: str) -> str:
+    m = m.lower().strip()
+    if "xgb" in m or "xgboost" in m:
+        return "xgboost"
+    elif "cat" in m or "catboost" in m:
+        return "catboost"
+    elif "forest" in m or "rf" in m or "random" in m:
+        return "random_forest"
+    elif "mlp" in m or "neural" in m or "net" in m:
+        return "mlp"
+    elif "logist" in m or "l2" in m:
+        return "logistic_regression"
+    elif "prior" in m or "majority" in m or "base" in m:
+        return "empirical_prior"
+    elif "light" in m or "lgb" in m or "gbdt" in m:
+        return "lightgbm"
+    return "lightgbm"
+
+
 @app.post("/api/forecasting/train-benchmark")
 def train_and_benchmark_model(
     body: BenchmarkTrainRequest,
@@ -798,40 +837,15 @@ def train_and_benchmark_model(
     import json
     from datetime import timezone
     from app.errors import AppError
-    from app.settings import REPO_ROOT
     from app.forecasting.m37_lightgbm_htf_research import run_m37_lightgbm_benchmark
 
     inst = body.instrument.upper().strip()
-    dataset_file = None
-    if inst in {"NIFTY", "NSE-NIFTY", "NIFTY 50"}:
-        dataset_file = REPO_ROOT / "var/datasets/derived_nifty_15m_m23_bc7d31bceebf13a3.json"
-    elif inst in {"BANKNIFTY", "NSE-BANKNIFTY", "BANK NIFTY"}:
-        dataset_file = REPO_ROOT / "var/datasets/derived_banknifty_15m_m40.json"
-    elif inst in {"SENSEX", "BSE-SENSEX"}:
-        cand = REPO_ROOT / "var/datasets/derived_sensex_15m.json"
-        if cand.exists():
-            dataset_file = cand
-        else:
-            raise AppError(
-                "DATASET_NOT_FOUND",
-                "Independent BSE SENSEX historical dataset must be pulled and imported before training. Use the 'Pull Market Data' tool above.",
-                400,
-            )
-    elif inst in {"CRUDEOILMINI", "MCX-CRUDEOILMINI", "CRUDE"}:
-        cand = REPO_ROOT / "var/datasets/derived_crude_15m.json"
-        if cand.exists():
-            dataset_file = cand
-        else:
-            raise AppError(
-                "DATASET_NOT_FOUND",
-                "MCX Crude Oil historical dataset must be pulled and imported before training. Use the 'Pull Market Data' tool above.",
-                400,
-            )
+    dataset_file = resolve_dataset_file(inst)
 
     if not dataset_file or not dataset_file.exists():
         raise AppError(
             "DATASET_NOT_FOUND",
-            f"Historical candle dataset for {inst} was not found on disk.",
+            f"Historical candle dataset for {inst} was not found on disk. Ingest the dataset first.",
             400,
         )
 
@@ -841,17 +855,8 @@ def train_and_benchmark_model(
         if not candles:
             raise AppError("EMPTY_CANDLES", "Dataset contains 0 candles.", 400)
 
-        report = run_m37_lightgbm_benchmark(candles, dataset_id=data.get("dataset_id", inst))
-
         req_model = (body.model_type or body.model or "lightgbm").lower()
-        if "logist" in req_model or "l2" in req_model:
-            model_key = "logistic_regression"
-        elif "light" in req_model or "lgb" in req_model or "gbdt" in req_model:
-            model_key = "lightgbm"
-        elif "prior" in req_model or "majority" in req_model or "baseline" in req_model:
-            model_key = "empirical_prior"
-        else:
-            model_key = "logistic_regression"
+        model_key = normalize_model_key(req_model)
 
         req_mode = body.strategy_mode.lower()
         if "regime" in req_mode:
@@ -860,6 +865,14 @@ def train_and_benchmark_model(
             mode_key = "deadband"
         else:
             mode_key = "raw"
+
+        # Evaluate requested model plus empirical prior for reference
+        models_to_run = list(dict.fromkeys([model_key, "empirical_prior"]))
+        report = run_m37_lightgbm_benchmark(
+            candles_15m=candles,
+            dataset_id=data.get("dataset_id", inst),
+            models_to_evaluate=models_to_run,
+        )
 
         matching = None
         for s in report.strategies:
@@ -907,6 +920,117 @@ def train_and_benchmark_model(
     except Exception as exc:
         log.exception("benchmark training failed")
         return {"ok": False, "code": "TRAINING_ERROR", "message": f"{exc.__class__.__name__}: {str(exc)}"}
+
+
+class MultiBenchmarkRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    instruments: list[str] = Field(default_factory=lambda: ["NIFTY", "BANKNIFTY", "SENSEX", "CRUDEOILMINI"])
+    models: list[str] = Field(default_factory=lambda: ["lightgbm", "xgboost", "catboost", "random_forest", "mlp", "logistic_regression", "empirical_prior"])
+    strategy_modes: list[str] = Field(default_factory=lambda: ["regime_gated", "deadband", "raw"])
+    interval: str = "M15"
+    folds: int = 19
+
+
+@app.post("/api/forecasting/multi-benchmark")
+def multi_instrument_model_benchmark(
+    body: MultiBenchmarkRequest,
+    request: Request,
+    settings: Settings = Depends(settings_dep),
+) -> dict:
+    """Execute end-to-end multi-dataset and multi-model walk-forward benchmark and generate ranked leaderboard."""
+    read_session(request, settings)
+    import json
+    from datetime import timezone
+    from app.errors import AppError
+    from app.forecasting.m37_lightgbm_htf_research import run_m37_lightgbm_benchmark, M37StrategyMode
+
+    requested_instruments = body.instruments or ["NIFTY", "BANKNIFTY", "SENSEX", "CRUDEOILMINI"]
+    requested_models = [normalize_model_key(m) for m in (body.models or ["lightgbm", "xgboost", "catboost", "random_forest", "mlp", "logistic_regression", "empirical_prior"])]
+    dedup_models = list(dict.fromkeys(requested_models))
+
+    requested_modes = []
+    for mode_str in (body.strategy_modes or ["regime_gated", "deadband", "raw"]):
+        mode_l = mode_str.lower()
+        if "regime" in mode_l:
+            requested_modes.append(M37StrategyMode.REGIME_GATED)
+        elif "dead" in mode_l:
+            requested_modes.append(M37StrategyMode.DEADBAND)
+        elif "raw" in mode_l:
+            requested_modes.append(M37StrategyMode.RAW)
+    if not requested_modes:
+        requested_modes = [M37StrategyMode.REGIME_GATED, M37StrategyMode.DEADBAND, M37StrategyMode.RAW]
+
+    leaderboard = []
+    top_by_instrument = {}
+
+    for inst in requested_instruments:
+        dataset_file = resolve_dataset_file(inst)
+        if not dataset_file or not dataset_file.exists():
+            continue
+
+        try:
+            raw_data = json.loads(dataset_file.read_text(encoding="utf-8"))
+            candles = raw_data.get("candles") or []
+            if not candles:
+                continue
+
+            report = run_m37_lightgbm_benchmark(
+                candles_15m=candles,
+                dataset_id=raw_data.get("dataset_id", inst),
+                models_to_evaluate=dedup_models,
+                strategy_modes=requested_modes,
+            )
+
+            instrument_strategies = []
+            for s in report.strategies:
+                item = {
+                    "instrument": inst.upper(),
+                    "model_name": s.model_name,
+                    "strategy_mode": s.strategy_mode,
+                    "holdout_net_return_2bps": round(s.holdout_net_return_2bps, 2),
+                    "holdout_accuracy": round(s.holdout_accuracy, 4),
+                    "holdout_brier_skill_score": round(s.holdout_brier_skill_score, 4),
+                    "holdout_win_rate": round(s.holdout_win_rate, 4),
+                    "full_net_return_2bps": round(s.full_net_return_2bps, 2),
+                    "full_max_drawdown": round(s.full_max_drawdown_2bps, 2),
+                    "holdout_max_drawdown": round(s.holdout_max_drawdown_2bps, 2),
+                    "turnover_units": round(s.holdout_turnover_units, 2),
+                    "total_candles": len(candles),
+                }
+                leaderboard.append(item)
+                instrument_strategies.append(item)
+
+            if instrument_strategies:
+                top_inst = max(instrument_strategies, key=lambda x: (x["holdout_net_return_2bps"], x["holdout_accuracy"]))
+                top_by_instrument[inst.upper()] = top_inst
+        except Exception as exc:
+            log.warning("Benchmark error for %s: %s", inst, exc)
+            continue
+
+    if not leaderboard:
+        raise AppError("BENCHMARK_EMPTY", "No valid datasets could be evaluated. Ensure datasets are pulled and available on disk.", 400)
+
+    leaderboard.sort(key=lambda x: (x["holdout_net_return_2bps"], x["holdout_accuracy"], x["full_net_return_2bps"]), reverse=True)
+
+    for rank_idx, row in enumerate(leaderboard, 1):
+        row["rank"] = rank_idx
+
+    overall_champion = leaderboard[0]
+    highest_acc = max(leaderboard, key=lambda x: x["holdout_accuracy"])
+    lowest_dd = min(leaderboard, key=lambda x: x["full_max_drawdown"])
+
+    return {
+        "ok": True,
+        "total_combinations": len(leaderboard),
+        "instruments_evaluated": list(top_by_instrument.keys()),
+        "models_evaluated": dedup_models,
+        "champion": overall_champion,
+        "highest_accuracy_model": highest_acc,
+        "lowest_drawdown_model": lowest_dd,
+        "top_by_instrument": top_by_instrument,
+        "leaderboard": leaderboard,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def create_app() -> FastAPI:

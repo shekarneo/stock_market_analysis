@@ -219,3 +219,57 @@ def test_train_benchmark_endpoint_nifty(client: TestClient):
     assert "holdout_accuracy" in body
     assert "holdout_brier_skill_score" in body
 
+
+def test_train_benchmark_sota_models(client: TestClient):
+    from tests.conftest import login
+    login(client)
+
+    # Test XGBoost on NIFTY
+    res_xgb = client.post(
+        "/api/forecasting/train-benchmark",
+        json={"instrument": "NIFTY", "model": "xgboost", "strategy_mode": "deadband"},
+    )
+    assert res_xgb.status_code == 200
+    b_xgb = res_xgb.json()
+    assert b_xgb["ok"] is True
+    assert b_xgb["model_name"] == "xgboost"
+
+    # Test CatBoost on CRUDEOILMINI
+    res_cb = client.post(
+        "/api/forecasting/train-benchmark",
+        json={"instrument": "CRUDEOILMINI", "model": "catboost", "strategy_mode": "regime_gated"},
+    )
+    assert res_cb.status_code == 200
+    b_cb = res_cb.json()
+    assert b_cb["ok"] is True
+    assert b_cb["model_name"] == "catboost"
+
+
+def test_multi_benchmark_endpoint(client: TestClient):
+    from tests.conftest import login
+    # Unauthenticated should fail
+    unauth = client.post("/api/forecasting/multi-benchmark", json={})
+    assert unauth.status_code in {401, 403}
+
+    login(client)
+    res = client.post(
+        "/api/forecasting/multi-benchmark",
+        json={
+            "instruments": ["NIFTY", "CRUDEOILMINI"],
+            "models": ["lightgbm", "xgboost"],
+            "strategy_modes": ["deadband", "regime_gated"],
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert "leaderboard" in body
+    assert len(body["leaderboard"]) > 0
+    # First item must have rank 1
+    assert body["leaderboard"][0]["rank"] == 1
+    assert "champion" in body
+    assert "top_by_instrument" in body
+    assert "NIFTY" in body["top_by_instrument"]
+    assert "CRUDEOILMINI" in body["top_by_instrument"]
+
+

@@ -36,6 +36,8 @@ from typing import Any
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 
 try:
@@ -43,6 +45,28 @@ try:
     HAS_LIGHTGBM = True
 except ImportError:
     HAS_LIGHTGBM = False
+
+try:
+    import xgboost as xgb
+    HAS_XGBOOST = True
+except ImportError:
+    HAS_XGBOOST = False
+
+try:
+    from catboost import CatBoostClassifier
+    HAS_CATBOOST = True
+except ImportError:
+    HAS_CATBOOST = False
+
+SUPPORTED_SOTA_MODELS = [
+    "empirical_prior",
+    "logistic_regression",
+    "lightgbm",
+    "xgboost",
+    "catboost",
+    "random_forest",
+    "mlp",
+]
 
 from app.forecasting.m27_htf_research import (
     HTFCandle,
@@ -237,15 +261,27 @@ def run_m37_lightgbm_benchmark(
     embargo_bars: int = 2,
     target_folds: int = 19,
     dev_fold_count: int = 14,
+    holdout_fold_count: int = 5,
     deadband_low: float = 0.47,
     deadband_high: float = 0.53,
     lgb_params: dict[str, Any] | None = None,
+    models_to_evaluate: list[str] | None = None,
+    strategy_modes: list[M37StrategyMode] | None = None,
 ) -> M37BenchmarkReport:
-    """Execute expanding-window 19-fold walk-forward benchmark comparing LightGBM, Logistic Regression, and Prior."""
-    if not HAS_LIGHTGBM:
-        raise RuntimeError("lightgbm package is required for Milestone M37 benchmark.")
+    """Execute expanding-window 19-fold walk-forward benchmark comparing SOTA models and baselines."""
+    log.info(f"Starting SOTA HTF Benchmark on {len(candles_15m)} 15m candles for dataset={dataset_id}...")
 
-    log.info(f"Starting M37 HTF LightGBM Benchmark on {len(candles_15m)} 15m candles...")
+    if models_to_evaluate is None:
+        eval_models = ["empirical_prior", "logistic_regression", "lightgbm"]
+    else:
+        eval_models = [m for m in models_to_evaluate if m in SUPPORTED_SOTA_MODELS]
+        if not eval_models:
+            eval_models = ["empirical_prior", "logistic_regression", "lightgbm"]
+
+    if strategy_modes is None:
+        eval_modes = [M37StrategyMode.RAW, M37StrategyMode.DEADBAND, M37StrategyMode.REGIME_GATED]
+    else:
+        eval_modes = strategy_modes
 
     # Default LightGBM hyperparameters tuned for small HTF swing datasets
     if lgb_params is None:
@@ -274,8 +310,8 @@ def run_m37_lightgbm_benchmark(
         target_folds=target_folds,
     )
 
-    models_to_evaluate = ["empirical_prior", "logistic_regression", "lightgbm"]
-    strategy_modes = [M37StrategyMode.RAW, M37StrategyMode.DEADBAND, M37StrategyMode.REGIME_GATED]
+    models_to_evaluate = eval_models
+    strategy_modes = eval_modes
 
     fold_results: list[M37FoldResult] = []
 
@@ -307,24 +343,71 @@ def run_m37_lightgbm_benchmark(
         ref_brier = max(p_base * (1.0 - p_base), 1e-6)
 
         # Model fits
-        # 1. Empirical Prior
-        p_prior = np.full(len(y_val), p_base)
+        model_probs = {}
 
-        # 2. Logistic Regression
-        clf_lr = LogisticRegression(C=1.0, max_iter=500, random_state=42)
-        clf_lr.fit(X_train, y_train)
-        p_lr = clf_lr.predict_proba(X_val)[:, 1]
+        if "empirical_prior" in models_to_evaluate:
+            model_probs["empirical_prior"] = np.full(len(y_val), p_base)
 
-        # 3. LightGBM
-        clf_lgb = lgb.LGBMClassifier(**lgb_params)
-        clf_lgb.fit(X_train, y_train)
-        p_lgb = clf_lgb.predict_proba(X_val)[:, 1]
+        if "logistic_regression" in models_to_evaluate:
+            clf_lr = LogisticRegression(C=1.0, max_iter=300, random_state=42)
+            clf_lr.fit(X_train, y_train)
+            model_probs["logistic_regression"] = clf_lr.predict_proba(X_val)[:, 1]
 
-        model_probs = {
-            "empirical_prior": p_prior,
-            "logistic_regression": p_lr,
-            "lightgbm": p_lgb,
-        }
+        if "lightgbm" in models_to_evaluate:
+            if HAS_LIGHTGBM:
+                clf_lgb = lgb.LGBMClassifier(**lgb_params)
+                clf_lgb.fit(X_train, y_train)
+                model_probs["lightgbm"] = clf_lgb.predict_proba(X_val)[:, 1]
+            else:
+                model_probs["lightgbm"] = np.full(len(y_val), p_base)
+
+        if "xgboost" in models_to_evaluate:
+            if HAS_XGBOOST:
+                clf_xgb = xgb.XGBClassifier(
+                    n_estimators=40,
+                    max_depth=3,
+                    learning_rate=0.03,
+                    eval_metric="logloss",
+                    random_state=42,
+                )
+                clf_xgb.fit(X_train, y_train)
+                model_probs["xgboost"] = clf_xgb.predict_proba(X_val)[:, 1]
+            else:
+                model_probs["xgboost"] = np.full(len(y_val), p_base)
+
+        if "catboost" in models_to_evaluate:
+            if HAS_CATBOOST:
+                clf_cb = CatBoostClassifier(
+                    iterations=40,
+                    depth=4,
+                    learning_rate=0.03,
+                    verbose=0,
+                    random_seed=42,
+                )
+                clf_cb.fit(X_train, y_train)
+                model_probs["catboost"] = clf_cb.predict_proba(X_val)[:, 1]
+            else:
+                model_probs["catboost"] = np.full(len(y_val), p_base)
+
+        if "random_forest" in models_to_evaluate:
+            clf_rf = RandomForestClassifier(
+                n_estimators=40,
+                max_depth=4,
+                min_samples_leaf=5,
+                random_state=42,
+            )
+            clf_rf.fit(X_train, y_train)
+            model_probs["random_forest"] = clf_rf.predict_proba(X_val)[:, 1]
+
+        if "mlp" in models_to_evaluate:
+            clf_mlp = MLPClassifier(
+                hidden_layer_sizes=(16, 8),
+                max_iter=150,
+                early_stopping=True,
+                random_state=42,
+            )
+            clf_mlp.fit(X_train, y_train)
+            model_probs["mlp"] = clf_mlp.predict_proba(X_val)[:, 1]
 
         for m_name in models_to_evaluate:
             p_val = model_probs[m_name]

@@ -422,36 +422,62 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
       - **Groww Official Clarification Verified Notice**: Displays contextual confirmation referencing the official Groww Customer Success ticket (recorded 15 Oct 2026 confirming IST timezone and `bar_start` timestamp semantics). Displays total quarantined chunks and confirms immediate availability of the compiled dataset for walk-forward model training.
       - Interactive prompt: Offers immediate guidance to select the asset in the Model Training Station below to benchmark LightGBM or Logistic Regression.
 
-  - **Model Selection & Walk-Forward Training Station (`<ModelTrainingWorkstation />`)**:
-    - **Purpose**: Provides interactive model selection, hyperparameter strategy mode gating, and on-demand 19-fold walk-forward cross-validation training on historical candle ledgers with statutory friction.
-    - **Model Architecture Dropdown (`model_type`)**:
-      - `lightgbm` (LightGBM Gradient Boosting Trees - SOTA V6 M37 multi-feature model).
-      - `logistic_regression` (Regularized Logistic Regression - L2 Baseline).
-      - `empirical_prior` (Empirical Prior Baseline - No Look-Ahead Historical Class Distribution).
-    - **Training Instrument Dropdown (`instrument`)**:
-      - `NIFTY`: NSE NIFTY 50 (pre-packaged with 6,227 M15 candles across 19 walk-forward folds).
-      - `BANKNIFTY`: NSE BANK NIFTY (pre-packaged with 6,227 M15 candles across 19 walk-forward folds).
-      - `SENSEX`: BSE SENSEX (populated with 6,831 M15 candles across 19 walk-forward folds).
-      - `CRUDEOILMINI`: MCX CRUDEOIL MINI (populated with 6,227 M15 candles across 19 walk-forward folds).
-    - **Execution Strategy Mode Dropdown (`strategy_mode`)**:
-      - `regime_gated`: Dynamic regime-conditioned execution (widens deadband during high-volatility regimes; trades with confidence during low-volatility regimes).
-      - `deadband`: Strict probability deadband cutoff ($P > 0.55$ for Long, $P < 0.45$ for Short; cash otherwise).
-      - `raw`: Continuous fractional Kelly/probabilistic sizing without deadband suppression.
-    - **`Train & Run Walk-Forward Benchmark` Action Button**:
-      - Invokes `POST /api/forecasting/train-benchmark`.
-      - Displays real-time spinner (`Training & Evaluating Walk-Forward Benchmark...`) during 19-fold model cross-validation.
-    - **Benchmark Metric Scorecard**:
-      - `Out-of-Sample Accuracy`: Directional prediction accuracy % over unseen test folds.
-      - `Brier Skill Score (BSS)`: Probabilistic skill improvement over canonical prior baseline (positive confirms true predictive edge).
-      - `Net Return (Friction-Adjusted)`: Total strategy cumulative return net of 2.0 bps Indian transaction costs (STT, exchange turnover fees, SEBI charges, stamp duty, slippage).
-      - `Max Drawdown`: Peak-to-trough portfolio drawdown percentage during walk-forward execution.
-    - **Strategy Comparison Matrix Table**:
-      - Real-time comparison of `Selected Strategy Mode`, `Baseline Logistic Regression`, and `Empirical Buy-and-Hold` detailing Net Return %, Max Drawdown %, Directional Win Rate %, and Total Trade Count.
-    - **Walk-Forward Folds Breakdown Accordion**:
-      - Inspect individual fold metrics: Fold index, train date range, test date range, fold directional accuracy %, fold BSS, and fold trade count.
-  - **Approved Forecasts Section**: Lists all active models approved for production forecasting.
-  - **Registered Models Table**: Lineage, training dataset ID, checksum, and safety flags.
-  - **Experiments Section**: Holdout and walk-forward experiment tables.
+  - **SOTA Model Walk-Forward & End-to-End Benchmark Workstation (`<ModelTrainingWorkstation />`)**:
+    - **Purpose**: Provides dual-mode model training, validation, and benchmarking: a focused single-model walk-forward inspector and a comprehensive end-to-end multi-dataset, multi-model walk-forward matrix benchmark that ranks all configurations on an interactive leaderboard.
+    - **Station Mode Switcher Buttons**:
+      - `🎯 Individual Model`: Switches to focused single-asset, single-model evaluation with deep metric inspection and strategy mode matrix.
+      - `🚀 End-to-End Suite & Leaderboard`: Switches to multi-dataset, multi-model cross-validation suite evaluating all combinations concurrently.
+    - **Individual Model Controls**:
+      - `Target Asset Dropdown`:
+        - `NIFTY`: NSE NIFTY 50 (6,227 M15 candles across 19 walk-forward folds).
+        - `BANKNIFTY`: NSE BANK NIFTY (6,227 M15 candles across 19 walk-forward folds).
+        - `SENSEX`: BSE SENSEX (6,831 M15 candles across 19 walk-forward folds).
+        - `CRUDEOILMINI`: MCX CRUDEOIL MINI (6,227 M15 candles across 19 walk-forward folds).
+      - `Model Architecture Dropdown`:
+        - `lightgbm`: LightGBM GBDT (Leaf-Wise SOTA - M37).
+        - `xgboost`: XGBoost Classifier (Regularized Boosting SOTA).
+        - `catboost`: CatBoost Classifier (Symmetric Oblivious Decision Trees SOTA).
+        - `random_forest`: Random Forest Ensemble (Bootstrap Bagging SOTA).
+        - `mlp`: Deep Neural Net / MLP (Multi-Layer Perceptron).
+        - `logistic_regression`: Logistic Regression (L2 Newton Baseline - M3/M23).
+        - `empirical_prior`: Empirical Prior (Majority Baseline - M3).
+      - `Strategy / Gating Mode Dropdown`:
+        - `regime_gated`: Dynamic regime-conditioned execution (consensus with ATR/ADX trend regime; neutral in range).
+        - `deadband`: Strict probability deadband cutoff ($P > 0.52$ for Long, $P < 0.48$ for Short; cash otherwise).
+        - `raw`: Continuous unconstrained directional execution ($P > 0.50$).
+      - `Validation Scheme Badge`: Confirms 19 Expanding Folds (14 Development / 5 Holdout).
+      - `⚡ Train & Benchmark [MODEL]` Button: Triggers `POST /api/forecasting/train-benchmark` with real-time progress.
+      - `Individual Benchmark Scorecard`: Holdout Accuracy %, Brier Skill Score, Holdout Net Return (2.0 bps friction), and Full Max Drawdown %.
+      - `Strategy Comparison Matrix Table`: Displays all strategy gating variations for the evaluated model with `SELECTED` badge on the active mode.
+    - **End-to-End Suite & Leaderboard Controls**:
+      - `1. Select Datasets Checkbox Grid`:
+        - Independent selection checkboxes for `NIFTY 50` (NSE), `BANK NIFTY` (NSE), `BSE SENSEX` (BSE), and `CRUDEOIL MINI` (MCX).
+        - Includes `Select All` and `Clear All` quick-action buttons.
+      - `2. Select SOTA Models Checkbox Grid`:
+        - Checkboxes for all 7 model families (`LIGHTGBM`, `XGBOOST`, `CATBOOST`, `RANDOM_FOREST`, `MLP`, `LOGISTIC_REGRESSION`, `EMPIRICAL_PRIOR`).
+        - Tag badges: `GBDT SOTA`, `BOOSTING SOTA`, `TREES SOTA`, `BAGGING SOTA`, `NEURAL SOTA`, `BASELINE`, `CLIMATOLOGY`.
+        - Includes `Select All` and `Clear All` quick-action buttons.
+      - `3. Select Strategy Gating Modes Checkbox Grid`:
+        - Checkboxes for `Regime-Gated Consensus (ATR/ADX Filter)`, `Deadband Neutral Filter (48%–52%)`, and `Raw Directional (Unconstrained)`.
+      - `🚀 Run End-to-End Walk-Forward Benchmark & Rank` Button:
+        - Submits `POST /api/forecasting/multi-benchmark` with selected datasets, models, and modes.
+        - Animated execution indicator (`⏳ Executing Multi-Asset Walk-Forward Matrix...`).
+      - `Champion Trophy Summary Cards`:
+        - `🏆 #1 Champion Model & Strategy`: Displays the top-ranked combination across all assets, its holdout net return %, mode, and accuracy.
+        - `🎯 Top Holdout Accuracy`: Highest directional accuracy model and Brier Skill Score.
+        - `🛡 Lowest Max Drawdown`: Model with minimal peak-to-trough equity drawdown.
+        - `📊 Evaluated Combinations`: Total combinations tested across the 19 expanding folds.
+      - `🥇 Top Champion Model by Instrument Cards`:
+        - Dedicated cards highlighting the #1 winning model, mode, holdout return, and accuracy for each evaluated instrument (`NIFTY`, `BANKNIFTY`, `SENSEX`, `CRUDEOILMINI`).
+      - `Filter Instrument Dropdown`:
+        - Instant client-side filtering (`All Instruments`, `NIFTY`, `BANKNIFTY`, `SENSEX`, `CRUDEOILMINI`).
+      - `🏆 Ranked SOTA Walk-Forward Leaderboard Table`:
+        - Ranked by Holdout Net Return after 2.0 bps friction with tie-breakers on accuracy and full walk-forward net return.
+        - Medals for top positions: `🥇 #1`, `🥈 #2`, `🥉 #3`, followed by numeric rank `#4`, `#5`, etc.
+        - Columns: `Rank`, `Instrument`, `Model Architecture`, `Strategy Mode`, `Holdout Net Return (2bps)`, `Full Net Return (2bps)`, `Holdout Accuracy`, `Brier Skill Score`, `Max Drawdown`, `Status` (`ALPHA+` in green or `NEGATIVE` in amber).
+    - **Approved Forecasts Section**: Lists all active models approved for production forecasting.
+    - **Registered Models Table**: Lineage, training dataset ID, checksum, and safety flags.
+    - **Experiments Section**: Holdout and walk-forward experiment tables.
 
 ---
 
