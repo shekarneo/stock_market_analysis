@@ -1,132 +1,136 @@
-# India Market Master
+# India Market Master (IMM) — V6
 
-Milestone M0 is a local settings and safety shell. It loads configuration, records audit events, and refuses live orders. It does not forecast, value options, or place broker orders.
+**India Market Master** is an institutional quantitative forecasting, multi-agent consensus, and options strategy desk engineered specifically for the Indian financial markets (NSE, BSE, and MCX).
 
-## What you need
+The platform bridges real-time market data ingestion with higher-timeframe swing modeling, 12-perspective LangGraph multi-agent consensus, Black-Scholes Greeks modeling, and paper simulation under complete Indian statutory taxation.
 
-- Docker, for Postgres, the API, and the settings page
-- No Groww account or token
+---
 
-## Start
+## Architecture Overview
 
-```bash
-cp .env.example .env
-# Set OPERATOR_PASSWORD and SESSION_SECRET in .env.
-# Leave LIVE_ORDER_SERVER_FLAG=false.
-docker compose up --build
+```
+                          ┌────────────────────────┐
+                          │    Live Market Data    │
+                          │ Groww / RBI FX / Yahoo │
+                          └───────────┬────────────┘
+                                      │
+                                      ▼
+                          ┌────────────────────────┐
+                          │ Data Hygiene & Pipeline│
+                          │ Quarantines & Lineage  │
+                          └───────────┬────────────┘
+                                      │
+              ┌───────────────────────┴───────────────────────┐
+              ▼                                               ▼
+  ┌───────────────────────┐                       ┌───────────────────────┐
+  │   12 Specialist AI    │                       │ Quantitative Forecast │
+  │    Graph Consensus    │                       │  Logistic & HTF Swing │
+  └───────────┬───────────┘                       └───────────┬───────────┘
+              │                                               │
+              └───────────────────────┬───────────────────────┘
+                                      │
+                                      ▼
+                          ┌────────────────────────┐
+                          │ Quant-Agent Confluence │
+                          │  Direction & Deadband  │
+                          └───────────┬────────────┘
+                                      │
+                                      ▼
+                          ┌────────────────────────┐
+                          │    Risk Safety Gate    │
+                          │ EV, Sizing & Statutory │
+                          └───────────┬────────────┘
+                                      │
+                                      ▼
+                          ┌────────────────────────┐
+                          │ Paper Simulation Book  │
+                          │ 0.05 Tick & Full Taxes │
+                          └────────────────────────┘
 ```
 
-- API health: http://localhost:8000/health
-- Settings: http://localhost:3000
+- **Backend (`apps/api`)**: FastAPI on Python 3.10 with SQLAlchemy, Alembic, SQLite / PostgreSQL, and LangGraph orchestration.
+- **Frontend (`apps/web`)**: Next.js 14 desk featuring live tickers, strike matrix, Greeks radar, consensus timeline, and unified tools hubs.
+- **Multi-Instrument Coverage**:
+  1. **NIFTY 50 (`NIFTY`)**: NSE benchmark index (lot size: 25, strike step: ₹50).
+  2. **BSE SENSEX (`SENSEX`)**: BSE blue-chip index (lot size: 20, strike step: ₹100).
+  3. **MCX CRUDEOIL MINI (`CRUDEOILMINI`)**: MCX energy commodity (lot size: 10 bbl, strike step: ₹50).
 
-Sign in with `OPERATOR_PASSWORD`. The default operating mode is `PAPER`. The live-order server flag stays off, so the settings page cannot place an order.
+---
 
-## Run the backend and the frontend
+## Core Trading Desks & Unified Hubs
 
-Local development runs three processes: Postgres, the API, and the Next.js desk. Start them in that order. The API reads `DATABASE_URL`, `SESSION_SECRET`, and `OPERATOR_PASSWORD` from the repository `.env`.
+1. **Dashboard (`/dashboard`)**: Unified executive summary, real-time macro context, trade ticket, and live market tape.
+2. **Analysis Desk (`/analysis`)**: 12-agent consensus orchestration (`V6Desk`) and institutional intelligence hub (`V6IntelligenceHub`).
+3. **Statistical Forecast Desk (`/forecast`)**: Real-time calibrated probabilities, Brier score tracking, and out-of-sample backtest metrics.
+4. **Options & Greeks Desk (`/options`)**: Live strike matrix, ATM detection, Black-Scholes Greeks ($\Delta, \Gamma, \Theta, \mathcal{V}$), and expected value ($EV$).
+5. **Live & Auto Trading (`/live`)**: Automated execution monitoring, auto-run intervals, and real-time outcome tracking.
+6. **Unified Tools Hubs**:
+   - **Data & History (`/history`)**: Candle ingestion, data hygiene, and Bhavcopy reconciliation.
+   - **Backtest & Paper (`/backtest` ↔ `/paper`)**: Walk-forward backtesting and paper portfolio simulation.
+   - **Model Studio & Registry (`/studio` ↔ `/registry`)**: Machine learning model training, lineage, and artifact registry.
+   - **Settings & Integrations (`/settings` ↔ `/settings/integrations`)**: Operator security, API integrations, and agent model configurations.
 
-Sign-in writes a session row, so it fails while Postgres is stopped. `GET /health` still answers; read `"database": true` in that body before signing in. `"database": false` means the API is up and the database is not.
+---
 
-### Each time you start
+## Strict Financial Safety Invariants
 
-1. Postgres on port 5432:
+The platform operates under strict fail-closed safety invariants:
+- **Fail-Closed Live Execution**: Real-money broker routing remains locked behind explicit operator authentication, double confirmation, and hardware/software kill switches.
+- **Simulation Isolation**: Paper trading simulation is isolated from live broker accounts.
+- **Truth in Data**: Never substitute missing, unverified, or null values with zero or invented numbers in financial ledgers or spot tickers.
+- **Microstructural Friction Modeling**: All backtest and paper simulation accounting deducts exact Indian statutory charges (STT, NSE turnover fees, SEBI charges, stamp duty, GST, and discrete 0.05 INR tick slippage).
 
-```bash
-docker compose up -d postgres
-```
+---
 
-If the container already exists and is stopped, `docker start stock_market_analysis-postgres-1` does the same thing. Wait until it accepts connections:
+## Getting Started
 
-```bash
-docker exec stock_market_analysis-postgres-1 pg_isready -U imm -d imm
-```
+### Prerequisites
+- Python 3.10+
+- Node.js 18+
+- SQLite (default) or PostgreSQL (optional via Docker)
 
-2. API, from the repository root, with the virtualenv active:
+### Quick Start (Local Development)
 
-```bash
-. .venv/bin/activate
-uvicorn app.main:app --host 127.0.0.1 --port 8014
-```
+1. **Configure Environment**:
+   ```bash
+   cp .env.example .env
+   # Ensure OPERATOR_PASSWORD and SESSION_SECRET are set in .env
+   ```
 
-Leave that terminal running. Health: http://127.0.0.1:8014/health
+2. **Start Backend API**:
+   ```bash
+   source .venv/bin/activate
+   cd apps/api
+   uvicorn app.main:app --host 127.0.0.1 --port 8000
+   ```
+   API Health: http://127.0.0.1:8000/health
 
-3. Desk, in a second terminal:
+3. **Start Frontend Desk** (in a separate terminal):
+   ```bash
+   cd apps/web
+   npm run dev -- --hostname 127.0.0.1 --port 3000
+   ```
+   Trading Desk: http://127.0.0.1:3000
 
-```bash
-cd apps/web
-API_URL=http://127.0.0.1:8014 npm run dev -- --hostname 127.0.0.1 --port 3000
-```
+---
 
-Desk: http://127.0.0.1:3000
+## Running Verification Tests
 
-Sign in with the `OPERATOR_PASSWORD` value from `.env`. There is no username field until an operator account is stored. After the migration below, http://127.0.0.1:3000/signup creates that account once. Later sign-ins use the stored username and password.
+- **Backend API Tests** (`pytest`):
+  ```bash
+  PYTHONPATH=apps/api .venv/bin/pytest -p no:launch_testing apps/api/tests/test_v6*.py apps/api/tests/test_analysis*.py apps/api/tests/test_forecasting.py
+  ```
 
-### First time on this machine
+- **Frontend Unit Tests** (`node --test`):
+  ```bash
+  npm test --prefix apps/web
+  ```
 
-```bash
-cp .env.example .env
-# Set OPERATOR_PASSWORD and SESSION_SECRET in .env.
-# Leave LIVE_ORDER_SERVER_FLAG=false.
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e "apps/api[dev]"
-docker compose up -d postgres
-cd apps/api
-alembic upgrade head
-cd ../web
-npm install
-```
+---
 
-`alembic upgrade head` creates the tables, including `operator_accounts`. Postgres from `.env.example` is `localhost:5432`. Then use the three start steps above. The API command stays at the repository root after `alembic`; the migration command stays in `apps/api`, where `alembic.ini` lives.
+## Documentation
 
-## API integrations
-
-Settings → API integrations is `http://localhost:3000/settings/integrations`. It stores Groww and OpenAI credentials in Postgres as Fernet ciphertext. The encryption key is `INTEGRATIONS_SECRET_KEY` in `.env`. The application does not generate or commit that key. Read endpoints return configured/not-configured and the last connection-test result. They do not return secret values.
-
-Saving credentials does not test them. Use the test buttons. Groww's test is `GET /v1/margins/detail/user`. OpenAI's test is `GET /v1/models/{model}`. Neither test places an order or requests a forecast. Live trading stays disabled.
-
-## Run the API tests
-
-The tests use Postgres on port 54329 and do not call Groww.
-
-```bash
-docker run -d --name imm-m0-test-pg \
-  -e POSTGRES_USER=imm -e POSTGRES_PASSWORD=imm -e POSTGRES_DB=imm \
-  -p 54329:5432 postgres:16.6
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e "apps/api[dev]"
-cd apps/api
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
-  DATABASE_URL=postgresql+psycopg://imm:imm@localhost:54329/imm \
-  pytest
-```
-
-The design for the model registry, Forecast Model Studio, and LangGraph evidence workflow is in `docs/MODEL_REGISTRY_AND_STUDIO_SPEC.md` and `docs/LANGGRAPH_ORCHESTRATION_SPEC.md`. Those parts are not built in M0.
-
-## Research desk
-
-The web app also serves local research pages: Dashboard, Data, Analysis, Forecasts, Walk-forward, Options, Risk, Paper, Registry, and Health. They read the local API. They do not place orders. Paper trading stays disabled. Verified live prices are not shown.
-
-`GET /api/research/status` requires a signed-in session. It reports the kill switch only when the row was read. A missing switch is not reported as off. Risk capital stays null until an operator sets it.
-
-## UI & Trading Desk Walkthrough
-
-A comprehensive, canonical walkthrough of every page, view mode, button, toggle, dropdown, metric card, and status indicator is maintained at:
-- **[`docs/UI_WALKTHROUGH.md`](docs/UI_WALKTHROUGH.md)**
-
-Whenever UI components in `apps/web` are updated, this document must be updated concurrently (enforced by `.agents/rules/ui-documentation.md` and `AGENTS.md`).
-
-Start the API and the desk with the commands in **Run the backend and the frontend**. `LIVE_ORDER_SERVER_FLAG` stays false. Do not set `PAPER_TRADING_ACTIVE`.
-
-```bash
-cd apps/web
-node --test app/research/status.test.mjs app/settings/integrations/labels.test.mjs
-npm run build
-```
-
-## Not finished
-
-M10 paper fills are not persisted. M11 and later milestones are not started. Quarantined Groww candles are not trusted market data. The timestamp contract is not verified.
-
-`cursor-sdk` is not required to run the desk.
+- **[UI Walkthrough (`docs/UI_WALKTHROUGH.md`)](docs/UI_WALKTHROUGH.md)**: Exhaustive documentation of every page, button, dropdown, metric card, and badge across the desk.
+- **[Autonomous System Synthesis (`docs/V6_AUTONOMOUS_SYSTEM_SYNTHESIS_REPORT.md`)](docs/V6_AUTONOMOUS_SYSTEM_SYNTHESIS_REPORT.md)**: Milestone M0 through M43 quantitative research and certification report.
+- **[Autonomous Project State (`docs/AUTONOMOUS_PROJECT_STATE.md`)](docs/AUTONOMOUS_PROJECT_STATE.md)**: Current system state, dataset SHA-256 hashes, and safety invariant verifications.
+- **[Operational Runbook (`docs/PRODUCTION_OPERATIONAL_RUNBOOK.md`)](docs/PRODUCTION_OPERATIONAL_RUNBOOK.md)**: Daily production workflows, session transitions, and emergency procedures.
