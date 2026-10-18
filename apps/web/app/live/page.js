@@ -806,7 +806,7 @@ export default function LiveTradingPage() {
             </select>
             {lastAnalysisAt ? (
               <span style={{ fontSize: "0.73rem", color: "#a7f3d0" }}>
-                Updated: {formatIST(lastAnalysisAt)}
+                Updated: {ist(lastAnalysisAt)}
               </span>
             ) : null}
           </div>
