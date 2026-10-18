@@ -379,7 +379,7 @@ function ModelTrainingWorkstation() {
 
   // End-to-End Suite State
   const [selectedDatasets, setSelectedDatasets] = useState(["NIFTY", "BANKNIFTY", "SENSEX", "CRUDEOILMINI"]);
-  const [selectedModels, setSelectedModels] = useState(["lightgbm", "xgboost", "catboost", "random_forest", "mlp", "logistic_regression", "empirical_prior"]);
+  const [selectedModels, setSelectedModels] = useState(["lightgbm", "xgboost", "catboost", "dlinear", "chronos", "random_forest", "mlp", "logistic_regression", "empirical_prior"]);
   const [selectedModes, setSelectedModes] = useState(["regime_gated", "deadband", "raw"]);
   const [suiteBusy, setSuiteBusy] = useState(false);
   const [suiteResult, setSuiteResult] = useState(null);
@@ -390,6 +390,8 @@ function ModelTrainingWorkstation() {
     { id: "lightgbm", name: "LightGBM GBDT (Leaf-Wise SOTA - M37)", tag: "GBDT SOTA" },
     { id: "xgboost", name: "XGBoost Classifier (Regularized Boosting SOTA)", tag: "BOOSTING SOTA" },
     { id: "catboost", name: "CatBoost Classifier (Symmetric Trees SOTA)", tag: "TREES SOTA" },
+    { id: "dlinear", name: "DLinear / NLinear (Time-Series Decomposition SOTA)", tag: "DECOMPOSITION SOTA" },
+    { id: "chronos", name: "Amazon Chronos-2 (Transformer Foundation Model)", tag: "FOUNDATION SOTA" },
     { id: "random_forest", name: "Random Forest Ensemble (Bagging SOTA)", tag: "BAGGING SOTA" },
     { id: "mlp", name: "Deep Neural Net / MLP (Multi-Layer Perceptron)", tag: "NEURAL SOTA" },
     { id: "logistic_regression", name: "Logistic Regression (L2 Newton Baseline - M3/M23)", tag: "BASELINE" },

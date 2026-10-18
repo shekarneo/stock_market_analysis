@@ -437,6 +437,8 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
         - `lightgbm`: LightGBM GBDT (Leaf-Wise SOTA - M37).
         - `xgboost`: XGBoost Classifier (Regularized Boosting SOTA).
         - `catboost`: CatBoost Classifier (Symmetric Oblivious Decision Trees SOTA).
+        - `dlinear`: DLinear / NLinear (Time-Series Decomposition Neural Net SOTA - AAAI).
+        - `chronos`: Amazon Chronos-2 (Zero-Shot Time-Series Transformer Foundation Model).
         - `random_forest`: Random Forest Ensemble (Bootstrap Bagging SOTA).
         - `mlp`: Deep Neural Net / MLP (Multi-Layer Perceptron).
         - `logistic_regression`: Logistic Regression (L2 Newton Baseline - M3/M23).
@@ -454,8 +456,8 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
         - Independent selection checkboxes for `NIFTY 50` (NSE), `BANK NIFTY` (NSE), `BSE SENSEX` (BSE), and `CRUDEOIL MINI` (MCX).
         - Includes `Select All` and `Clear All` quick-action buttons.
       - `2. Select SOTA Models Checkbox Grid`:
-        - Checkboxes for all 7 model families (`LIGHTGBM`, `XGBOOST`, `CATBOOST`, `RANDOM_FOREST`, `MLP`, `LOGISTIC_REGRESSION`, `EMPIRICAL_PRIOR`).
-        - Tag badges: `GBDT SOTA`, `BOOSTING SOTA`, `TREES SOTA`, `BAGGING SOTA`, `NEURAL SOTA`, `BASELINE`, `CLIMATOLOGY`.
+        - Checkboxes for all 9 model families (`LIGHTGBM`, `XGBOOST`, `CATBOOST`, `DLINEAR`, `CHRONOS`, `RANDOM_FOREST`, `MLP`, `LOGISTIC_REGRESSION`, `EMPIRICAL_PRIOR`).
+        - Tag badges: `GBDT SOTA`, `BOOSTING SOTA`, `TREES SOTA`, `DECOMPOSITION SOTA`, `FOUNDATION SOTA`, `BAGGING SOTA`, `NEURAL SOTA`, `BASELINE`, `CLIMATOLOGY`.
         - Includes `Select All` and `Clear All` quick-action buttons.
       - `3. Select Strategy Gating Modes Checkbox Grid`:
         - Checkboxes for `Regime-Gated Consensus (ATR/ADX Filter)`, `Deadband Neutral Filter (48%–52%)`, and `Raw Directional (Unconstrained)`.

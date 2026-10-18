@@ -244,6 +244,26 @@ def test_train_benchmark_sota_models(client: TestClient):
     assert b_cb["ok"] is True
     assert b_cb["model_name"] == "catboost"
 
+    # Test DLinear on NIFTY
+    res_dl = client.post(
+        "/api/forecasting/train-benchmark",
+        json={"instrument": "NIFTY", "model": "dlinear", "strategy_mode": "deadband"},
+    )
+    assert res_dl.status_code == 200
+    b_dl = res_dl.json()
+    assert b_dl["ok"] is True
+    assert b_dl["model_name"] == "dlinear"
+
+    # Test Chronos Foundation Model on NIFTY
+    res_chr = client.post(
+        "/api/forecasting/train-benchmark",
+        json={"instrument": "NIFTY", "model": "chronos", "strategy_mode": "regime_gated"},
+    )
+    assert res_chr.status_code == 200
+    b_chr = res_chr.json()
+    assert b_chr["ok"] is True
+    assert b_chr["model_name"] == "chronos"
+
 
 def test_multi_benchmark_endpoint(client: TestClient):
     from tests.conftest import login

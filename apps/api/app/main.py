@@ -813,6 +813,10 @@ def normalize_model_key(m: str) -> str:
         return "xgboost"
     elif "cat" in m or "catboost" in m:
         return "catboost"
+    elif "dlinear" in m or "nlinear" in m:
+        return "dlinear"
+    elif "chronos" in m or "foundation" in m:
+        return "chronos"
     elif "forest" in m or "rf" in m or "random" in m:
         return "random_forest"
     elif "mlp" in m or "neural" in m or "net" in m:
