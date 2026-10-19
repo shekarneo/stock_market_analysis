@@ -96,6 +96,23 @@ def create_suggestion(
     if entry_spot <= 0 or target_points <= 0 or stop_loss_points <= 0:
         raise ValueError("Spot and point distances must be positive.")
     up = opt == "CE"
+    # Check for live Groww option quote to lock in genuine market entry premium
+    try:
+        from app.market.groww_options import get_live_option_quote
+        live_q = get_live_option_quote(contract)
+        if live_q and live_q.get("ltp") is not None and float(live_q["ltp"]) > 0:
+            model_premiums = dict(model_premiums or {})
+            model_premiums["entry"] = round(float(live_q["ltp"]), 1)
+            delta = float(live_q.get("delta") or 0.5)
+            model_premiums["delta"] = round(delta, 2)
+            model_premiums["target"] = round(model_premiums["entry"] + (delta * target_points), 1)
+            model_premiums["stop_loss"] = round(max(0.05, model_premiums["entry"] - (delta * stop_loss_points)), 1)
+            model_premiums["trading_symbol"] = live_q.get("trading_symbol")
+            model_premiums["data_source"] = "GROWW_OPTION_CHAIN"
+            model_premiums["is_live_quote"] = True
+    except Exception:
+        pass
+
     row = WatchlistSuggestion(
         suggestion_id=uuid.uuid4().hex,
         instrument=instrument.upper(),
@@ -120,7 +137,7 @@ def create_suggestion(
 
 
 def evaluate_open(session: Session, observations: list[dict], now: datetime | None = None) -> dict:
-    """Check every OPEN suggestion against the newest spot that post-dates it."""
+    """Check every OPEN suggestion against newest spot and live option quotes."""
     now = now or datetime.now(timezone.utc)
     spots = latest_spots(observations)
     rows = session.scalars(select(WatchlistSuggestion).where(WatchlistSuggestion.status == "OPEN")).all()
@@ -129,6 +146,24 @@ def evaluate_open(session: Session, observations: list[dict], now: datetime | No
         quote = spots.get(row.instrument)
         created = row.created_at if row.created_at.tzinfo else row.created_at.replace(tzinfo=timezone.utc)
         fresh = quote is not None and quote["at"] is not None and quote["at"] > created
+
+        # Live option quote lookup from Groww Option Chain
+        live_q = None
+        current_prem = None
+        try:
+            from app.market.groww_options import get_live_option_quote
+            live_q = get_live_option_quote(row.contract)
+            if live_q and live_q.get("ltp") is not None and float(live_q["ltp"]) > 0:
+                current_prem = float(live_q["ltp"])
+                p = dict(row.model_premiums or {})
+                p["running_premium"] = current_prem
+                if live_q.get("trading_symbol"):
+                    p["trading_symbol"] = live_q["trading_symbol"]
+                p["is_live_quote"] = True
+                row.model_premiums = p
+        except Exception:
+            pass
+
         if fresh:
             spot = Decimal(str(quote["price"]))
             row.last_spot = spot
@@ -141,12 +176,35 @@ def evaluate_open(session: Session, observations: list[dict], now: datetime | No
             else:
                 row.max_favorable_spot = max(row.max_favorable_spot, spot) if up else min(row.max_favorable_spot, spot)
                 row.max_adverse_spot = min(row.max_adverse_spot, spot) if up else max(row.max_adverse_spot, spot)
+
+            # Spot-based boundary check
             hit_target = spot >= row.target_spot if up else spot <= row.target_spot
             hit_sl = spot <= row.stop_loss_spot if up else spot >= row.stop_loss_spot
+
+            # If live market option quotes exist, evaluate against actual option premium
+            p = row.model_premiums or {}
+            p_target = p.get("target")
+            p_sl = p.get("stop_loss")
+            if current_prem is not None:
+                if p_target and current_prem >= float(p_target):
+                    hit_target = True
+                    hit_sl = False
+                elif p_sl and current_prem <= float(p_sl):
+                    hit_sl = True
+                    hit_target = False
+                elif hit_sl and p_sl and current_prem > float(p_sl):
+                    # Underlying spot briefly spiked into SL zone, but actual option premium
+                    # in Groww never breached the stop loss level. Maintain open position.
+                    hit_sl = False
+
             if hit_target or hit_sl:
                 row.status = "TARGET_HIT" if hit_target else "SL_HIT"
                 row.resolved_at = quote["at"]
                 row.resolved_spot = spot
+                if current_prem is not None:
+                    p = dict(row.model_premiums or {})
+                    p["exit_premium"] = current_prem
+                    row.model_premiums = p
                 changed += 1
                 continue
         expires = row.expires_at if row.expires_at.tzinfo else row.expires_at.replace(tzinfo=timezone.utc)
@@ -185,6 +243,18 @@ def serialize(row: WatchlistSuggestion) -> dict:
     def ts(v):
         return v.isoformat() if v is not None else None
 
+    # Check for live market option quote from Groww Option Chain
+    live_opt_prem = None
+    trading_symbol = (row.model_premiums or {}).get("trading_symbol")
+    try:
+        from app.market.groww_options import get_live_option_quote
+        live_q = get_live_option_quote(row.contract)
+        if live_q and live_q.get("ltp") is not None:
+            live_opt_prem = float(live_q["ltp"])
+            trading_symbol = live_q.get("trading_symbol") or trading_symbol
+    except Exception:
+        pass
+
     return {
         "suggestion_id": row.suggestion_id,
         "instrument": row.instrument,
@@ -196,6 +266,9 @@ def serialize(row: WatchlistSuggestion) -> dict:
         "target_spot": num(row.target_spot),
         "stop_loss_spot": num(row.stop_loss_spot),
         "model_premiums": row.model_premiums,
+        "live_option_premium": live_opt_prem,
+        "trading_symbol": trading_symbol,
+        "is_live_contract": live_opt_prem is not None,
         "data_class": row.data_class,
         "status": row.status,
         "expires_at": ts(row.expires_at),

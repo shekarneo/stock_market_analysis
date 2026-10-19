@@ -89,7 +89,16 @@ function inr(v) {
 }
 
 function calcRunningPremium(w, spots) {
+  // 1. Prioritize genuine live option quote directly from Groww Option Chain
+  if (w.live_option_premium != null && Number(w.live_option_premium) > 0) {
+    return Number(w.live_option_premium);
+  }
   const p = w.model_premiums || {};
+  if (p.running_premium != null && Number(p.running_premium) > 0) {
+    return Number(p.running_premium);
+  }
+
+  // 2. Fallback to model delta calculation if option chain LTP is unavailable
   const pEntry = p.entry != null ? Number(p.entry) : null;
   if (pEntry == null) return null;
 
@@ -1468,6 +1477,11 @@ export default function LiveTradingPage() {
                           {/* Dedicated Premium Entry Column */}
                           <td style={{ padding: "10px 10px", background: "rgba(16, 185, 129, 0.05)" }}>
                             <strong style={{ color: "var(--ink, #f8fafc)" }}>{inr(pEntry)}</strong>
+                            {(p.is_live_quote || p.data_source === "GROWW_OPTION_CHAIN" || w.is_live_contract) && (
+                              <small style={{ display: "block", color: "#34d399", fontSize: "0.68rem", fontWeight: 600 }}>
+                                Groww Entry LTP
+                              </small>
+                            )}
                             {p.lot_size ? <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem" }}>Lot {p.lot_size}</small> : null}
                           </td>
                           {/* Dedicated Running / Exit Premium Column */}
@@ -1487,27 +1501,39 @@ export default function LiveTradingPage() {
                                     {isRunPos ? "+" : ""}{runDiffPct.toFixed(1)}%
                                   </small>
                                 )}
+                                <small style={{
+                                  display: "inline-block",
+                                  fontSize: "0.65rem",
+                                  padding: "1px 5px",
+                                  borderRadius: "3px",
+                                  background: w.live_option_premium ? "rgba(34, 197, 94, 0.15)" : "rgba(148, 163, 184, 0.15)",
+                                  color: w.live_option_premium ? "#34d399" : "var(--muted)",
+                                  fontWeight: 600,
+                                  marginTop: "2px",
+                                }}>
+                                  {w.live_option_premium ? "Groww Live LTP" : "Model Est."}
+                                </small>
                               </>
                             ) : w.status === "SL_HIT" ? (
                               <>
-                                <strong style={{ color: "#f87171" }}>{inr(pSL)}</strong>
+                                <strong style={{ color: "#f87171" }}>{inr(p.exit_premium || pSL)}</strong>
                                 <small style={{ display: "block", color: "#f87171", fontWeight: 700, fontSize: "0.7rem" }}>
-                                  {lossPct || "-25%"} Exit
+                                  {p.exit_premium ? "Realized Exit" : (lossPct || "-25% Exit")}
                                 </small>
                                 {runningPrem != null && (
-                                  <small style={{ display: "block", color: "var(--muted)", fontSize: "0.68rem", marginTop: "2px" }} title="Current hypothetical theoretical premium if held post-exit">
+                                  <small style={{ display: "block", color: "var(--muted)", fontSize: "0.68rem", marginTop: "2px" }} title="Current market option premium if held post-exit">
                                     Post-Exit: {inr(runningPrem)} ({isRunPos ? "+" : ""}{runDiffPct?.toFixed(1)}%)
                                   </small>
                                 )}
                               </>
                             ) : w.status === "TARGET_HIT" ? (
                               <>
-                                <strong style={{ color: "#34d399" }}>{inr(pTarget)}</strong>
+                                <strong style={{ color: "#34d399" }}>{inr(p.exit_premium || pTarget)}</strong>
                                 <small style={{ display: "block", color: "#34d399", fontWeight: 700, fontSize: "0.7rem" }}>
-                                  {gainPct || "+40%"} Exit
+                                  {p.exit_premium ? "Realized Exit" : (gainPct || "+40% Exit")}
                                 </small>
                                 {runningPrem != null && (
-                                  <small style={{ display: "block", color: "var(--muted)", fontSize: "0.68rem", marginTop: "2px" }} title="Current hypothetical theoretical premium if held post-exit">
+                                  <small style={{ display: "block", color: "var(--muted)", fontSize: "0.68rem", marginTop: "2px" }} title="Current market option premium if held post-exit">
                                     Post-Exit: {inr(runningPrem)} ({isRunPos ? "+" : ""}{runDiffPct?.toFixed(1)}%)
                                   </small>
                                 )}

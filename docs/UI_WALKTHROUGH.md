@@ -371,13 +371,13 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
 - **Status Filter Buttons**:
   - Filter by lifecycle status: `All`, `Open`, `Target hit`, `SL hit`, `Expired`, `Cancelled`.
 - **Interactive Suggestions Table**:
-  - `Contract`: Clickable link navigating directly to `/dashboard?instrument=...` with sub-link to `/analysis`. Displays option direction tag and data class.
+  - `Contract`: Clickable link navigating directly to `/dashboard?instrument=...` with sub-link to `/analysis`. Displays contract name, official exchange trading symbol (e.g. `NIFTY26O1923050PE` in cyan), option direction tag, and data class.
   - `Status`: Color-coded pill (`Open`, `Target hit`, `SL hit`, `Expired`, `Cancelled`).
-  - `Prem. Entry`: Theoretical entry option premium and lot size.
+  - `Prem. Entry`: Entry option premium and lot size. Marked with a green `Groww Entry LTP` badge when populated directly from the verified Groww live Option Chain, or model estimate if offline.
   - `Running Prem.` / `Exit Prem`:
-    - For `OPEN` suggestions: Displays live mark-to-market premium and running gain/loss percentage.
-    - For `RESOLVED` suggestions (`SL hit` / `Target hit`): Clearly shows the **realized exit premium** (e.g. `₹87.7 · -25% Exit` in red or `₹175.9 · +40% Exit` in green). Beneath the realized exit, a subtle label displays `Post-Exit: ₹... (+/-%)` so operators can inspect post-resolution market recovery without creating contradictory signals.
-  - `Prem. Target` & `Prem. SL`: Target (+40%) and Stop-Loss (-25%) premium estimates.
+    - For `OPEN` suggestions: Displays live mark-to-market premium and running gain/loss percentage. Features a distinct badge: **`Groww Live LTP`** (green) when streaming live exchange quotes from Groww GET `/v1/option-chain`, or **`Model Est.`** (slate) when using spot-delta estimation.
+    - For `RESOLVED` suggestions (`SL hit` / `Target hit`): Displays the **Realized Exit Premium** (captured directly from the live Groww option chain at resolution time) labeled `Realized Exit`. If resolved by formula, displays theoretical exit (`-25% Exit` or `+40% Exit`). Beneath the realized exit, a subtle label displays `Post-Exit: ₹... (+/-%)` showing ongoing live market option recovery without ambiguous signals.
+  - `Prem. Target` & `Prem. SL`: Target and Stop-Loss option premium levels calculated from entry LTP.
   - `Spot Entry`, `Spot Target`, `Spot SL`: Underlying spot boundary levels.
   - `Last Spot`:
     - For `OPEN` suggestions: Real-time observed spot price dynamically refreshed from streaming market feeds, with total checks count and last check timestamp.

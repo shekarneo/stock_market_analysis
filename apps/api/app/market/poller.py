@@ -60,6 +60,12 @@ def perform_live_sync(session: Session, settings: Settings, caller: Any = None) 
     now_ist = datetime.now(IST)
     result = run_live_read(session, settings, caller=caller, retrieved_at=now_ist)
 
+    # Fetch fresh live option chain for NIFTY from Groww official API
+    try:
+        from app.market.groww_options import fetch_groww_option_chain
+        fetch_groww_option_chain(session, settings, caller=caller, underlying="NIFTY")
+    except Exception as exc:
+        logger.warning("Option chain refresh failed during live sync: %s", exc)
 
     # Merge Groww MCX Commodities, Global Indices, and Domestic Sectorals
     try:

@@ -257,3 +257,62 @@ def load_stored_option_chain_observation(
     except Exception:
         return None
     return None
+
+
+def load_stored_option_chain_data(path: Path | None = None) -> dict | None:
+    """Load the full stored option chain data structure from disk."""
+    target_path = path or OPTION_CHAIN_STORE_PATH
+    if not target_path.is_file():
+        return None
+    try:
+        data = json.loads(target_path.read_text(encoding="utf-8"))
+        if data.get("status") == "SUCCESS" and "strikes" in data:
+            return data
+    except Exception:
+        return None
+    return None
+
+
+def get_live_option_quote(contract_str: str, path: Path | None = None) -> dict | None:
+    """Lookup actual live Groww LTP, Greeks, and contract symbol for an option contract.
+
+    Returns dict with ltp, delta, iv, trading_symbol, open_interest, volume, expiry_date, underlying_ltp
+    or None if quote is not found in the live chain.
+    """
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(CE|PE)", str(contract_str), re.IGNORECASE)
+    if not m:
+        return None
+    strike_val = float(m.group(1))
+    opt_type = m.group(2).upper()
+    data = load_stored_option_chain_data(path)
+    if not data:
+        return None
+    strikes = data.get("strikes", {})
+    strike_data = (
+        strikes.get(str(strike_val))
+        or strikes.get(f"{strike_val:.1f}")
+        or strikes.get(int(strike_val) if strike_val.is_integer() else strike_val)
+        or strikes.get(strike_val)
+    )
+    if not strike_data or not isinstance(strike_data, dict):
+        return None
+    quote = strike_data.get(opt_type)
+    if not quote or not isinstance(quote, dict):
+        return None
+    ltp = quote.get("ltp")
+    if ltp is None or float(ltp) <= 0:
+        return None
+    greeks = quote.get("greeks") or {}
+    delta = greeks.get("delta")
+    return {
+        "ltp": float(ltp),
+        "delta": abs(float(delta)) if delta is not None else None,
+        "iv": float(greeks.get("iv")) if greeks.get("iv") is not None else None,
+        "trading_symbol": quote.get("trading_symbol"),
+        "open_interest": quote.get("open_interest"),
+        "volume": quote.get("volume"),
+        "expiry_date": data.get("expiry_date"),
+        "underlying_ltp": data.get("underlying_ltp"),
+        "retrieved_at": data.get("retrieved_at"),
+    }
+

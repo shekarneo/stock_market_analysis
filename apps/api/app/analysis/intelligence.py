@@ -393,10 +393,37 @@ def _generate_option_picks(
         intrinsic = max(0.0, dist)
         raw_delta = 0.50 + (dist / (scale * 2.5))
         delta = max(0.20, min(0.80, raw_delta))
-        extrinsic = base_time_val * math.exp(-0.5 * ((dist / scale) ** 2))
-        entry = round(max(min_entry, intrinsic + extrinsic), 1)
-        target = round(entry + (delta * target_pts), 1)
-        sl = round(max(min_sl, entry - (delta * sl_pts)), 1)
+
+        # Check for verified live market option quote from Groww Option Chain
+        live_quote = None
+        try:
+            from app.market.groww_options import get_live_option_quote
+            live_quote = get_live_option_quote(f"{instrument} {strike} {opt_type}")
+        except Exception:
+            live_quote = None
+
+        if live_quote and live_quote.get("ltp") is not None and float(live_quote["ltp"]) > 0:
+            entry = round(float(live_quote["ltp"]), 1)
+            if live_quote.get("delta") is not None and float(live_quote["delta"]) > 0:
+                delta = max(0.05, min(0.99, round(float(live_quote["delta"]), 2)))
+            target = round(entry + (delta * target_pts), 1)
+            sl = round(max(0.05, entry - (delta * sl_pts)), 1)
+            trading_symbol = live_quote.get("trading_symbol")
+            open_interest = live_quote.get("open_interest")
+            volume = live_quote.get("volume")
+            is_live_quote = True
+            quote_source = "GROWW_OPTION_CHAIN"
+        else:
+            extrinsic = base_time_val * math.exp(-0.5 * ((dist / scale) ** 2))
+            entry = round(max(min_entry, intrinsic + extrinsic), 1)
+            target = round(entry + (delta * target_pts), 1)
+            sl = round(max(min_sl, entry - (delta * sl_pts)), 1)
+            trading_symbol = None
+            open_interest = None
+            volume = None
+            is_live_quote = False
+            quote_source = "MODEL_ESTIMATE"
+
         risk = max(0.1, entry - sl)
         reward = max(0.1, target - entry)
         rr = round(reward / risk, 1)
@@ -406,6 +433,7 @@ def _generate_option_picks(
             "strike": strike,
             "option_type": opt_type,
             "contract": f"{instrument} {strike} {opt_type}",
+            "trading_symbol": trading_symbol,
             "role": roles[idx],
             "moneyness": moneyness,
             "delta": round(delta, 2),
@@ -419,6 +447,10 @@ def _generate_option_picks(
             "profit_per_lot": round(reward * lot_size, 0),
             "target_underlying": round(spot + target_pts if opt_type == "CE" else spot - target_pts, 1),
             "sl_underlying": round(spot - sl_pts if opt_type == "CE" else spot + sl_pts, 1),
+            "open_interest": open_interest,
+            "volume": volume,
+            "is_live_quote": is_live_quote,
+            "quote_source": quote_source,
         })
     return picks
 
