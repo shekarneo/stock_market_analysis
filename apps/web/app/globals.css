@@ -734,6 +734,33 @@ th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 8px 6p
 .trigger-item.invalidation { background: var(--amber-bg); border-left: 3px solid var(--amber); }
 .trigger-item.invalidation strong { color: var(--amber); }
 
+.intelligence-drawer {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  margin-top: 14px;
+}
+.intelligence-drawer summary {
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--ink);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+  background: rgba(255, 255, 255, 0.02);
+  transition: background 0.2s ease;
+}
+.intelligence-drawer summary:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.intelligence-drawer[open] summary {
+  border-bottom: 1px solid var(--line);
+}
+
 .instrument-card-foot {
   margin-top: auto;
   padding-top: 8px;

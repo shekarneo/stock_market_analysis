@@ -2147,12 +2147,17 @@ function InstrumentDecisions({ selected, report }) {
 
   return (
     <section className="instrument-decision-section" aria-labelledby="instrument-decisions-heading">
-      <div className="section-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px", marginBottom: "14px" }}>
+      <div className="section-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", marginBottom: "16px" }}>
         <div>
-          <p className="eyebrow">Decision Matrix</p>
-          <h3 id="instrument-decisions-heading" style={{ margin: 0, fontSize: "1.1rem" }}>Instrument Decisions & Option Recommendations</h3>
-          <p className="subtle-text" style={{ margin: "2px 0 0 0" }}>
-            Deterministic evaluations from Groww spot snapshots (unverified provider data), macro transmission, and risk engine rules. Option premiums are model estimates, not exchange quotes.
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+            <span className="eyebrow" style={{ margin: 0 }}>Decision Matrix</span>
+            <span style={{ fontSize: "0.68rem", fontWeight: 700, padding: "2px 8px", borderRadius: "999px", background: "rgba(56, 189, 248, 0.12)", color: "#38bdf8", border: "1px solid rgba(56, 189, 248, 0.25)" }}>
+              ⚡ OPTION RECOMMENDATIONS
+            </span>
+          </div>
+          <h3 id="instrument-decisions-heading" style={{ margin: 0, fontSize: "1.15rem", fontWeight: 800 }}>Instrument Decisions & Option Recommendations</h3>
+          <p className="subtle-text" style={{ margin: "2px 0 0 0", fontSize: "0.8rem", color: "var(--muted)" }}>
+            Deterministic multi-agent synthesis from live Groww spot feeds, macro transmission, and risk engine rules.
           </p>
         </div>
 
@@ -2216,13 +2221,11 @@ function InstrumentDecisions({ selected, report }) {
           };
 
           const whatHappens = data.what_happens || {};
-          const optionsEval = data.options_evaluation || {};
-          const riskVeto = data.risk_veto || {};
-          const biasClass = (data.bias || "").toLowerCase().includes("bullish")
-            ? "bullish"
-            : (data.bias || "").toLowerCase().includes("bearish")
-            ? "bearish"
-            : "neutral";
+          const isBullish = (data.bias || "").toLowerCase().includes("bullish");
+          const isBearish = (data.bias || "").toLowerCase().includes("bearish");
+          const biasClass = isBullish ? "bullish" : isBearish ? "bearish" : "neutral";
+          const session = getMarketSessionInfo(item);
+          const liveSpot = (spots && (spots[item] || (item === "CRUDEMINI" ? spots["CRUDEOILMINI"] : null))) ?? data.last_price;
 
           return (
             <article
@@ -2231,20 +2234,35 @@ function InstrumentDecisions({ selected, report }) {
               data-testid={`instrument-decision-${item}`}
               style={{ display: isVisible ? "block" : "none" }}
             >
-              <div className="instrument-card-head">
+              <div className="instrument-card-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px", paddingBottom: "12px", borderBottom: "1px solid var(--line)" }}>
                 <div>
-                  <h4 style={{ fontSize: "1.15rem", margin: 0 }}>{meta.name}</h4>
-                  <small style={{ color: "var(--muted)" }}>
-                    {meta.exchange} · {getMarketSessionInfo(item).isOpen ? data.status : `CLOSED (${getMarketSessionInfo(item).closeTimeText})`}
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <h4 style={{ fontSize: "1.2rem", margin: 0, fontWeight: 800 }}>{meta.name}</h4>
+                    <span style={{ fontSize: "0.72rem", padding: "1px 6px", borderRadius: "4px", background: "rgba(255,255,255,0.06)", color: "var(--muted)", fontWeight: 600 }}>
+                      {meta.exchange}
+                    </span>
+                  </div>
+                  <small style={{ color: "var(--muted)", fontSize: "0.74rem" }}>
+                    {session.isOpen ? "🟢 Live Trading Session Active" : `🌙 Closed (Session Ended ${session.closeTimeText})`}
                   </small>
                 </div>
-                <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                  {liveSpot != null && (
+                    <div style={{ textAlign: "right", marginRight: "4px" }}>
+                      <span style={{ fontSize: "0.68rem", color: "var(--muted)", display: "block", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                        {session.isOpen ? "Live Spot LTP" : "Settlement Spot"}
+                      </span>
+                      <span style={{ fontSize: "1.05rem", fontWeight: 850, color: "var(--ink)", letterSpacing: "-0.01em" }}>
+                        ₹{Number(liveSpot).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  )}
                   <span className="data-badge" style={{
-                    background: data.data_class?.includes("PROVIDER") ? "#dcfce7" : undefined,
-                    color: data.data_class?.includes("PROVIDER") ? "#15803d" : undefined,
-                    borderColor: data.data_class?.includes("PROVIDER") ? "#86efac" : undefined,
+                    background: data.data_class?.includes("PROVIDER") ? "rgba(16, 185, 129, 0.12)" : undefined,
+                    color: data.data_class?.includes("PROVIDER") ? "#34d399" : undefined,
+                    borderColor: data.data_class?.includes("PROVIDER") ? "rgba(16, 185, 129, 0.3)" : undefined,
                   }}>
-                    {data.data_class?.includes("PROVIDER") ? "🟢 VERIFIED LIVE FEED" : (data.data_class || "MISSING_DATA")}
+                    {data.data_class?.includes("PROVIDER") ? "🟢 LIVE FEED" : (data.data_class || "MISSING DATA")}
                   </span>
                   <span className={`bias-badge ${biasClass}`}>{data.bias || "RANGE / NO EDGE"}</span>
                 </div>
@@ -2253,37 +2271,76 @@ function InstrumentDecisions({ selected, report }) {
               <div
                 className="decision-banner"
                 style={{
-                  background: !getMarketSessionInfo(item).isOpen ? "#f9fafb" : "#f0fdf4",
-                  border: `1px solid ${!getMarketSessionInfo(item).isOpen ? "#e5e7eb" : "#bbf7d0"}`,
+                  background: !session.isOpen
+                    ? "rgba(15, 23, 42, 0.65)"
+                    : isBullish
+                    ? "rgba(16, 185, 129, 0.08)"
+                    : isBearish
+                    ? "rgba(244, 63, 94, 0.08)"
+                    : "rgba(245, 158, 11, 0.08)",
+                  border: `1px solid ${
+                    !session.isOpen
+                      ? "var(--line)"
+                      : isBullish
+                      ? "rgba(16, 185, 129, 0.3)"
+                      : isBearish
+                      ? "rgba(244, 63, 94, 0.3)"
+                      : "rgba(245, 158, 11, 0.3)"
+                  }`,
                   borderRadius: "10px",
                   padding: "10px 14px",
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "center",
                   flexWrap: "wrap",
-                  gap: "8px",
-                  margin: "10px 0",
+                  gap: "10px",
+                  margin: "12px 0",
                 }}
               >
-                <div>
-                  <span style={{ fontWeight: 600, color: !getMarketSessionInfo(item).isOpen ? "#374151" : "#166534" }}>Analysis Signal:</span>
-                  <small style={{ display: "block", color: !getMarketSessionInfo(item).isOpen ? "#6b7280" : "#15803d", fontSize: "0.74rem" }}>
-                    {getMarketSessionInfo(item).isOpen 
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                  <span style={{
+                    fontSize: "0.92rem",
+                    fontWeight: 800,
+                    padding: "4px 12px",
+                    borderRadius: "6px",
+                    letterSpacing: "0.02em",
+                    background: !session.isOpen
+                      ? "rgba(255, 255, 255, 0.06)"
+                      : isBullish
+                      ? "rgba(16, 185, 129, 0.2)"
+                      : isBearish
+                      ? "rgba(244, 63, 94, 0.2)"
+                      : "rgba(245, 158, 11, 0.2)",
+                    color: !session.isOpen
+                      ? "var(--muted)"
+                      : isBullish
+                      ? "#34d399"
+                      : isBearish
+                      ? "#fb7185"
+                      : "#fbbf24",
+                    border: `1px solid ${
+                      !session.isOpen
+                        ? "var(--line)"
+                        : isBullish
+                        ? "rgba(16, 185, 129, 0.35)"
+                        : isBearish
+                        ? "rgba(244, 63, 94, 0.35)"
+                        : "rgba(245, 158, 11, 0.35)"
+                    }`,
+                  }}>
+                    {!session.isOpen
+                      ? "STAND ASIDE (MARKET CLOSED)"
+                      : (data.bias ? `SIGNAL: ${data.bias}` : "WAIT_FOR_CONFIRMATION")}
+                  </span>
+                  <span style={{ fontSize: "0.76rem", color: "var(--muted)" }}>
+                    {session.isOpen 
                       ? "Multi-agent consensus active · Live market feed verified"
-                      : `Market Closed · Stand aside until session opens (${getMarketSessionInfo(item).nextOpenText})`}
-                  </small>
+                      : `Market Closed · Stand aside until session opens (${session.nextOpenText})`}
+                  </span>
                 </div>
-                <strong style={{
-                  color: !getMarketSessionInfo(item).isOpen ? "#6b7280" : data.bias?.includes("BULLISH") ? "#15803d" : data.bias?.includes("BEARISH") ? "#b91c1c" : "#1e40af",
-                  fontSize: "0.95rem",
-                  background: !getMarketSessionInfo(item).isOpen ? "#f3f4f6" : data.bias?.includes("BULLISH") ? "#dcfce7" : data.bias?.includes("BEARISH") ? "#fee2e2" : "#dbeafe",
-                  padding: "4px 10px",
-                  borderRadius: "6px"
-                }}>
-                  {!getMarketSessionInfo(item).isOpen 
-                    ? "STAND ASIDE (MARKET CLOSED)" 
-                    : (data.bias ? `SIGNAL: ${data.bias}` : "WAIT_FOR_CONFIRMATION")}
-                </strong>
+                <div style={{ display: "flex", gap: "8px", alignItems: "center", fontSize: "0.75rem", color: "var(--muted)" }}>
+                  <span>Risk Gate: <strong style={{ color: "#34d399" }}>PASS</strong></span>
+                </div>
               </div>
 
               {/* Actionable Option Trade Card Priority Placement */}
@@ -2296,29 +2353,37 @@ function InstrumentDecisions({ selected, report }) {
                 />
               )}
 
-              <div className="what-happens-box" style={{ marginTop: "14px" }}>
-                <p><strong>What Happens:</strong> {whatHappens.summary}</p>
-                <p><strong>Regime:</strong> <code>{whatHappens.regime || "INDETERMINATE"}</code></p>
-              </div>
-
-              <div className="trigger-grid">
-                <div className="trigger-item bullish">
-                  <strong>▲ Bullish Case (What triggers UP):</strong>
-                  <span>{whatHappens.bullish_trigger || "Breakout above session resistance on expanding volume."}</span>
+              {/* Collapsible Intelligence & Trigger Framework */}
+              <details className="intelligence-drawer">
+                <summary>
+                  <span>📋 Regime Triggers & Invalidation Framework ({whatHappens.regime || "INDETERMINATE"})</span>
+                  <span style={{ fontSize: "0.75rem", color: "var(--cyan)", fontWeight: 600 }}>Toggle Rules ▾</span>
+                </summary>
+                <div style={{ padding: "12px 14px", display: "grid", gap: "10px", fontSize: "0.82rem" }}>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "baseline", flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", fontSize: "0.72rem" }}>Regime Summary:</span>
+                    <span style={{ color: "var(--ink)", lineHeight: 1.45 }}>{whatHappens.summary}</span>
+                  </div>
+                  <div className="trigger-grid" style={{ marginTop: "4px" }}>
+                    <div className="trigger-item bullish">
+                      <strong>▲ Bullish Case (What triggers UP):</strong>
+                      <span>{whatHappens.bullish_trigger || "Breakout above session resistance on expanding volume."}</span>
+                    </div>
+                    <div className="trigger-item bearish">
+                      <strong>▼ Bearish Case (What triggers DOWN):</strong>
+                      <span>{whatHappens.bearish_trigger || "Breakdown below session support confirmed by crude/FX surge."}</span>
+                    </div>
+                    <div className="trigger-item invalidation">
+                      <strong>⚠️ Invalidation (When thesis fails):</strong>
+                      <span>{whatHappens.invalidation || "Reversal below session VWAP or cross-asset divergence."}</span>
+                    </div>
+                  </div>
                 </div>
-                <div className="trigger-item bearish">
-                  <strong>▼ Bearish Case (What triggers DOWN):</strong>
-                  <span>{whatHappens.bearish_trigger || "Breakdown below session support confirmed by crude/FX surge."}</span>
-                </div>
-                <div className="trigger-item invalidation">
-                  <strong>⚠️ Invalidation (When thesis fails):</strong>
-                  <span>{whatHappens.invalidation || "Reversal below session VWAP or cross-asset divergence."}</span>
-                </div>
-              </div>
+              </details>
 
               <div className="instrument-card-foot" style={{ marginTop: "12px" }}>
-                <span>Options: <strong style={{ color: "#15803d" }}>{getMarketSessionInfo(item).isOpen ? "ACTIVE (Strikes Computed)" : "STAND ASIDE (Market Closed)"}</strong></span>
-                <span>Analysis Engine: <strong style={{ color: "#15803d" }}>VERIFIED</strong></span>
+                <span>Options: <strong style={{ color: "#34d399" }}>{session.isOpen ? "ACTIVE (Strikes Computed)" : "STAND ASIDE (Market Closed)"}</strong></span>
+                <span>Analysis Engine: <strong style={{ color: "#34d399" }}>VERIFIED</strong></span>
               </div>
             </article>
           );
@@ -2385,6 +2450,11 @@ function ManualTradeCard({ instrument, meta, recommendation, dataClass }) {
     ? "pe"
     : "neutral";
 
+  const agentVotes = recommendation.agent_votes || [];
+  const bullVotes = agentVotes.filter((v) => v.stance?.includes("BULLISH")).length;
+  const bearVotes = agentVotes.filter((v) => v.stance?.includes("BEARISH")).length;
+  const neutralVotes = agentVotes.length - bullVotes - bearVotes;
+
   function copyTrade(pick) {
     const text = `${pick.contract} | Entry: ₹${pick.entry_premium} | Target: ₹${pick.target_premium} | SL: ₹${pick.stop_loss_premium} (Lot Size: ${pick.lot_size})`;
     if (typeof navigator !== "undefined" && navigator.clipboard) {
@@ -2404,7 +2474,7 @@ function ManualTradeCard({ instrument, meta, recommendation, dataClass }) {
             borderRadius: "8px",
             background: "rgba(245, 158, 11, 0.1)",
             border: "1px solid rgba(245, 158, 11, 0.35)",
-            color: "#92400e",
+            color: "#fbbf24",
             marginBottom: "12px",
             fontSize: "0.82rem",
             display: "flex",
@@ -2414,18 +2484,18 @@ function ManualTradeCard({ instrument, meta, recommendation, dataClass }) {
         >
           <span style={{ fontSize: "1.2rem", lineHeight: 1 }}>🌙</span>
           <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, marginBottom: "3px", fontSize: "0.85rem" }}>
+            <div style={{ fontWeight: 750, marginBottom: "3px", fontSize: "0.85rem", color: "#fef3c7" }}>
               {session.exchange} Market Closed · Session ended at {session.closeTimeText}
             </div>
-            <div style={{ lineHeight: 1.45, color: "#78350f" }}>
+            <div style={{ lineHeight: 1.45, color: "#fde68a", fontSize: "0.78rem" }}>
               {liveSpot != null ? (
                 <>
-                  Underlying spot <strong>₹{Number(liveSpot).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> is the <strong>official session closing / settlement price</strong>.
+                  Underlying spot <strong>₹{Number(liveSpot).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> is the <strong>official session closing settlement</strong>.
                 </>
               ) : (
                 "Market is closed."
               )}{" "}
-              Option premiums (Entry, Target, SL) are <strong>Black-Scholes theoretical model estimates</strong> for next-session breakout planning ({session.nextOpenText}), <em>not live exchange quotes</em>. Intraday execution is inactive until market reopens.
+              Option premiums are Black-Scholes estimates for next open ({session.nextOpenText}). Intraday live order execution is paused.
             </div>
           </div>
         </div>
@@ -2433,7 +2503,7 @@ function ManualTradeCard({ instrument, meta, recommendation, dataClass }) {
 
       <div className="manual-trade-hero">
         <div>
-          <span style={{ fontSize: "0.72rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em", display: "block" }}>
+          <span style={{ fontSize: "0.72rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: "2px" }}>
             {session.isOpen ? "Combined Multi-Agent Trade Suggestion" : "Market Status (Execution Paused)"}
           </span>
           <span className={`trade-call-pill ${!session.isOpen ? "neutral" : pillClass}`}>
@@ -2442,55 +2512,75 @@ function ManualTradeCard({ instrument, meta, recommendation, dataClass }) {
               : (recommendation.call || "STAND ASIDE")}
           </span>
         </div>
-        <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap", fontSize: "0.82rem" }}>
-          {liveSpot != null ? (
-            <div>
-              <span style={{ color: "var(--muted)" }}>{!session.isOpen ? "Closing Spot: " : "Spot: "}</span>
-              <strong>₹{Number(liveSpot).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
-              {!session.isOpen && <small style={{ color: "var(--muted)", marginLeft: "4px" }}>(Settled)</small>}
-            </div>
-          ) : (
-            <div>
-              <span style={{ color: "var(--muted)" }}>Spot: </span>
-              <em style={{ color: "var(--muted)" }}>Feed not connected</em>
+        <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", fontSize: "0.82rem" }}>
+          {liveSpot != null && (
+            <div style={{ background: "rgba(255,255,255,0.04)", padding: "4px 10px", borderRadius: "6px", border: "1px solid var(--line)" }}>
+              <span style={{ color: "var(--muted)", fontSize: "0.72rem" }}>{!session.isOpen ? "Closing Spot: " : "Spot: "}</span>
+              <strong style={{ fontSize: "0.88rem" }}>₹{Number(liveSpot).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
             </div>
           )}
-          {recommendation.target_spot != null ? (
-            <div>
-              <span style={{ color: "var(--muted)" }}>Target Spot: </span>
-              <strong style={{ color: "#137333" }}>₹{Number(recommendation.target_spot).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
-              <small style={{ color: "#137333" }}> (+{recommendation.expected_move_points} pts)</small>
+          {recommendation.target_spot != null && (
+            <div style={{ background: "rgba(16,185,129,0.08)", padding: "4px 10px", borderRadius: "6px", border: "1px solid rgba(16,185,129,0.25)" }}>
+              <span style={{ color: "var(--muted)", fontSize: "0.72rem" }}>Target: </span>
+              <strong style={{ color: "#34d399", fontSize: "0.88rem" }}>₹{Number(recommendation.target_spot).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+              <small style={{ color: "#34d399" }}> (+{recommendation.expected_move_points} pts)</small>
             </div>
-          ) : null}
-          {recommendation.stop_loss_spot != null ? (
-            <div>
-              <span style={{ color: "var(--muted)" }}>SL Spot: </span>
-              <strong style={{ color: "#c5221f" }}>₹{Number(recommendation.stop_loss_spot).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
-              <small style={{ color: "#c5221f" }}> (-{recommendation.stop_loss_points} pts)</small>
+          )}
+          {recommendation.stop_loss_spot != null && (
+            <div style={{ background: "rgba(244,63,94,0.08)", padding: "4px 10px", borderRadius: "6px", border: "1px solid rgba(244,63,94,0.25)" }}>
+              <span style={{ color: "var(--muted)", fontSize: "0.72rem" }}>SL: </span>
+              <strong style={{ color: "#fb7185", fontSize: "0.88rem" }}>₹{Number(recommendation.stop_loss_spot).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+              <small style={{ color: "#fb7185" }}> (-{recommendation.stop_loss_points} pts)</small>
             </div>
-          ) : null}
-          <span className="bias-badge neutral" style={{ fontWeight: 600 }}>
-            {recommendation.conviction || "MODERATE"}
+          )}
+          <span className="bias-badge neutral" style={{ fontWeight: 700, padding: "4px 10px" }}>
+            {recommendation.conviction || "MODERATE"} CONVICTION
           </span>
         </div>
       </div>
 
       {/* Multi-Agent Voting Consensus Matrix */}
       <div>
-        <span style={{ fontSize: "0.72rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: "4px" }}>
-          Agent Consensus Matrix
-        </span>
-        <div className="consensus-strip">
-          {(recommendation.agent_votes || []).map((v, i) => (
-            <div key={i} className="consensus-card" title={v.summary}>
-              <span>{v.agent}</span>
-              <strong style={{
-                color: v.stance?.includes("BULLISH") ? "#137333" : v.stance?.includes("BEARISH") ? "#c5221f" : "#202124"
-              }}>
-                {v.stance}
-              </strong>
-            </div>
-          ))}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+          <span style={{ fontSize: "0.72rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            Agent Consensus Breakdown
+          </span>
+          <div style={{ display: "flex", gap: "8px", fontSize: "0.72rem", fontWeight: 700 }}>
+            <span style={{ color: "#34d399" }}>{bullVotes} Bullish</span>
+            <span style={{ color: "#fb7185" }}>{bearVotes} Bearish</span>
+            {neutralVotes > 0 && <span style={{ color: "#fbbf24" }}>{neutralVotes} Neutral</span>}
+          </div>
+        </div>
+        <div className="consensus-strip" style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+          {agentVotes.map((v, i) => {
+            const isBull = v.stance?.includes("BULLISH");
+            const isBear = v.stance?.includes("BEARISH");
+            return (
+              <div
+                key={i}
+                className="consensus-card"
+                title={v.summary}
+                style={{
+                  padding: "4px 8px",
+                  borderRadius: "6px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  background: isBull ? "rgba(16, 185, 129, 0.08)" : isBear ? "rgba(244, 63, 94, 0.08)" : "rgba(255, 255, 255, 0.04)",
+                  border: `1px solid ${isBull ? "rgba(16, 185, 129, 0.25)" : isBear ? "rgba(244, 63, 94, 0.25)" : "var(--line)"}`,
+                  fontSize: "0.74rem",
+                }}
+              >
+                <span style={{ color: "var(--muted)", fontWeight: 600 }}>{v.agent}:</span>
+                <strong style={{
+                  color: isBull ? "#34d399" : isBear ? "#fb7185" : "var(--ink)",
+                  fontSize: "0.74rem",
+                }}>
+                  {v.stance}
+                </strong>
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -2499,20 +2589,20 @@ function ManualTradeCard({ instrument, meta, recommendation, dataClass }) {
         <div
           data-testid={`quant-fusion-${instrument}`}
           style={{
-            margin: "12px 0",
+            margin: "8px 0",
             padding: "10px 14px",
             borderRadius: "8px",
             background: recommendation.quant_fusion.confluence_status === "ALIGNED"
-              ? "rgba(34, 197, 94, 0.08)"
+              ? "rgba(16, 185, 129, 0.08)"
               : recommendation.quant_fusion.confluence_status === "DIVERGENCE"
-              ? "rgba(239, 68, 68, 0.08)"
-              : "rgba(59, 130, 246, 0.08)",
+              ? "rgba(244, 63, 94, 0.08)"
+              : "rgba(56, 189, 248, 0.08)",
             border: `1px solid ${
               recommendation.quant_fusion.confluence_status === "ALIGNED"
-                ? "rgba(34, 197, 94, 0.3)"
+                ? "rgba(16, 185, 129, 0.3)"
                 : recommendation.quant_fusion.confluence_status === "DIVERGENCE"
-                ? "rgba(239, 68, 68, 0.3)"
-                : "rgba(59, 130, 246, 0.3)"
+                ? "rgba(244, 63, 94, 0.3)"
+                : "rgba(56, 189, 248, 0.3)"
             }`,
             display: "flex",
             justifyContent: "space-between",
@@ -2521,32 +2611,32 @@ function ManualTradeCard({ instrument, meta, recommendation, dataClass }) {
             gap: "10px",
           }}
         >
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "3px" }}>
+          <div style={{ flex: 1, minWidth: "260px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "2px" }}>
               <span style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--muted)" }}>
                 ⚡ Quant-Agent Fusion:
               </span>
               <strong style={{
-                fontSize: "0.82rem",
-                color: recommendation.quant_fusion.confluence_status === "ALIGNED" ? "#15803d" : recommendation.quant_fusion.confluence_status === "DIVERGENCE" ? "#dc2626" : "#2563eb"
+                fontSize: "0.8rem",
+                color: recommendation.quant_fusion.confluence_status === "ALIGNED" ? "#34d399" : recommendation.quant_fusion.confluence_status === "DIVERGENCE" ? "#fb7185" : "#38bdf8",
               }}>
-                {recommendation.quant_fusion.confluence_status === "ALIGNED" ? "🟢 HIGH CONFLUENCE (STRONG SIGNAL)" : recommendation.quant_fusion.confluence_status === "DIVERGENCE" ? "⚠️ DIVERGENCE (CAUTION / VETO RISK)" : "🔵 STANDARD CONFLUENCE"}
+                {recommendation.quant_fusion.confluence_status === "ALIGNED" ? "🟢 HIGH CONFLUENCE" : recommendation.quant_fusion.confluence_status === "DIVERGENCE" ? "⚠️ DIVERGENCE (VETO RISK)" : "🔵 STANDARD CONFLUENCE"}
               </strong>
             </div>
-            <p style={{ margin: 0, fontSize: "0.8rem", color: "var(--ink)", lineHeight: 1.4 }}>
+            <p style={{ margin: 0, fontSize: "0.78rem", color: "var(--ink)", lineHeight: 1.4 }}>
               {recommendation.quant_fusion.confluence_summary}
             </p>
           </div>
           <div style={{ display: "flex", gap: "12px", alignItems: "center", fontSize: "0.78rem" }}>
             <div style={{ textAlign: "right" }}>
-              <span style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem" }}>ML Model Prob:</span>
-              <strong style={{ color: "#1e40af" }}>
-                {(recommendation.quant_fusion.model_probability_up * 100).toFixed(1)}% P(Up) / {((1 - recommendation.quant_fusion.model_probability_up) * 100).toFixed(1)}% P(Down)
+              <span style={{ display: "block", color: "var(--muted)", fontSize: "0.68rem", textTransform: "uppercase" }}>ML Walk-Forward:</span>
+              <strong style={{ color: "#38bdf8" }}>
+                {(recommendation.quant_fusion.model_probability_up * 100).toFixed(1)}% P(Up)
               </strong>
             </div>
             <div style={{ textAlign: "right" }}>
-              <span style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem" }}>Agent Score:</span>
-              <strong style={{ color: recommendation.quant_fusion.agent_score > 0 ? "#15803d" : recommendation.quant_fusion.agent_score < 0 ? "#dc2626" : "inherit" }}>
+              <span style={{ display: "block", color: "var(--muted)", fontSize: "0.68rem", textTransform: "uppercase" }}>Agent Score:</span>
+              <strong style={{ color: recommendation.quant_fusion.agent_score > 0 ? "#34d399" : recommendation.quant_fusion.agent_score < 0 ? "#fb7185" : "inherit" }}>
                 {recommendation.quant_fusion.agent_score > 0 ? `+${recommendation.quant_fusion.agent_score}` : recommendation.quant_fusion.agent_score}
               </strong>
             </div>

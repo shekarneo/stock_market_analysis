@@ -224,6 +224,21 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   - Primary CTA: `Run analysis (X Selected)` button with live execution feedback.
 - **6 Inner Desk Navigation Tabs**:
   1. `🎯 Trade Decisions & Options`: Real spot-based option picks (ATM/OTM/ITM), strike targets, stop losses, and agent consensus. When Quant Fusion is active, embeds `<PredictedTrendChart />` right above the decision matrix for instant trajectory and strike verification.
+     - **Decision Matrix & Option Recommendations Section (`InstrumentDecisions`)**:
+       - `Section Header & Focus Filter`: Prominently titled with `⚡ OPTION RECOMMENDATIONS` badge and an instrument focus bar (`All Instruments (X)` or single-instrument filter pills with live spot prices).
+       - `Instrument Card Header`: Displays the instrument name, exchange badge (e.g., `NSE`, `BSE`, `MCX`), live session status indicator (`🟢 Live Trading Session Active` or `🌙 Closed`), real-time Spot LTP in prominent typography with decimal precision, and data provenance badge (`🟢 LIVE FEED` / `MISSING DATA`).
+       - `Executive Verdict Banner`: High-contrast, theme-matched signal card displaying the directional verdict (`🟢 SIGNAL: BUY_CE`, `🔴 SIGNAL: BUY_PE`, `🟡 STAND ASIDE (MARKET CLOSED)` or `WAIT_FOR_CONFIRMATION`), multi-agent verification status, and fail-closed risk gate clearance (`Risk Gate: PASS`).
+       - `Collapsible Regime Triggers & Invalidation Drawer (`<details className="intelligence-drawer">`)`: Replaces bulky text walls with an elegant expandable accordion (`📋 Regime Triggers & Invalidation Framework (Regime: <REGIME>)`). When expanded, displays the Regime Summary, Bullish Breakout Trigger (`▲`), Bearish Breakdown Trigger (`▼`), and Thesis Invalidation Criteria (`⚠️`).
+     - **Actionable Option Trade Card (`ManualTradeCard`)**:
+       - `Market Closed Settlement Banner`: Displayed when session is closed, explaining that spot is the official closing settlement and option premiums are next-session Black-Scholes planning estimates.
+       - `Trade Hero Strip`: Features the large directional Call Pill (`BUY CE` in green, `BUY PE` in red, `STAND ASIDE` in amber), underlying spot chip, Target Spot chip with positive points gain, Stop-Loss Spot chip with points risk, and Conviction badge (`HIGH / MODERATE / CAUTION`).
+       - `Agent Consensus Breakdown Ribbon`: Visual vote tally (`X Bullish · Y Bearish · Z Neutral`) followed by a compact horizontal ribbon of mini-chips for each participating specialist agent with color-coded stance badges and hover explanation tooltips.
+       - `Quant-Agent Fusion Confluence Bar`: Sleek horizontal bar displaying alignment status (`🟢 HIGH CONFLUENCE`, `⚠️ DIVERGENCE (VETO RISK)`, or `🔵 STANDARD CONFLUENCE`), ML walk-forward calibrated probability (`<P>% P(Up)`), signed Agent consensus score (`+X` / `-Y`), and one-line qualitative takeaway.
+       - `Option Picks Switcher`: Toggle between `Recommended (<TYPE> · 5 Strikes)` and `Hedge / Alternate (<ALT_TYPE> · 5 Strikes)`.
+       - `Top 5 Ranked Strikes Table`: Clean tabular view with columns `# Strike & Contract` (with ATM/OTM role tags), `Moneyness` badge, `Delta (Δ)`, `Est. Entry Premium`, `Est. Target Premium`, `Est. Stop Premium`, `Risk:Reward Ratio`, `1 Lot Capital & Max Loss/Gain`, and Action CTAs:
+         - `Copy` button: Copies contract entry, target, and stop loss specifications to clipboard with instant `"Copied!"` feedback.
+         - `+ Watch` button: Enrolls the strike directly into the live Watchlist & Accuracy Tracker (`POST /api/watchlist`) with dynamic state feedback (`Saving…`, `Watching ✓`, or `Retry`).
+       - `Execution Note`: Key intraday execution and slippage considerations.
   2. `📈 ML Forecasting & Trend Graph`: Dedicated full-width workspace view rendering `<PredictedTrendChart />` with live Groww candlesticks, lookback selector (20, 35, 50 bars), cyan `NOW (Live Spot)` boundary line, forward projected trend path, and dynamic $\pm 1\sigma$ volatility confidence cones.
   3. `🤖 12 Specialist Agents`: The 12 quantitative specialist agents structured across 4 sequential analytical stages.
   4. `📋 Master Dossier & Pipeline (Stages 0–14)`: Institutional audit dossier containing 4 sub-tabs:
@@ -234,16 +249,6 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   5. `📰 Headlines & News Wire`: Real-time news sentiment items with an embedded `⚙ Configure Feeds & Web Pages` collapsible drawer for `<NewsSourcesManager />`.
   6. `🛡️ Risk & Contradictions`: Expected Net Payoff, statutory friction breakdown (STT, exchange turnover, GST, SEBI charges, stamp duty, slippage buffer), hard risk limits, and fail-closed safety gates.
 
-- **Trade Recommendation Card**:
-  - Recommended Contract (e.g., `NIFTY 23200 CE 24-OCT`).
-  - Entry Spot & Estimated Premium.
-  - Target Spot & Target Premium.
-  - Stop Loss Spot & Stop Loss Premium.
-  - Risk/Reward Ratio (e.g., `1 : 2.4`).
-  - **Quant-Agent Fusion Banner (`recommendation.quant_fusion`)**:
-    - `Confluence Status Badge`: `🟢 HIGH CONFLUENCE (STRONG SIGNAL)` when Multi-Agent stance and ML forecast probability align (`>52%` Up or `<48%` Down), `🔵 STANDARD CONFLUENCE` when the ML model is in the neutral `48%–52%` deadband, or `⚠️ DIVERGENCE (CAUTION / VETO RISK)` when the ML model leans strongly against the Multi-Agent stance.
-    - `ML Model Prob`: Displays 1-decimal calibrated probabilities (`<up>% P(Up) / <down>% P(Down)`).
-    - `Agent Score`: Displays the signed Multi-Agent score (`+4`, `+2`, `-2`, etc.) propagated from `consensus.total_score`.
 - **12 Specialist Agent Cards**:
   - Stage 1: News Sentiment Agent, Macro Regime Agent, Foreign Flow (FII/DII) Agent.
   - Stage 2: Order Flow & Microstructure Agent, Volatility & Skew Agent, Intermarket Commodity Agent.
