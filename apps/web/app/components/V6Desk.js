@@ -2703,6 +2703,16 @@ function ManualTradeCard({ instrument, meta, recommendation, dataClass }) {
                       <span className={`contract-tag ${isCE ? "ce" : "pe"}`}>
                         {pick.contract}
                       </span>
+                      {pick.expiry_date && (
+                        <span style={{ marginLeft: "6px", fontSize: "0.68rem", background: "rgba(56, 189, 248, 0.15)", color: "#0284c7", padding: "1px 5px", borderRadius: "3px", fontWeight: 600 }}>
+                          Exp: {pick.expiry_date}
+                        </span>
+                      )}
+                      {pick.trading_symbol && (
+                        <small style={{ display: "block", color: "#0284c7", fontWeight: 600, fontSize: "0.68rem" }}>
+                          {pick.trading_symbol}
+                        </small>
+                      )}
                       <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem" }}>
                         {pick.role}
                       </small>

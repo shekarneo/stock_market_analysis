@@ -123,6 +123,17 @@ function ist(iso) {
   return new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
+function formatExpiry(d) {
+  if (!d) return null;
+  try {
+    const dt = new Date(d);
+    if (isNaN(dt.getTime())) return d;
+    return dt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  } catch {
+    return d;
+  }
+}
+
 const STATUS_STYLE = {
   OPEN: { bg: "rgba(56, 189, 248, 0.15)", fg: "#38bdf8", label: "Open" },
   TARGET_HIT: { bg: "rgba(16, 185, 129, 0.15)", fg: "#34d399", label: "Target hit" },
@@ -1210,9 +1221,16 @@ export default function LiveTradingPage() {
                         {rec?.bias || "AWAITING TRIGGER"}
                       </strong>
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "3px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "3px" }}>
                       <span style={{ color: "var(--muted)" }}>Planned Contract:</span>
-                      <strong style={{ color: "#38bdf8" }}>{plannedPick}</strong>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                        <strong style={{ color: "#38bdf8" }}>{plannedPick}</strong>
+                        {topPick?.expiry_date && (
+                          <span style={{ display: "inline-block", background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", padding: "1px 5px", borderRadius: "3px", fontSize: "0.68rem", fontWeight: 700 }}>
+                            Exp: {formatExpiry(topPick.expiry_date)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "3px" }}>
                       <span style={{ color: "var(--muted)" }}>Execution Signal:</span>
@@ -1464,7 +1482,27 @@ export default function LiveTradingPage() {
                       return (
                         <tr key={w.suggestion_id} style={{ borderBottom: "1px solid var(--line)", color: "var(--ink, #f8fafc)" }}>
                           <td style={{ padding: "10px 10px" }}>
-                            <strong style={{ color: w.option_type === "CE" ? "#34d399" : "#f87171" }}>{w.contract}</strong>
+                            <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                              <strong style={{ color: w.option_type === "CE" ? "#34d399" : "#f87171" }}>{w.contract}</strong>
+                              {(w.contract_expiry || w.model_premiums?.expiry_date) && (
+                                <span style={{
+                                  display: "inline-block",
+                                  background: "rgba(56, 189, 248, 0.15)",
+                                  color: "#38bdf8",
+                                  padding: "1px 5px",
+                                  borderRadius: "4px",
+                                  fontSize: "0.68rem",
+                                  fontWeight: 700,
+                                }}>
+                                  Exp: {formatExpiry(w.contract_expiry || w.model_premiums?.expiry_date)}
+                                </span>
+                              )}
+                            </div>
+                            {w.trading_symbol && (
+                              <small style={{ display: "block", color: "#38bdf8", fontWeight: 600, fontSize: "0.7rem" }}>
+                                {w.trading_symbol}
+                              </small>
+                            )}
                             <small style={{ display: "block", color: "var(--muted)", fontSize: "0.72rem" }}>
                               {w.direction === "UP" ? "▲ needs spot up" : "▼ needs spot down"} · {ist(w.created_at)}
                             </small>

@@ -411,6 +411,7 @@ def _generate_option_picks(
             trading_symbol = live_quote.get("trading_symbol")
             open_interest = live_quote.get("open_interest")
             volume = live_quote.get("volume")
+            expiry_date = live_quote.get("expiry_date")
             is_live_quote = True
             quote_source = "GROWW_OPTION_CHAIN"
         else:
@@ -421,6 +422,7 @@ def _generate_option_picks(
             trading_symbol = None
             open_interest = None
             volume = None
+            expiry_date = None
             is_live_quote = False
             quote_source = "MODEL_ESTIMATE"
 
@@ -434,6 +436,7 @@ def _generate_option_picks(
             "option_type": opt_type,
             "contract": f"{instrument} {strike} {opt_type}",
             "trading_symbol": trading_symbol,
+            "expiry_date": expiry_date,
             "role": roles[idx],
             "moneyness": moneyness,
             "delta": round(delta, 2),

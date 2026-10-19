@@ -23,6 +23,17 @@ function ist(iso) {
   return new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
+function formatExpiry(d) {
+  if (!d) return null;
+  try {
+    const dt = new Date(d);
+    if (isNaN(dt.getTime())) return d;
+    return dt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  } catch {
+    return d;
+  }
+}
+
 function pct(v) {
   return v == null ? "—" : `${(v * 100).toFixed(1)}%`;
 }
@@ -280,13 +291,28 @@ export default function WatchlistPage() {
                 return (
                   <tr key={i.suggestion_id} style={{ borderBottom: "1px solid var(--line, #f1f5f9)" }}>
                     <td>
-                      <a
-                        href={`/dashboard?instrument=${encodeURIComponent(i.instrument)}`}
-                        style={{ textDecoration: "none", color: i.option_type === "CE" ? "#137333" : "#c5221f" }}
-                        title="View instrument details on Trade Desk"
-                      >
-                        <strong>{i.contract}</strong> ↗
-                      </a>
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                        <a
+                          href={`/dashboard?instrument=${encodeURIComponent(i.instrument)}`}
+                          style={{ textDecoration: "none", color: i.option_type === "CE" ? "#137333" : "#c5221f" }}
+                          title="View instrument details on Trade Desk"
+                        >
+                          <strong>{i.contract}</strong> ↗
+                        </a>
+                        {(i.contract_expiry || i.model_premiums?.expiry_date) && (
+                          <span style={{
+                            display: "inline-block",
+                            background: "rgba(2, 132, 199, 0.12)",
+                            color: "#0284c7",
+                            padding: "1px 6px",
+                            borderRadius: "4px",
+                            fontSize: "0.7rem",
+                            fontWeight: 700,
+                          }}>
+                            Exp: {formatExpiry(i.contract_expiry || i.model_premiums?.expiry_date)}
+                          </span>
+                        )}
+                      </div>
                       {i.trading_symbol && (
                         <small style={{ display: "block", color: "#0284c7", fontWeight: 600, fontSize: "0.72rem" }}>
                           {i.trading_symbol}

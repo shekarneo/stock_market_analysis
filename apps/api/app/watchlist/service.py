@@ -108,6 +108,7 @@ def create_suggestion(
             model_premiums["target"] = round(model_premiums["entry"] + (delta * target_points), 1)
             model_premiums["stop_loss"] = round(max(0.05, model_premiums["entry"] - (delta * stop_loss_points)), 1)
             model_premiums["trading_symbol"] = live_q.get("trading_symbol")
+            model_premiums["expiry_date"] = live_q.get("expiry_date")
             model_premiums["data_source"] = "GROWW_OPTION_CHAIN"
             model_premiums["is_live_quote"] = True
     except Exception:
@@ -246,12 +247,14 @@ def serialize(row: WatchlistSuggestion) -> dict:
     # Check for live market option quote from Groww Option Chain
     live_opt_prem = None
     trading_symbol = (row.model_premiums or {}).get("trading_symbol")
+    contract_expiry = (row.model_premiums or {}).get("expiry_date")
     try:
         from app.market.groww_options import get_live_option_quote
         live_q = get_live_option_quote(row.contract)
         if live_q and live_q.get("ltp") is not None:
             live_opt_prem = float(live_q["ltp"])
             trading_symbol = live_q.get("trading_symbol") or trading_symbol
+            contract_expiry = live_q.get("expiry_date") or contract_expiry
     except Exception:
         pass
 
@@ -268,6 +271,7 @@ def serialize(row: WatchlistSuggestion) -> dict:
         "model_premiums": row.model_premiums,
         "live_option_premium": live_opt_prem,
         "trading_symbol": trading_symbol,
+        "contract_expiry": contract_expiry,
         "is_live_contract": live_opt_prem is not None,
         "data_class": row.data_class,
         "status": row.status,

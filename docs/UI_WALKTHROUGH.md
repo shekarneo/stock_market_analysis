@@ -371,7 +371,7 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
 - **Status Filter Buttons**:
   - Filter by lifecycle status: `All`, `Open`, `Target hit`, `SL hit`, `Expired`, `Cancelled`.
 - **Interactive Suggestions Table**:
-  - `Contract`: Clickable link navigating directly to `/dashboard?instrument=...` with sub-link to `/analysis`. Displays contract name, official exchange trading symbol (e.g. `NIFTY26O1923050PE` in cyan), option direction tag, and data class.
+  - `Contract`: Clickable link navigating directly to `/dashboard?instrument=...` with sub-link to `/analysis`. Displays contract name, dedicated **Expiry Date** badge (e.g. `Exp: 19 Oct 2026` in cyan), official exchange trading symbol (e.g. `NIFTY26O1923050PE`), option direction tag, and data class.
   - `Status`: Color-coded pill (`Open`, `Target hit`, `SL hit`, `Expired`, `Cancelled`).
   - `Prem. Entry`: Entry option premium and lot size. Marked with a green `Groww Entry LTP` badge when populated directly from the verified Groww live Option Chain, or model estimate if offline.
   - `Running Prem.` / `Exit Prem`:
