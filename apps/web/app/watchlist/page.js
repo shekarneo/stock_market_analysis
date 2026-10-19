@@ -292,19 +292,49 @@ export default function WatchlistPage() {
                       <strong>{inr(pEntry)}</strong>
                       {p.lot_size ? <small style={{ display: "block", color: "var(--muted)" }}>Lot {p.lot_size}</small> : null}
                     </td>
-                    {/* Option Premium Running */}
+                    {/* Option Premium Running / Exit */}
                     <td style={{ background: "rgba(224, 231, 255, 0.25)" }}>
-                      <strong style={{ color: runDiffPct == null ? "inherit" : isRunPos ? "#15803d" : "#b91c1c" }}>
-                        {inr(runningPrem)}
-                      </strong>
-                      {runDiffPct != null && (
-                        <small style={{
-                          display: "block",
-                          color: isRunPos ? "#166534" : "#991b1b",
-                          fontWeight: 600,
-                        }}>
-                          {isRunPos ? "+" : ""}{runDiffPct.toFixed(1)}%
-                        </small>
+                      {i.status === "OPEN" ? (
+                        <>
+                          <strong style={{ color: runDiffPct == null ? "inherit" : isRunPos ? "#15803d" : "#b91c1c" }}>
+                            {inr(runningPrem)}
+                          </strong>
+                          {runDiffPct != null && (
+                            <small style={{
+                              display: "block",
+                              color: isRunPos ? "#166534" : "#991b1b",
+                              fontWeight: 600,
+                            }}>
+                              {isRunPos ? "+" : ""}{runDiffPct.toFixed(1)}%
+                            </small>
+                          )}
+                        </>
+                      ) : i.status === "SL_HIT" ? (
+                        <>
+                          <strong style={{ color: "#b91c1c" }}>{inr(pSL)}</strong>
+                          <small style={{ display: "block", color: "#991b1b", fontWeight: 700 }}>
+                            {lossPct || "-25%"} Exit
+                          </small>
+                          {runningPrem != null && (
+                            <small style={{ display: "block", color: "var(--muted)", fontSize: "0.68rem", marginTop: "2px" }} title="Current hypothetical theoretical premium if held post-exit">
+                              Post-Exit: {inr(runningPrem)} ({isRunPos ? "+" : ""}{runDiffPct?.toFixed(1)}%)
+                            </small>
+                          )}
+                        </>
+                      ) : i.status === "TARGET_HIT" ? (
+                        <>
+                          <strong style={{ color: "#15803d" }}>{inr(pTarget)}</strong>
+                          <small style={{ display: "block", color: "#166534", fontWeight: 700 }}>
+                            {gainPct || "+40%"} Exit
+                          </small>
+                          {runningPrem != null && (
+                            <small style={{ display: "block", color: "var(--muted)", fontSize: "0.68rem", marginTop: "2px" }} title="Current hypothetical theoretical premium if held post-exit">
+                              Post-Exit: {inr(runningPrem)} ({isRunPos ? "+" : ""}{runDiffPct?.toFixed(1)}%)
+                            </small>
+                          )}
+                        </>
+                      ) : (
+                        <span style={{ color: "var(--muted)" }}>—</span>
                       )}
                     </td>
                     {/* Option Premium Target */}
@@ -322,8 +352,26 @@ export default function WatchlistPage() {
                     <td style={{ color: "#137333", fontWeight: 600 }}>{inr(i.target_spot)}</td>
                     <td style={{ color: "#c5221f", fontWeight: 600 }}>{inr(i.stop_loss_spot)}</td>
                     <td>
-                      {inr(spots?.[i.instrument] ?? i.last_spot)}
-                      <small style={{ display: "block", color: "var(--muted)" }}>{i.checks} checks · {ist(i.last_checked_at)}</small>
+                      {i.status === "OPEN" ? (
+                        <>
+                          <strong>{inr(spots?.[i.instrument] ?? i.last_spot)}</strong>
+                          <small style={{ display: "block", color: "var(--muted)" }}>{i.checks} checks · {ist(i.last_checked_at)}</small>
+                        </>
+                      ) : (
+                        <>
+                          <strong style={{ color: i.status === "TARGET_HIT" ? "#137333" : "#c5221f" }}>
+                            {inr(i.resolved_spot ?? i.last_spot)}
+                          </strong>
+                          <small style={{ display: "block", color: i.status === "TARGET_HIT" ? "#15803d" : "#991b1b", fontWeight: 600 }}>
+                            {i.status === "TARGET_HIT" ? "Target Triggered" : "SL Triggered"}
+                          </small>
+                          {spots?.[i.instrument] != null && (
+                            <small style={{ display: "block", color: "var(--muted)", fontSize: "0.68rem" }}>
+                              Live: {inr(spots[i.instrument])}
+                            </small>
+                          )}
+                        </>
+                      )}
                     </td>
                     <td><small>{inr(i.max_favorable_spot)} / {inr(i.max_adverse_spot)}</small></td>
                     <td><small>{ist(i.created_at)}</small></td>

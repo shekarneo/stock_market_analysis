@@ -73,6 +73,16 @@ def add_watchlist(
     if existing_open is not None:
         return {"item": serialize(existing_open), "already_tracked": True}
 
+    from datetime import datetime, timedelta, timezone
+    recent_resolved = session.scalar(
+        select(WatchlistSuggestion).where(
+            WatchlistSuggestion.contract == body.contract,
+            WatchlistSuggestion.resolved_at >= (datetime.now(timezone.utc) - timedelta(minutes=5)),
+        )
+    )
+    if recent_resolved is not None:
+        return {"item": serialize(recent_resolved), "already_tracked": True, "recently_resolved": True}
+
     try:
         row = create_suggestion(
             session,

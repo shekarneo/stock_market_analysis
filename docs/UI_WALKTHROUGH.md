@@ -374,10 +374,14 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   - `Contract`: Clickable link navigating directly to `/dashboard?instrument=...` with sub-link to `/analysis`. Displays option direction tag and data class.
   - `Status`: Color-coded pill (`Open`, `Target hit`, `SL hit`, `Expired`, `Cancelled`).
   - `Prem. Entry`: Theoretical entry option premium and lot size.
-  - `Running Prem.`: Real-time estimated option premium modeled on live spot delta, showing color-coded running gain/loss percentage. **Continuous Market Tracking**: Even after a trade reaches its Stop Loss (`SL hit`) or Target (`Target hit`), the running premium continuously updates with live streaming market spot ticks, allowing traders to observe post-resolution price behavior and recovery without freezing at the stop level.
+  - `Running Prem.` / `Exit Prem`:
+    - For `OPEN` suggestions: Displays live mark-to-market premium and running gain/loss percentage.
+    - For `RESOLVED` suggestions (`SL hit` / `Target hit`): Clearly shows the **realized exit premium** (e.g. `₹87.7 · -25% Exit` in red or `₹175.9 · +40% Exit` in green). Beneath the realized exit, a subtle label displays `Post-Exit: ₹... (+/-%)` so operators can inspect post-resolution market recovery without creating contradictory signals.
   - `Prem. Target` & `Prem. SL`: Target (+40%) and Stop-Loss (-25%) premium estimates.
   - `Spot Entry`, `Spot Target`, `Spot SL`: Underlying spot boundary levels.
-  - `Last Spot`: Live observed spot price dynamically refreshed from streaming market feeds, with total checks count and last check timestamp.
+  - `Last Spot`:
+    - For `OPEN` suggestions: Real-time observed spot price dynamically refreshed from streaming market feeds, with total checks count and last check timestamp.
+    - For `RESOLVED` suggestions: Clearly displays the **Trigger Spot** that resolved the trade (`SL Triggered` or `Target Triggered`), accompanied by the current live market spot underneath (`Live Now: ₹...`) to maintain mathematical alignment.
   - `Best / Worst`: Maximum favorable and maximum adverse spot excursions observed.
   - `Saved` & `Resolves`: Creation timestamp, expiry time, and resolution price (`<timestamp> @ ₹<resolved_spot>`).
   - `Cancel` button: Available on `OPEN` suggestions to manually abort tracking.

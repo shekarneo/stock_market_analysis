@@ -389,25 +389,32 @@ export default function LiveTradingPage() {
     return analysisData?.intelligence?.markets?.[inst] || null;
   }, [analysisData]);
 
-  // Auto-Add trade to Watchlist and track accuracy (deduplicating active open contracts)
+  // Auto-Add trade to Watchlist and track accuracy (deduplicating active open contracts and recent resolutions)
   const addTradeToWatchlist = useCallback(async (inst, pick, rec) => {
     const plannedContract = pick?.contract || `${inst} ATM`;
-    const isAlreadyOpen = (watchlistData?.items || []).some(
-      (item) => item.contract === plannedContract && item.status === "OPEN"
-    );
-    if (isAlreadyOpen) {
-      setActionNotice(`ℹ️ ${plannedContract} is already actively tracked in the Watchlist.`);
+    const isRecentlyTracked = (watchlistData?.items || []).some((item) => {
+      if (item.contract !== plannedContract) return false;
+      if (item.status === "OPEN") return true;
+      if (item.resolved_at) {
+        const diffMs = Date.now() - new Date(item.resolved_at).getTime();
+        return diffMs < 15 * 60 * 1000; // 15-minute cooldown to prevent repetitive SL-hit loops
+      }
+      return false;
+    });
+    if (isRecentlyTracked) {
+      setActionNotice(`ℹ️ ${plannedContract} is already actively tracked or recently resolved.`);
       setTimeout(() => setActionNotice(""), 3500);
       return false;
     }
 
     try {
+      const liveSpotPrice = getSpot(inst) || rec?.spot_price;
       const payload = {
         instrument: inst,
         contract: plannedContract,
         option_type: pick?.option_type || rec?.option_type || "CE",
         call: rec?.call || (pick?.option_type === "PE" ? "BUY_PE" : "BUY_CE"),
-        entry_spot: rec?.spot_price || getSpot(inst),
+        entry_spot: liveSpotPrice,
         target_points: rec?.expected_move_points || (inst === "NIFTY" ? 80 : inst === "SENSEX" ? 250 : 50),
         stop_loss_points: rec?.stop_loss_points || (inst === "NIFTY" ? 40 : inst === "SENSEX" ? 120 : 25),
         data_class: "VERIFIED_LIVE_DATA",
@@ -1463,20 +1470,50 @@ export default function LiveTradingPage() {
                             <strong style={{ color: "var(--ink, #f8fafc)" }}>{inr(pEntry)}</strong>
                             {p.lot_size ? <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem" }}>Lot {p.lot_size}</small> : null}
                           </td>
-                          {/* Dedicated Running Premium Column */}
+                          {/* Dedicated Running / Exit Premium Column */}
                           <td style={{ padding: "10px 10px", background: "rgba(56, 189, 248, 0.05)" }}>
-                            <strong style={{ color: runDiffPct == null ? "inherit" : isRunPos ? "#34d399" : "#f87171" }}>
-                              {inr(runningPrem)}
-                            </strong>
-                            {runDiffPct != null && (
-                              <small style={{
-                                display: "block",
-                                color: isRunPos ? "#34d399" : "#f87171",
-                                fontWeight: 600,
-                                fontSize: "0.7rem",
-                              }}>
-                                {isRunPos ? "+" : ""}{runDiffPct.toFixed(1)}%
-                              </small>
+                            {w.status === "OPEN" ? (
+                              <>
+                                <strong style={{ color: runDiffPct == null ? "inherit" : isRunPos ? "#34d399" : "#f87171" }}>
+                                  {inr(runningPrem)}
+                                </strong>
+                                {runDiffPct != null && (
+                                  <small style={{
+                                    display: "block",
+                                    color: isRunPos ? "#34d399" : "#f87171",
+                                    fontWeight: 600,
+                                    fontSize: "0.7rem",
+                                  }}>
+                                    {isRunPos ? "+" : ""}{runDiffPct.toFixed(1)}%
+                                  </small>
+                                )}
+                              </>
+                            ) : w.status === "SL_HIT" ? (
+                              <>
+                                <strong style={{ color: "#f87171" }}>{inr(pSL)}</strong>
+                                <small style={{ display: "block", color: "#f87171", fontWeight: 700, fontSize: "0.7rem" }}>
+                                  {lossPct || "-25%"} Exit
+                                </small>
+                                {runningPrem != null && (
+                                  <small style={{ display: "block", color: "var(--muted)", fontSize: "0.68rem", marginTop: "2px" }} title="Current hypothetical theoretical premium if held post-exit">
+                                    Post-Exit: {inr(runningPrem)} ({isRunPos ? "+" : ""}{runDiffPct?.toFixed(1)}%)
+                                  </small>
+                                )}
+                              </>
+                            ) : w.status === "TARGET_HIT" ? (
+                              <>
+                                <strong style={{ color: "#34d399" }}>{inr(pTarget)}</strong>
+                                <small style={{ display: "block", color: "#34d399", fontWeight: 700, fontSize: "0.7rem" }}>
+                                  {gainPct || "+40%"} Exit
+                                </small>
+                                {runningPrem != null && (
+                                  <small style={{ display: "block", color: "var(--muted)", fontSize: "0.68rem", marginTop: "2px" }} title="Current hypothetical theoretical premium if held post-exit">
+                                    Post-Exit: {inr(runningPrem)} ({isRunPos ? "+" : ""}{runDiffPct?.toFixed(1)}%)
+                                  </small>
+                                )}
+                              </>
+                            ) : (
+                              <span style={{ color: "var(--muted)" }}>—</span>
                             )}
                           </td>
                           {/* Dedicated Premium Target Column */}
@@ -1494,8 +1531,26 @@ export default function LiveTradingPage() {
                           <td style={{ padding: "10px 10px", color: "#34d399", fontWeight: 600 }}>{inr(w.target_spot)}</td>
                           <td style={{ padding: "10px 10px", color: "#f87171", fontWeight: 600 }}>{inr(w.stop_loss_spot)}</td>
                           <td style={{ padding: "10px 10px", color: "var(--ink, #f8fafc)" }}>
-                            {inr(spots?.[w.instrument] ?? w.last_spot)}
-                            <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem" }}>{w.checks || 0} checks</small>
+                            {w.status === "OPEN" ? (
+                              <>
+                                <strong>{inr(spots?.[w.instrument] ?? w.last_spot)}</strong>
+                                <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem" }}>{w.checks || 0} checks</small>
+                              </>
+                            ) : (
+                              <>
+                                <strong style={{ color: w.status === "TARGET_HIT" ? "#34d399" : "#f87171" }}>
+                                  {inr(w.resolved_spot ?? w.last_spot)}
+                                </strong>
+                                <small style={{ display: "block", color: w.status === "TARGET_HIT" ? "#34d399" : "#f87171", fontWeight: 600, fontSize: "0.7rem" }}>
+                                  {w.status === "TARGET_HIT" ? "Target Triggered" : "SL Triggered"}
+                                </small>
+                                {spots?.[w.instrument] != null && (
+                                  <small style={{ display: "block", color: "var(--muted)", fontSize: "0.68rem" }}>
+                                    Live: {inr(spots[w.instrument])}
+                                  </small>
+                                )}
+                              </>
+                            )}
                           </td>
                           <td style={{ padding: "10px 10px", color: "var(--ink, #f8fafc)" }}>
                             <small style={{ fontWeight: w.status !== "OPEN" ? 600 : 400 }}>
