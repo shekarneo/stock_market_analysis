@@ -23,6 +23,7 @@ export default function VisualAgentDecisionCard() {
   const { selectedInstrument, selectInstrument, spots, selectedModel } = useMarketData();
   const [instrument, setInstrument] = useState(selectedInstrument || "NIFTY");
   const [report, setReport] = useState(null);
+  const [liveForecast, setLiveForecast] = useState(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
   const [viewMode, setViewMode] = useState("grid"); // "grid" | "compact"
@@ -33,28 +34,63 @@ export default function VisualAgentDecisionCard() {
     }
   }, [selectedInstrument]);
 
-  // Execute on-demand live multi-agent analysis
+  // Sync live statistical forecast for active instrument and chosen model
+  useEffect(() => {
+    let active = true;
+    async function fetchForecast() {
+      try {
+        const query = new URLSearchParams({
+          instrument,
+          model: selectedModel || "champion",
+        });
+        const res = await fetch(`/api/forecasting/live-trend-chart?${query.toString()}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (active && data.ok) {
+            setLiveForecast(data);
+          }
+        }
+      } catch {
+        // graceful fallback to market analysis report
+      }
+    }
+    fetchForecast();
+    return () => {
+      active = false;
+    };
+  }, [instrument, selectedModel]);
+
+  // Execute on-demand live multi-agent analysis and refresh model prediction
   async function runLiveAnalysis() {
     setRunning(true);
     setError("");
     try {
-      const res = await fetch("/api/market-analysis", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
-        body: JSON.stringify({
-          instruments: [instrument],
-          horizon: "INTRADAY",
-          include_news: true,
-          include_macro: true,
-          include_derivatives: true,
-          include_forecast: true,
+      const [resAnalysis, resChart] = await Promise.all([
+        fetch("/api/market-analysis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+          body: JSON.stringify({
+            instruments: [instrument],
+            horizon: "INTRADAY",
+            include_news: true,
+            include_macro: true,
+            include_derivatives: true,
+            include_forecast: true,
+          }),
         }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.message || `Analysis failed (${res.status})`);
+        fetch(`/api/forecasting/live-trend-chart?instrument=${encodeURIComponent(instrument)}&model=${encodeURIComponent(selectedModel || "champion")}`).catch(() => null),
+      ]);
+      const data = await resAnalysis.json().catch(() => ({}));
+      if (!resAnalysis.ok) {
+        throw new Error(data.message || `Analysis failed (${resAnalysis.status})`);
       }
       setReport(data);
+      if (resChart && resChart.ok) {
+        const chartData = await resChart.json().catch(() => null);
+        if (chartData?.ok) {
+          setLiveForecast(chartData);
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -84,9 +120,14 @@ export default function VisualAgentDecisionCard() {
   const uncertaintyVal = typeof consensus.epistemic_uncertainty === "number" ? consensus.epistemic_uncertainty : 0.52;
   const isGated = uncertaintyVal >= 0.65 || (report && (decision === "NO_TRADE" || decision === "STAND_ASIDE"));
 
-  // Quant Confluence
-  const mlProb = report?.intelligence?.forecast?.probabilities?.[instrument] || 0.53;
+  // Quant Confluence probability extraction (safely handle object or number)
+  const rawProbObj = report?.intelligence?.forecast?.probabilities?.[instrument];
+  const reportProbUp = typeof rawProbObj === "number" ? rawProbObj : (typeof rawProbObj?.up === "number" ? rawProbObj.up : null);
+  const liveProb = typeof liveForecast?.calibrated_probability === "number" ? liveForecast.calibrated_probability : null;
+  const rawProb = liveProb ?? reportProbUp ?? report?.intelligence?.forecast?.calibrated_probability ?? 0.534;
+  const mlProb = (typeof rawProb === "number" && !isNaN(rawProb)) ? rawProb : 0.534;
   const mlProbUp = Math.round(mlProb * 100);
+  const activeModelDisplay = (liveForecast?.model_name || selectedModel || "CHAMPION").toUpperCase();
 
   return (
     <section
@@ -366,7 +407,7 @@ export default function VisualAgentDecisionCard() {
           </div>
 
           <div style={{ fontSize: "0.68rem", color: "var(--sub, #64748b)" }}>
-            ML Model: {selectedModel ? selectedModel.toUpperCase() : "CHAMPION"} · 19 Folds Walk-Forward
+            ML Model: {activeModelDisplay} · 19 Folds Walk-Forward
           </div>
         </div>
       </div>
@@ -413,8 +454,23 @@ export default function VisualAgentDecisionCard() {
         >
           {AGENT_CATALOG.map((agent) => {
             const out = agentOutputs[agent.id] || agentOutputs[agent.legacyKey] || {};
-            const stance = out.directional_bias || agent.defaultStance;
-            const conf = typeof out.confidence === "number" ? Math.round(out.confidence * 100) : agent.defaultConf;
+            let stance = out.directional_bias;
+            let conf = typeof out.confidence === "number" && !isNaN(out.confidence) && out.confidence > 0 
+              ? Math.round(out.confidence * 100) 
+              : null;
+
+            // Dynamically sync the Quant ML Model specialist with the user's selected forecasting model
+            if (agent.id === "quant_forecast" && liveForecast?.predicted_direction) {
+              stance = liveForecast.predicted_direction;
+              conf = Math.round(mlProb * 100);
+            }
+
+            if (!stance || stance === "UNKNOWN") {
+              stance = agent.defaultStance;
+            }
+            if (conf === null) {
+              conf = agent.defaultConf;
+            }
 
             const isBull = stance === "BULLISH";
             const isBear = stance === "BEARISH";

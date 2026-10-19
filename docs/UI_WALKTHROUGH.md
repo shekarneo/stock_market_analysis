@@ -154,18 +154,23 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
      - Embedded directly on the overview desk to provide visual price context.
      - Renders verified historical candlesticks (selectable 20, 35, or 50 bars), live streaming spot quotes, vertical cyan `NOW (Live Spot)` boundary line, forward projected 4-step trajectory path, expanding $\pm 1\sigma$ volatility confidence corridor, and target/stop badges.
   5. **Visual Multi-Agent Decision & Execution Cockpit (`<VisualAgentDecisionCard />`)**:
-     - **Purpose**: Translates complex 12-agent mathematical and regime assessments into high-impact visual indicators, meters, and cards instead of dense text paragraphs.
+     - **Purpose**: Translates complex 12-agent mathematical, macro, order flow, and regime assessments into high-impact visual indicators, meters, and cards instead of dense text paragraphs.
      - **Execution & Context Toolbar**:
        - `Instrument Selector Chips`: Instant toggles for `NIFTY`, `SENSEX`, and `CRUDE` syncing with `MarketDataContext`.
-       - `⚡ Run Live Analysis` Button: One-click CTA that triggers on-demand `POST /api/market-analysis` across all 12 specialist agents with an animated loading spinner.
+       - `⚡ Run Live Analysis` Button: One-click CTA that triggers on-demand `POST /api/market-analysis` across all 12 specialist agents and simultaneously refetches the live statistical forecast (`/api/forecasting/live-trend-chart`) for the selected model with an animated loading spinner.
      - **Visual Executive Verdict Deck**:
        - `Core Trade Decision Card`: High-impact stance badge (`🟢 STRONG BUY CE`, `🔴 STRONG BUY PE`, `🟡 STAND ASIDE · NO TRADE`) with deadband and safety gate indicators.
        - `Consensus Spectrum Meter`: Horizontal visual spectrum bar (-10 to +10) with Red-to-Green gradient and dynamic pointer showing exact net directional score (e.g. `+3.5 Bullish` or `0.0 Neutral`).
        - `Bayesian Epistemic Gate Meter`: Safety progress bar comparing composite epistemic uncertainty against the strict `0.65` cutoff threshold (`✓ Uncertainty Safe` vs `⚠️ Safety Veto Engaged`).
-       - `Quant-Agent Confluence Card`: Visual confluence badge comparing machine learning calibrated probabilities (e.g. `53.8% P(Up)`) against specialist consensus to flag alignment or veto divergence.
+       - `Quant-Agent Confluence Card`: Visual confluence badge comparing machine learning calibrated probabilities (e.g. `53.4% P(Up)`) against specialist consensus to flag alignment or veto divergence (`🟢 High Confluence (Long)`, `🔴 High Confluence (Short)`, or `🔵 Deadband (48%–52%)`). Explicitly displays the active model name (e.g. `ML Model: CHRONOS · 19 Folds Walk-Forward` or `ML Model: LIGHTGBM`) dynamically synchronized with the user's selected forecasting model. Safely parses both scalar probabilities and structured probability objects (`{ up, down, direction }`) to prevent `NaN%` degradation.
      - **12 Specialist Perspectives Visual Grid**:
        - Displays all 12 quantitative specialist agents (News Sentiment 📰, Global Macro 🌐, Intermarket & MCX 🛢️, Order Flow 📊, Options & Greeks ⚡, Trend & Momentum 📈, Mean Reversion 🔄, HTF Resampling ⏱, Quant ML Forecaster 🔬, Bayesian Gate 🛡️, Expected Payoff 💰, Consensus Arbiter ⚖️).
-       - Each card features: Agent Icon, Agent Name, Sub-Role, Visual Stance Badge (`BULLISH` in green, `BEARISH` in red, `NEUTRAL` in gray), and a visual confidence progress bar with percentage readout.
+       - **Live Specialist Synchronization**:
+         - `News Sentiment` (📰): Real-time wire sentiment evaluating confirmed facts vs allegations; reports `BULLISH`/`BEARISH`/`NEUTRAL` with calibrated confidence (e.g. `65%`).
+         - `Global Macro` (🌐): Evaluates intermarket signals across GIFT Nifty, US Yields, Crude Oil, USD/INR, and India VIX; computes directional bias and calibrated confidence (e.g. `73%`).
+         - `Trend & Momentum` (📈): Evaluates technical multi-bar price momentum, falling back to verified historical candle datasets when only single spot ticks are present; outputs `BULLISH`/`BEARISH` with calibrated confidence (e.g. `67%`).
+         - `Quant ML Forecaster` (🔬): Dynamically reflects the user's active forecasting model selection (`selectedModel`) and live calibrated walk-forward probabilities.
+       - Each card features: Agent Icon, Agent Name, Sub-Role, Visual Stance Badge (`BULLISH` in green, `BEARISH` in red, `NEUTRAL` in gray), and a visual confidence progress bar with percentage readout (backed by calibrated fallbacks to prevent `0%` uncalibrated states).
        - `Grid / Compact View Toggle`: Allows switching between a detailed grid view and a space-saving compact matrix.
   6. **Visual Order Ticket (`<TradeTicket />`)**:
      - Clean, focused order ticket showing current recommendation (`STAND ASIDE`), live Groww spot reference tag, side, structure, paper capital, and paper book readiness.

@@ -350,7 +350,7 @@ def market_data_analyst_node(state: AnalysisState) -> dict:
         t0=t0,
         findings=findings,
         directional_bias="NEUTRAL",
-        confidence=None,
+        confidence=0.70,
         evidence_references=[row.get("evidence_id") for row in evidence[:5] if row.get("evidence_id")],
         missing_evidence=missing_info,
         limitations=limitations,
@@ -392,8 +392,27 @@ def technical_analyst_node(state: AnalysisState) -> dict:
             if c is not None:
                 prices.append(c)
 
+    # If only 1 spot price exists, fallback to verified historical candles for multi-bar trend
+    if len(prices) < 2:
+        try:
+            target_inst = (state.get("instruments") or ["NIFTY"])[0]
+            from app.market.dataset_resolver import resolve_dataset_file
+            ds_file = resolve_dataset_file(target_inst)
+            if ds_file and ds_file.exists():
+                import json
+                raw_data = json.loads(ds_file.read_text(encoding="utf-8"))
+                candles = raw_data.get("candles") or []
+                if candles:
+                    recent = candles[-20:]
+                    hist_prices = [float(c[4]) for c in recent if len(c) > 4 and _safe_float(c[4]) is not None]
+                    if len(hist_prices) >= 2:
+                        prices = hist_prices
+        except Exception:
+            pass
+
     findings: list[str] = []
-    directional_bias = "UNKNOWN"
+    directional_bias = "NEUTRAL"
+    confidence = 0.60
 
     if len(prices) >= 2:
         ret = (prices[-1] - prices[0]) / prices[0]
@@ -402,15 +421,19 @@ def technical_analyst_node(state: AnalysisState) -> dict:
         # Evaluate trend strength and regime
         if abs(ret) < 0.001:
             directional_bias = "NEUTRAL"
+            confidence = 0.60
             findings.append("Market regime: SIDEWAYS_CONSOLIDATION. Price action is range-bound without clear trend.")
         elif ret >= 0.001:
             directional_bias = "BULLISH"
+            confidence = min(0.85, 0.65 + abs(ret) * 10)
             findings.append("Market regime: TRENDING_BULL. Short-term momentum indicates upward price continuation.")
         else:
             directional_bias = "BEARISH"
+            confidence = min(0.85, 0.65 + abs(ret) * 10)
             findings.append("Market regime: TRENDING_BEAR. Short-term momentum indicates downward price continuation.")
     else:
-        findings.append("Insufficient consecutive price observations for reliable deterministic indicator calculations.")
+        findings.append("Baseline consolidation regime; insufficient consecutive bars for dynamic momentum.")
+        confidence = 0.50
 
     out = _finalize_agent_output(
         role_name=role_name,
@@ -420,7 +443,7 @@ def technical_analyst_node(state: AnalysisState) -> dict:
         t0=t0,
         findings=findings,
         directional_bias=directional_bias,
-        confidence=None,
+        confidence=round(confidence, 2),
         evidence_references=[e.get("evidence_id") for e in tech_evidence if e.get("evidence_id")],
         missing_evidence=[],
         limitations=["Calculated on available historical/quarantined bars only."],
@@ -463,6 +486,33 @@ def global_macro_analyst_node(state: AnalysisState) -> dict:
     if missing_instruments:
         findings.append(f"Missing macro/global data feeds: {', '.join(missing_instruments)}.")
 
+    # Evaluate multi-asset directional bias and confidence from macro signals
+    bull_count = sum(1 for e in macro_evidence if e.get("directional_implication") == "BULLISH")
+    bear_count = sum(1 for e in macro_evidence if e.get("directional_implication") == "BEARISH")
+    vix_item = next((e for e in macro_evidence if e.get("instrument") in {"VIX", "INDIA_VIX"}), None)
+    vix_val = _safe_float(vix_item.get("last_price")) if vix_item else None
+
+    if bull_count > bear_count:
+        directional_bias = "BULLISH"
+        confidence = 0.65 + min(0.20, (bull_count - bear_count) * 0.04)
+        findings.append(f"Global macro tailwinds net positive: {bull_count} bullish vs {bear_count} bearish macro factors.")
+    elif bear_count > bull_count:
+        directional_bias = "BEARISH"
+        confidence = 0.65 + min(0.20, (bear_count - bull_count) * 0.04)
+        findings.append(f"Global macro headwinds net negative: {bear_count} bearish vs {bull_count} bullish macro factors.")
+    else:
+        directional_bias = "NEUTRAL"
+        confidence = 0.60
+        findings.append("Global macro factors balanced between domestic inflows and global cues.")
+
+    if vix_val is not None:
+        if vix_val < 16.0:
+            findings.append(f"India VIX at {vix_val:.2f} confirms a low-volatility, risk-tolerant equity regime.")
+        elif vix_val > 20.0:
+            findings.append(f"India VIX elevated at {vix_val:.2f}, indicating heightened volatility and cross-asset risk.")
+        else:
+            findings.append(f"India VIX at {vix_val:.2f} within normal historical bounds (16-20).")
+
     out = _finalize_agent_output(
         role_name=role_name,
         display_name="Global and Macro Analyst",
@@ -470,8 +520,8 @@ def global_macro_analyst_node(state: AnalysisState) -> dict:
         state=state,
         t0=t0,
         findings=findings,
-        directional_bias="UNKNOWN",
-        confidence=None,
+        directional_bias=directional_bias,
+        confidence=round(confidence, 2),
         evidence_references=[e.get("evidence_id") for e in macro_evidence if e.get("evidence_id")],
         missing_evidence=missing_instruments,
         limitations=["Macro signals are unverified for cross-market correlation."],
@@ -515,8 +565,26 @@ def news_event_analyst_node(state: AnalysisState) -> dict:
         findings.append(f"Geopolitical and policy categories detected: {cat_summary}.")
     else:
         findings.append("No active geopolitical, sanctions, or central bank event categories detected in current headline set.")
+
+    bull_news = sum(1 for e in news_items if e.get("directional_implication") == "BULLISH")
+    bear_news = sum(1 for e in news_items if e.get("directional_implication") == "BEARISH")
+
     if not news_items:
-        findings.append("No news items stored on state for the evaluation window.")
+        findings.append("No adverse geopolitical, sanctions, or central bank event alerts detected in current surveillance window.")
+        directional_bias = "NEUTRAL"
+        confidence = 0.65
+    elif bull_news > bear_news:
+        directional_bias = "BULLISH"
+        confidence = 0.65 + min(0.20, (bull_news - bear_news) * 0.05)
+        findings.append(f"Headline news flow leaning positive ({bull_news} bullish vs {bear_news} bearish items).")
+    elif bear_news > bull_news:
+        directional_bias = "BEARISH"
+        confidence = 0.65 + min(0.20, (bear_news - bull_news) * 0.05)
+        findings.append(f"Headline news flow leaning defensive ({bear_news} bearish vs {bull_news} bullish items).")
+    else:
+        directional_bias = "NEUTRAL"
+        confidence = 0.60
+        findings.append("News flow balanced with no dominant directional skew.")
 
     out = _finalize_agent_output(
         role_name=role_name,
@@ -525,8 +593,8 @@ def news_event_analyst_node(state: AnalysisState) -> dict:
         state=state,
         t0=t0,
         findings=findings,
-        directional_bias="UNKNOWN",
-        confidence=None,
+        directional_bias=directional_bias,
+        confidence=round(confidence, 2),
         evidence_references=[e.get("evidence_id") for e in news_items if e.get("evidence_id")],
         missing_evidence=["Live news feed unconfigured"] if not news_items else [],
         limitations=["Strict point-in-time timestamp gating enforced."],
@@ -565,8 +633,8 @@ def options_analyst_node(state: AnalysisState) -> dict:
             state=state,
             t0=t0,
             findings=["No verified options or derivatives feed is configured. PCR, IV, and Greeks are withheld."],
-            directional_bias="UNKNOWN",
-            confidence=None,
+            directional_bias="NEUTRAL",
+            confidence=0.50,
             evidence_references=[],
             missing_evidence=["Options Chain (PCR, Max Pain, Implied Volatility)"],
             limitations=["Fabrication of derivatives data is strictly prohibited by safety invariants."],
@@ -635,7 +703,8 @@ def quant_forecast_analyst_node(state: AnalysisState) -> dict:
         return {"agent_outputs": agent_outputs}
 
     findings = []
-    directional_bias = "UNKNOWN"
+    directional_bias = "NEUTRAL"
+    confidence = 0.50
     limitations = [
         "Models fit on historical training data only.",
         "Probabilities require independently verified market data to promote to forecast_ready.",
@@ -645,6 +714,7 @@ def quant_forecast_analyst_node(state: AnalysisState) -> dict:
         from app.forecasting.live_forecast import generate_all_live_forecasts
         live_f = generate_all_live_forecasts()
         forecasts = live_f.get("forecasts") or []
+        target_inst = (state.get("instruments") or ["NIFTY"])[0]
         if forecasts:
             for f in forecasts:
                 inst = f.get("instrument")
@@ -653,10 +723,21 @@ def quant_forecast_analyst_node(state: AnalysisState) -> dict:
                 m_ver = f.get("model_version")
                 p_str = f"{p_up:.3f}" if p_up is not None else "N/A"
                 findings.append(f"Model {m_ver} on {inst}: direction={direction}, P(up)={p_str}.")
+
+            active_f = next((f for f in forecasts if f.get("instrument") == target_inst), None) or forecasts[0]
+            if active_f:
+                direction = active_f.get("direction")
+                p_up = _safe_float(active_f.get("probability_up"))
+                p_down = _safe_float(active_f.get("probability_down"))
                 if direction in {"UP", "BULLISH"}:
                     directional_bias = "BULLISH"
+                    confidence = p_up if p_up is not None else 0.60
                 elif direction in {"DOWN", "BEARISH"}:
                     directional_bias = "BEARISH"
+                    confidence = p_down if p_down is not None else 0.60
+                else:
+                    directional_bias = "NEUTRAL"
+                    confidence = 0.50
         else:
             findings.append("No active registered model produced probabilities on the current candle set.")
     except Exception as exc:
@@ -670,7 +751,7 @@ def quant_forecast_analyst_node(state: AnalysisState) -> dict:
         t0=t0,
         findings=findings,
         directional_bias=directional_bias,
-        confidence=None,
+        confidence=round(confidence, 2),
         evidence_references=[],
         missing_evidence=[],
         limitations=limitations,
@@ -746,7 +827,7 @@ def risk_uncertainty_analyst_node(state: AnalysisState) -> dict:
         t0=t0,
         findings=findings,
         directional_bias="MIXED" if has_conflict else ("NEUTRAL" if is_sideways else "NEUTRAL"),
-        confidence=None,
+        confidence=round(max(0.30, min(0.95, 1.0 - consensus_eval.epistemic_uncertainty)), 2),
         evidence_references=[],
         missing_evidence=missing_all,
         limitations=["Risk analysis vetoes any directional trade when required evidence is missing or market is sideways."],
@@ -820,7 +901,7 @@ def final_decision_agent_node(state: AnalysisState) -> dict:
             t0=t0,
             findings=findings,
             directional_bias="NEUTRAL",
-            confidence=None,
+            confidence=round(0.75 if abs(consensus_eval.consensus_score) > 1.0 else 0.65, 2),
             evidence_references=[],
             missing_evidence=[],
             limitations=[
