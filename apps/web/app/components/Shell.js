@@ -10,16 +10,15 @@ import InstrumentSelector from "./InstrumentSelector";
 
 const DESK = [
   { href: "/dashboard", label: "Overview" },
-  { href: "/analysis", label: "Analysis" },
   { href: "/live", label: "Live & Auto Trading" },
   { href: "/watchlist", label: "Watchlist & Accuracy" },
-  { href: "/forecast", label: "Forecast" },
   { href: "/options", label: "Options" },
   { href: "/risk", label: "Positions & Capital" },
   { href: "/system", label: "System" },
 ];
 
 const TOOLS = [
+  { href: "/forecast", label: "Forecast & Accuracy", matchPaths: ["/forecast"] },
   { href: "/history", label: "Market Data & History", matchPaths: ["/history"] },
   { href: "/backtest", label: "Backtest & Walk-Forward", matchPaths: ["/backtest", "/paper"] },
   { href: "/studio", label: "Model Studio & Registry", matchPaths: ["/studio", "/registry"] },

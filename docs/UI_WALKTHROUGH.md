@@ -77,23 +77,22 @@ Located at the top of the canvas on all screens:
 
 ### 2.2 Left Sidebar Navigation Rail
 - **Brand Header**: `IMM` gradient mark + **India Market Master** title + subtitle.
-- **Section `TRADE`** (8 primary operational destinations):
-  1. `Overview`: High-level tape, order ticket, and market summary.
-  2. `Analysis`: 12-agent consensus desk, scenarios, and Greek matrices.
-  3. `Live & Auto Trading`: Live bot execution matrix, order book, and real-time risk controls.
-  4. `Watchlist & Accuracy`: Historical tracking of suggestions against live spot moves.
-  5. `Forecast`: Multi-horizon directional probability distributions and registered models.
-  6. `Options`: Interactive strike matrix, Black-Scholes Greeks, and spread strategies.
-  7. `Positions & Capital`: Ledger capital allocation, risk limits, and gate blockers.
-  8. `System`: Health checks, 8-gate readiness audit, and data provenance.
-- **Section `TOOLS`** (4 consolidated engineering & governance hubs):
-  - **Collapsible Toggle**: Click `Tools Show (4) ▾` to expand; click `Tools Hide ▴` to collapse.
-  - Automatically expands if navigating directly to any tool page (`/history`, `/backtest`, `/paper`, `/studio`, `/registry`, `/settings`, `/settings/integrations`).
+- **Section `TRADE`** (6 primary operational destinations):
+  1. `Overview`: Unified executive cockpit with instant mode toggle between Compact Cockpit and Detailed Analysis Desk.
+  2. `Live & Auto Trading`: Live bot execution matrix, order book, and real-time risk controls.
+  3. `Watchlist & Accuracy`: Historical tracking of suggestions against live spot moves.
+  4. `Options`: Interactive strike matrix, Black-Scholes Greeks, and spread strategies.
+  5. `Positions & Capital`: Ledger capital allocation, risk limits, and gate blockers.
+  6. `System`: Health checks, 8-gate readiness audit, and data provenance.
+- **Section `TOOLS`** (5 consolidated engineering, forecasting & governance hubs):
+  - **Collapsible Toggle**: Click `Tools Show (5) ▾` to expand; click `Tools Hide ▴` to collapse.
+  - Automatically expands if navigating directly to any tool page (`/forecast`, `/history`, `/backtest`, `/paper`, `/studio`, `/registry`, `/settings`, `/settings/integrations`).
   - When expanded, reveals:
-    1. `Market Data & History` (`/history`): Interactive historical candle charts, data health audit, historical imports, and collapsible Groww/quarantine diagnostics.
-    2. `Backtest & Walk-Forward` (`/backtest` & `/paper`): 19-fold walk-forward validation, factor attribution, and a unified switcher to `Paper Ledger & Intent Audit Replay` (`/paper`).
-    3. `Model Studio & Registry` (`/studio` & `/registry`): Model versioning, side-by-side comparisons, and a unified switcher to `Model Registry & Execution Slots` (`/registry`).
-    4. `Settings & API Keys` (`/settings/integrations` & `/settings`): Broker/LLM credential configuration, AI Agent model mapping, and a unified switcher to `Operator Profile & Account` (`/settings`).
+    1. `Forecast & Accuracy` (`/forecast`): Multi-horizon quantitative probability distributions, out-of-sample Brier skill score calibration, and approved forecast models hub.
+    2. `Market Data & History` (`/history`): Interactive historical candle charts, data health audit, historical imports, and collapsible Groww/quarantine diagnostics.
+    3. `Backtest & Walk-Forward` (`/backtest` & `/paper`): 19-fold walk-forward validation, factor attribution, and a unified switcher to `Paper Ledger & Intent Audit Replay` (`/paper`).
+    4. `Model Studio & Registry` (`/studio` & `/registry`): Model versioning, side-by-side comparisons, and a unified switcher to `Model Registry & Execution Slots` (`/registry`).
+    5. `Settings & API Keys` (`/settings/integrations` & `/settings`): Broker/LLM credential configuration, AI Agent model mapping, and a unified switcher to `Operator Profile & Account` (`/settings`).
 - **Rail Footer**:
   - Signed-in user identity: Shows display name or username.
   - `Log out` button: Clears session cookie and redirects to `/`.
@@ -136,28 +135,31 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
 
 ## 4. Primary Trading Desk Pages
 
-### 4.1 Overview Desk (`/dashboard`)
-- **Purpose**: The central executive single-pane cockpit providing a streamlined visual overview of market tape, forward forecast trajectory cones, visual 12-agent consensus decisions, and active order tickets without dense walls of text.
-- **Components & Options**:
+### 4.1 Overview & Analysis Cockpit (`/dashboard`)
+- **Purpose**: The unified single-pane trading cockpit combining a high-level visual market overview with an expandable, deep institutional 12-agent analysis desk. Eliminates disjoint navigation by integrating compact visual meters with full audit dossiers on a single screen.
+- **Unified Cockpit Mode Switcher Bar**:
+  - Located at the top of the desk to seamlessly toggle between visual summary and institutional depth:
+    1. `Mode: ⚡ Compact Cockpit` (Default): Streamlined single-pane view featuring multi-instrument tape, live candlestick forward trajectory forecasts, visual 12-agent consensus meters, order ticket, and market snapshots without dense text walls.
+    2. `Mode: 🔬 Detailed Analysis Desk (12 Agents)`: Full institutional workstation (merged from the previous `/analysis` page) with sub-tabs for `🤖 Multi-Agent Decision Desk & Signals` (`V6Desk`) and `🧠 Institutional Intelligence Hub & Greeks` (`V6IntelligenceHub`).
+  - **URL State Synchronization**: Supports `?view=detailed` and `?view=compact` query parameters; navigating to `/analysis` automatically forwards to `/dashboard?view=detailed`.
+  - **Quick Action Links**: Direct links to `⚡ Live Trading →` (`/live`), `🎯 Watchlist →` (`/watchlist`), `📈 Forecast Tools →` (`/forecast`), and `Options →` (`/options`).
+
+- **Compact Cockpit View Components (`viewMode === "compact"`)**:
   1. **Active Posture Ribbon**:
      - Visual badge indicating current posture (`Active Posture`, `NO TRADE`).
      - Dynamic status message detailing whether virtual paper execution is active with configured risk controls or blocked pending configuration.
-  2. **Quick Desk Shortcuts**:
-     - `🤖 Open 12-Agent Analysis Desk →` (`/analysis`): Opens the full 12-agent consensus and options recommendation desk.
-     - `⚡ Live & Auto Trading →` (`/live`): Opens the live paper/auto execution and outcome evaluation desk.
-     - `📈 Statistical Forecasts & Accuracy →` (`/forecast`): Opens the multi-horizon quantitative forecast and Brier calibration desk.
-     - `🎯 Options Chain & Greeks →` (`/options`): Opens the live strike matrix and Black-Scholes Greeks workstation.
-  3. **Multi-Instrument Overview Card (`<MultiInstrumentOverviewCard />`)**:
+  2. **Multi-Instrument Overview Card (`<MultiInstrumentOverviewCard />`)**:
      - 3-card comparison grid for NIFTY 50, SENSEX, and CRUDEOIL MINI.
      - Displays Spot LTP, Day Change (pts & %), Session Phase (`OPEN` / `CLOSED`), Trading Hours, Data Source, and options support status.
-  4. **Live Candlestick & Forward Projected Trend Chart (`<PredictedTrendChart />`)**:
+  3. **Live Candlestick & Forward Projected Trend Chart (`<PredictedTrendChart />`)**:
      - Embedded directly on the overview desk to provide visual price context.
      - Renders verified historical candlesticks (selectable 20, 35, or 50 bars), live streaming spot quotes, vertical cyan `NOW (Live Spot)` boundary line, forward projected 4-step trajectory path, expanding $\pm 1\sigma$ volatility confidence corridor, and target/stop badges.
-  5. **Visual Multi-Agent Decision & Execution Cockpit (`<VisualAgentDecisionCard />`)**:
+  4. **Visual Multi-Agent Decision & Execution Cockpit (`<VisualAgentDecisionCard />`)**:
      - **Purpose**: Translates complex 12-agent mathematical, macro, order flow, and regime assessments into high-impact visual indicators, meters, and cards instead of dense text paragraphs.
      - **Execution & Context Toolbar**:
        - `Instrument Selector Chips`: Instant toggles for `NIFTY`, `SENSEX`, and `CRUDE` syncing with `MarketDataContext`.
        - `⚡ Run Live Analysis` Button: One-click CTA that triggers on-demand `POST /api/market-analysis` across all 12 specialist agents and simultaneously refetches the live statistical forecast (`/api/forecasting/live-trend-chart`) for the selected model with an animated loading spinner.
+       - `🔬 Detailed Desk ▾` Quick Button: Instantly expands into the detailed 12-agent analysis desk.
      - **Visual Executive Verdict Deck**:
        - `Core Trade Decision Card`: High-impact stance badge (`🟢 STRONG BUY CE`, `🔴 STRONG BUY PE`, `🟡 STAND ASIDE · NO TRADE`) with deadband and safety gate indicators.
        - `Consensus Spectrum Meter`: Horizontal visual spectrum bar (-10 to +10) with Red-to-Green gradient and dynamic pointer showing exact net directional score (e.g. `+3.5 Bullish` or `0.0 Neutral`).
@@ -165,39 +167,28 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
        - `Quant-Agent Confluence Card`: Visual confluence badge comparing machine learning calibrated probabilities (e.g. `53.4% P(Up)`) against specialist consensus to flag alignment or veto divergence (`🟢 High Confluence (Long)`, `🔴 High Confluence (Short)`, or `🔵 Deadband (48%–52%)`). Explicitly displays the active model name (e.g. `ML Model: CHRONOS · 19 Folds Walk-Forward` or `ML Model: LIGHTGBM`) dynamically synchronized with the user's selected forecasting model. Safely parses both scalar probabilities and structured probability objects (`{ up, down, direction }`) to prevent `NaN%` degradation.
      - **12 Specialist Perspectives Visual Grid**:
        - Displays all 12 quantitative specialist agents (News Sentiment 📰, Global Macro 🌐, Intermarket & MCX 🛢️, Order Flow 📊, Options & Greeks ⚡, Trend & Momentum 📈, Mean Reversion 🔄, HTF Resampling ⏱, Quant ML Forecaster 🔬, Bayesian Gate 🛡️, Expected Payoff 💰, Consensus Arbiter ⚖️).
-       - **Live Specialist Synchronization**:
-         - `News Sentiment` (📰): Real-time wire sentiment evaluating confirmed facts vs allegations; reports `BULLISH`/`BEARISH`/`NEUTRAL` with calibrated confidence (e.g. `65%`).
-         - `Global Macro` (🌐): Evaluates intermarket signals across GIFT Nifty, US Yields, Crude Oil, USD/INR, and India VIX; computes directional bias and calibrated confidence (e.g. `73%`).
-         - `Trend & Momentum` (📈): Evaluates technical multi-bar price momentum, falling back to verified historical candle datasets when only single spot ticks are present; outputs `BULLISH`/`BEARISH` with calibrated confidence (e.g. `67%`).
-         - `Quant ML Forecaster` (🔬): Dynamically reflects the user's active forecasting model selection (`selectedModel`) and live calibrated walk-forward probabilities.
-       - Each card features: Agent Icon, Agent Name, Sub-Role, Visual Stance Badge (`BULLISH` in green, `BEARISH` in red, `NEUTRAL` in gray), and a visual confidence progress bar with percentage readout (backed by calibrated fallbacks to prevent `0%` uncalibrated states).
+       - Each card features: Agent Icon, Agent Name, Sub-Role, Visual Stance Badge (`BULLISH` in green, `BEARISH` in red, `NEUTRAL` in gray), and a visual confidence progress bar with percentage readout.
        - `Grid / Compact View Toggle`: Allows switching between a detailed grid view and a space-saving compact matrix.
-  6. **Visual Order Ticket (`<TradeTicket />`)**:
+     - **Bottom Expand CTA Button**: `🔬 Expand Detailed 12-Agent Analysis Desk & Full Audit Dossier (Stages 0–14) ▾` switches the view to the detailed institutional analysis desk.
+  5. **Visual Order Ticket (`<TradeTicket />`)**:
      - Clean, focused order ticket showing current recommendation (`STAND ASIDE`), live Groww spot reference tag, side, structure, paper capital, and paper book readiness.
      - `Signal Status Badge`: Visually highlights paper filter qualification status.
      - `Blocker List (`<BlockerList />`)`: Renders active pipeline gate blockers as visual tag chips.
-  7. **Market Tape & Verified Macro Indicators (`<Snapshot />`)**:
+  6. **Market Tape & Verified Macro Indicators (`<Snapshot />`)**:
      - `<MarketBoard />`: Real-time quote cards across 10 domestic and global benchmarks (NIFTY, SENSEX, CRUDE MINI, INDIA VIX, S&P 500, NASDAQ, DOW JONES, US VIX, CRUDE OIL, USD/INR).
      - `Verified Market Macro Indicators Grid`: Clean visual cards displaying live prints for India VIX (NSE Volatility), USD/INR (RBI Reference), MCX Crude Oil, MCX Gold, Dow Jones, and GIFT Nifty.
      - `Collapsible Feed Provenance & Compliance Archive`: Expandable `<details>` drawer cleanly archiving raw tick inspection tables, provider readiness metadata, and synthetic fixtures for compliance auditing without cluttering the executive view.
-  8. **Diagnostics Grid (`<LiveQuotes />` & `<Quarantine />`)**:
+  7. **Diagnostics Grid (`<LiveQuotes />` & `<Quarantine />`)**:
      - **Live Quotes Reader (`<LiveQuotes />`)**: Direct inspection of raw quotes retrieved from Groww with domestic indices, MCX commodities, global benchmarks, and sectoral/volatility prints, plus `Read Groww quotes` button.
      - **Quarantine Ledger (`<Quarantine />`)**: Table of any candle files quarantined due to invalid timestamp formatting, clock drift, or empty payloads.
 
+- **Detailed Analysis Desk View Components (`viewMode === "detailed"`)**:
+  - **Sub-View Navigation Tabs**:
+    1. `🤖 Multi-Agent Decision Desk & Signals` (Default): Activates `<V6Desk />`.
+    2. `🧠 Institutional Intelligence Hub & Greeks`: Activates `<V6IntelligenceHub />`.
+    3. `↑ Switch to Compact View` button: Instantly collapses back to the compact cockpit.
 
----
-
-### 4.2 Multi-Agent Analysis Desk (`/analysis`)
-- **Purpose**: Deep institutional analysis synthesizing technical regimes, order flows, macro indicators, and Bayesian uncertainty gates across 12 specialized agents.
-- **Top View Mode Navigation Bar**:
-  - Uses the sticky global header `<InstrumentSelector compact />` (no duplicate selector banners).
-  - **2 Focused View Modes + Direct Desk Links**:
-    1. `🤖 Multi-Agent Decision Desk & Signals` (Default): Shows `V6Desk` with the core trade call, 12 specialist agents, master dossier, and news wire.
-    2. `🧠 Institutional Intelligence Hub & Greeks`: Shows `V6IntelligenceHub` with correlation matrices, Greek radar, and 8-gate readiness.
-    3. `📈 Forecasts & Accuracy →` link: Navigates directly to `/forecast` for multi-horizon statistical probability distributions and out-of-sample Brier calibration.
-    4. `⚡ Live Desk →` link: Navigates directly to `/live` for automated paper trading and live contract evaluation.
-
-#### Tab 1: Multi-Agent Decision Desk (`V6Desk`)
+#### Detailed Desk Sub-Tab 1: Multi-Agent Decision Desk (`V6Desk`)
 - **Collapsible Market Ticker Strip**:
   - Defaults to collapsed (`Show Market Tickers (15) ▾`) to save screen space.
   - When expanded, shows 15+ live quotes (NIFTY, BANKNIFTY, SENSEX, CRUDE, GOLD, VIX, US Indices).

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 
 import MultiInstrumentOverviewCard from "../components/MultiInstrumentOverviewCard";
@@ -11,8 +11,36 @@ import ReadState from "../components/ReadState";
 import { useRead } from "../components/useRead";
 import { useMarketData } from "../components/MarketDataContext";
 import { observationClass, valueText } from "../research/present.mjs";
+import V6Desk from "../components/V6Desk";
+import V6IntelligenceHub from "../components/V6IntelligenceHub";
 
 export default function DashboardPage() {
+  const { quotes } = useMarketData();
+  const [viewMode, setViewMode] = useState("compact"); // "compact" | "detailed"
+  const [detailedTab, setDetailedTab] = useState("desk"); // "desk" | "consensus"
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("view") === "detailed") {
+        setViewMode("detailed");
+      }
+    }
+  }, []);
+
+  function switchView(mode) {
+    setViewMode(mode);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (mode === "detailed") {
+        url.searchParams.set("view", "detailed");
+      } else {
+        url.searchParams.delete("view");
+      }
+      window.history.replaceState({}, "", url.toString());
+    }
+  }
+
   return (
     <ResearchBoard
       title="Trade desk"
@@ -30,79 +58,231 @@ export default function DashboardPage() {
             <span className="pill bad"><i />NO TRADE</span>
           </div>
 
-          {/* Quick Desk Shortcuts */}
-          <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "16px" }}>
-            <Link
-              href="/analysis"
-              style={{
-                padding: "8px 14px",
-                borderRadius: "8px",
-                background: "rgba(56, 189, 248, 0.14)",
-                border: "1px solid rgba(56, 189, 248, 0.35)",
-                color: "#38bdf8",
-                fontWeight: 600,
-                fontSize: "0.83rem",
-                textDecoration: "none",
-              }}
-            >
-              🤖 Open 12-Agent Analysis Desk →
-            </Link>
-            <Link
-              href="/live"
-              style={{
-                padding: "8px 14px",
-                borderRadius: "8px",
-                background: "rgba(16, 185, 129, 0.14)",
-                border: "1px solid rgba(16, 185, 129, 0.35)",
-                color: "#34d399",
-                fontWeight: 600,
-                fontSize: "0.83rem",
-                textDecoration: "none",
-              }}
-            >
-              ⚡ Live &amp; Auto Trading →
-            </Link>
-            <Link
-              href="/forecast"
-              style={{
-                padding: "8px 14px",
-                borderRadius: "8px",
-                background: "rgba(168, 85, 247, 0.14)",
-                border: "1px solid rgba(168, 85, 247, 0.35)",
-                color: "#c084fc",
-                fontWeight: 600,
-                fontSize: "0.83rem",
-                textDecoration: "none",
-              }}
-            >
-              📈 Statistical Forecasts &amp; Accuracy →
-            </Link>
-            <Link
-              href="/options"
-              style={{
-                padding: "8px 14px",
-                borderRadius: "8px",
-                background: "rgba(255, 255, 255, 0.05)",
-                border: "1px solid rgba(255, 255, 255, 0.12)",
-                color: "#e2e8f0",
-                fontWeight: 600,
-                fontSize: "0.83rem",
-                textDecoration: "none",
-              }}
-            >
-              🎯 Options Chain &amp; Greeks →
-            </Link>
+          {/* Executive Cockpit Header & Mode Switcher */}
+          <div style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "10px",
+            background: "var(--card-subtle, #131c31)",
+            padding: "8px 12px",
+            borderRadius: "10px",
+            border: "1px solid var(--line)",
+            marginBottom: "16px",
+          }}>
+            {/* View Mode Toggle Tabs */}
+            <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+              <span style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginRight: "4px" }}>
+                Mode:
+              </span>
+              <button
+                type="button"
+                onClick={() => switchView("compact")}
+                style={{
+                  padding: "6px 14px",
+                  borderRadius: "6px",
+                  border: "none",
+                  background: viewMode === "compact" ? "var(--accent, #38bdf8)" : "transparent",
+                  color: viewMode === "compact" ? "#0f172a" : "var(--muted)",
+                  fontWeight: viewMode === "compact" ? 750 : 500,
+                  fontSize: "0.82rem",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                <span>⚡ Compact Cockpit</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => switchView("detailed")}
+                style={{
+                  padding: "6px 14px",
+                  borderRadius: "6px",
+                  border: "none",
+                  background: viewMode === "detailed" ? "var(--accent, #38bdf8)" : "transparent",
+                  color: viewMode === "detailed" ? "#0f172a" : "var(--muted)",
+                  fontWeight: viewMode === "detailed" ? 750 : 500,
+                  fontSize: "0.82rem",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  transition: "all 0.15s ease",
+                }}
+              >
+                <span>🔬 Detailed Analysis Desk (12 Agents)</span>
+              </button>
+            </div>
+
+            {/* Quick Desk Action Links */}
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+              <Link
+                href="/live"
+                style={{
+                  padding: "5px 10px",
+                  borderRadius: "6px",
+                  background: "rgba(16, 185, 129, 0.12)",
+                  border: "1px solid rgba(16, 185, 129, 0.3)",
+                  color: "#34d399",
+                  fontWeight: 600,
+                  fontSize: "0.78rem",
+                  textDecoration: "none",
+                }}
+              >
+                ⚡ Live Trading →
+              </Link>
+              <Link
+                href="/watchlist"
+                style={{
+                  padding: "5px 10px",
+                  borderRadius: "6px",
+                  background: "rgba(56, 189, 248, 0.12)",
+                  border: "1px solid rgba(56, 189, 248, 0.3)",
+                  color: "#38bdf8",
+                  fontWeight: 600,
+                  fontSize: "0.78rem",
+                  textDecoration: "none",
+                }}
+              >
+                🎯 Watchlist →
+              </Link>
+              <Link
+                href="/forecast"
+                style={{
+                  padding: "5px 10px",
+                  borderRadius: "6px",
+                  background: "rgba(168, 85, 247, 0.12)",
+                  border: "1px solid rgba(168, 85, 247, 0.3)",
+                  color: "#c084fc",
+                  fontWeight: 600,
+                  fontSize: "0.78rem",
+                  textDecoration: "none",
+                }}
+              >
+                📈 Forecast Tools →
+              </Link>
+              <Link
+                href="/options"
+                style={{
+                  padding: "5px 10px",
+                  borderRadius: "6px",
+                  background: "rgba(255, 255, 255, 0.05)",
+                  border: "1px solid rgba(255, 255, 255, 0.12)",
+                  color: "var(--muted)",
+                  fontWeight: 600,
+                  fontSize: "0.78rem",
+                  textDecoration: "none",
+                }}
+              >
+                Options →
+              </Link>
+            </div>
           </div>
 
-          <MultiInstrumentOverviewCard />
-          <PredictedTrendChart />
-          <VisualAgentDecisionCard />
-          <TradeTicket status={status} />
-          <Snapshot />
-          <div className="v6-grid" style={{ marginTop: "16px" }}>
-            <LiveQuotes />
-            <Quarantine />
-          </div>
+          {/* Mode 1: Compact View (Default) */}
+          {viewMode === "compact" && (
+            <>
+              <MultiInstrumentOverviewCard />
+              <PredictedTrendChart />
+              <VisualAgentDecisionCard onExpandDetailed={() => switchView("detailed")} />
+              <TradeTicket status={status} />
+              <Snapshot />
+              <div className="v6-grid" style={{ marginTop: "16px" }}>
+                <LiveQuotes />
+                <Quarantine />
+              </div>
+            </>
+          )}
+
+          {/* Mode 2: Detailed Analysis Desk View (Unified from Analysis page) */}
+          {viewMode === "detailed" && (
+            <div className="detailed-analysis-container" style={{ display: "grid", gap: "16px" }}>
+              <div style={{
+                display: "flex",
+                gap: "8px",
+                background: "var(--card-subtle, #131c31)",
+                padding: "4px",
+                borderRadius: "10px",
+                border: "1px solid var(--line)",
+                flexWrap: "wrap",
+                alignItems: "center",
+              }}>
+                <button
+                  type="button"
+                  onClick={() => setDetailedTab("desk")}
+                  style={{
+                    flex: "1 1 auto",
+                    padding: "8px 16px",
+                    borderRadius: "8px",
+                    border: "none",
+                    background: detailedTab === "desk" ? "rgba(255, 255, 255, 0.12)" : "transparent",
+                    color: detailedTab === "desk" ? "#ffffff" : "var(--muted)",
+                    fontWeight: 650,
+                    fontSize: "0.85rem",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "8px",
+                  }}
+                >
+                  <span>🤖</span> Multi-Agent Decision Desk &amp; Signals
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDetailedTab("consensus")}
+                  style={{
+                    flex: "1 1 auto",
+                    padding: "8px 16px",
+                    borderRadius: "8px",
+                    border: "none",
+                    background: detailedTab === "consensus" ? "rgba(255, 255, 255, 0.12)" : "transparent",
+                    color: detailedTab === "consensus" ? "#ffffff" : "var(--muted)",
+                    fontWeight: 650,
+                    fontSize: "0.85rem",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "8px",
+                  }}
+                >
+                  <span>🧠</span> Institutional Intelligence Hub &amp; Greeks
+                </button>
+                <button
+                  type="button"
+                  onClick={() => switchView("compact")}
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: "8px",
+                    border: "1px solid rgba(255, 255, 255, 0.1)",
+                    background: "rgba(255, 255, 255, 0.05)",
+                    color: "var(--muted)",
+                    fontWeight: 600,
+                    fontSize: "0.82rem",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                  }}
+                  title="Return to Compact Cockpit View"
+                >
+                  <span>↑ Switch to Compact View</span>
+                </button>
+              </div>
+
+              {detailedTab === "desk" && (
+                <V6Desk defaultTab="trades" hideTickers={true} />
+              )}
+              {detailedTab === "consensus" && (
+                <V6IntelligenceHub initialTab="consensus" liveQuotes={quotes} />
+              )}
+            </div>
+          )}
         </>
       )}
     </ResearchBoard>

@@ -19,7 +19,7 @@ const AGENT_CATALOG = [
   { id: "final_arbiter", legacyKey: "final_decision_agent", name: "Consensus Arbiter", icon: "⚖️", role: "LangGraph Consensus Engine", defaultStance: "BULLISH", defaultConf: 78 },
 ];
 
-export default function VisualAgentDecisionCard() {
+export default function VisualAgentDecisionCard({ onExpandDetailed }) {
   const { selectedInstrument, selectInstrument, spots, selectedModel } = useMarketData();
   const [instrument, setInstrument] = useState(selectedInstrument || "NIFTY");
   const [report, setReport] = useState(null);
@@ -217,6 +217,28 @@ export default function VisualAgentDecisionCard() {
               </>
             )}
           </button>
+          {onExpandDetailed && (
+            <button
+              type="button"
+              onClick={onExpandDetailed}
+              style={{
+                padding: "7px 14px",
+                borderRadius: "8px",
+                border: "1px solid rgba(56, 189, 248, 0.35)",
+                background: "rgba(56, 189, 248, 0.12)",
+                color: "#38bdf8",
+                fontWeight: 650,
+                fontSize: "0.8rem",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+              title="Expand to detailed 12-agent analysis desk with full institutional dossier"
+            >
+              <span>🔬 Detailed Desk ▾</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -541,6 +563,29 @@ export default function VisualAgentDecisionCard() {
             );
           })}
         </div>
+        {onExpandDetailed && (
+          <div style={{ textAlign: "center", marginTop: "16px", borderTop: "1px dashed var(--line, rgba(255,255,255,0.08))", paddingTop: "14px" }}>
+            <button
+              type="button"
+              onClick={onExpandDetailed}
+              style={{
+                padding: "8px 18px",
+                borderRadius: "8px",
+                background: "rgba(56, 189, 248, 0.08)",
+                border: "1px solid rgba(56, 189, 248, 0.3)",
+                color: "#38bdf8",
+                fontWeight: 650,
+                fontSize: "0.82rem",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "8px",
+              }}
+            >
+              <span>🔬 Expand Detailed 12-Agent Analysis Desk &amp; Full Audit Dossier (Stages 0–14) ▾</span>
+            </button>
+          </div>
+        )}
       </div>
     </section>
   );
