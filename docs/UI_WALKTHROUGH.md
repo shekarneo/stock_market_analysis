@@ -378,12 +378,12 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   - `Contract`: Clickable link navigating directly to `/dashboard?instrument=...` with sub-link to `/analysis`. Displays option direction tag and data class.
   - `Status`: Color-coded pill (`Open`, `Target hit`, `SL hit`, `Expired`, `Cancelled`).
   - `Prem. Entry`: Theoretical entry option premium and lot size.
-  - `Running Prem.`: Real-time estimated option premium modeled on live spot delta, showing color-coded running gain/loss percentage.
+  - `Running Prem.`: Real-time estimated option premium modeled on live spot delta, showing color-coded running gain/loss percentage. **Continuous Market Tracking**: Even after a trade reaches its Stop Loss (`SL hit`) or Target (`Target hit`), the running premium continuously updates with live streaming market spot ticks, allowing traders to observe post-resolution price behavior and recovery without freezing at the stop level.
   - `Prem. Target` & `Prem. SL`: Target (+40%) and Stop-Loss (-25%) premium estimates.
   - `Spot Entry`, `Spot Target`, `Spot SL`: Underlying spot boundary levels.
-  - `Last Spot`: Most recent observed spot price with total checks count and time.
+  - `Last Spot`: Live observed spot price dynamically refreshed from streaming market feeds, with total checks count and last check timestamp.
   - `Best / Worst`: Maximum favorable and maximum adverse spot excursions observed.
-  - `Saved` & `Resolves`: Creation timestamp, expiry time, and resolution price.
+  - `Saved` & `Resolves`: Creation timestamp, expiry time, and resolution price (`<timestamp> @ ₹<resolved_spot>`).
   - `Cancel` button: Available on `OPEN` suggestions to manually abort tracking.
 
 ---

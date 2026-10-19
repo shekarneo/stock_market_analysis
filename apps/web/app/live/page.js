@@ -92,15 +92,13 @@ function calcRunningPremium(w, spots) {
   const p = w.model_premiums || {};
   const pEntry = p.entry != null ? Number(p.entry) : null;
   if (pEntry == null) return null;
-  const pTarget = p.target != null ? Number(p.target) : Number((pEntry * 1.4).toFixed(2));
-  const pSL = p.stop_loss != null ? Number(p.stop_loss) : Number((pEntry * 0.75).toFixed(2));
-  if (w.status === "TARGET_HIT") return pTarget;
-  if (w.status === "SL_HIT") return pSL;
 
   const entrySpot = Number(w.entry_spot);
-  const currentSpot = w.status === "OPEN"
-    ? ((spots && spots[w.instrument] != null) ? Number(spots[w.instrument]) : (w.last_spot != null ? Number(w.last_spot) : entrySpot))
-    : (w.resolved_spot != null ? Number(w.resolved_spot) : (w.last_spot != null ? Number(w.last_spot) : entrySpot));
+  const currentSpot = (spots && spots[w.instrument] != null)
+    ? Number(spots[w.instrument])
+    : (w.last_spot != null
+        ? Number(w.last_spot)
+        : (w.resolved_spot != null ? Number(w.resolved_spot) : entrySpot));
 
   if (isNaN(entrySpot) || isNaN(currentSpot)) return pEntry;
   const isUp = w.direction === "UP" || w.option_type === "CE";
@@ -1496,7 +1494,7 @@ export default function LiveTradingPage() {
                           <td style={{ padding: "10px 10px", color: "#34d399", fontWeight: 600 }}>{inr(w.target_spot)}</td>
                           <td style={{ padding: "10px 10px", color: "#f87171", fontWeight: 600 }}>{inr(w.stop_loss_spot)}</td>
                           <td style={{ padding: "10px 10px", color: "var(--ink, #f8fafc)" }}>
-                            {inr(w.last_spot)}
+                            {inr(spots?.[w.instrument] ?? w.last_spot)}
                             <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem" }}>{w.checks || 0} checks</small>
                           </td>
                           <td style={{ padding: "10px 10px", color: "var(--ink, #f8fafc)" }}>

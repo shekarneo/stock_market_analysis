@@ -31,15 +31,13 @@ function calcRunningPremium(item, spots) {
   const p = item.model_premiums || {};
   const pEntry = p.entry != null ? Number(p.entry) : null;
   if (pEntry == null) return null;
-  const pTarget = p.target != null ? Number(p.target) : Number((pEntry * 1.4).toFixed(2));
-  const pSL = p.stop_loss != null ? Number(p.stop_loss) : Number((pEntry * 0.75).toFixed(2));
-  if (item.status === "TARGET_HIT") return pTarget;
-  if (item.status === "SL_HIT") return pSL;
 
   const entrySpot = Number(item.entry_spot);
-  const currentSpot = item.status === "OPEN"
-    ? ((spots && spots[item.instrument] != null) ? Number(spots[item.instrument]) : (item.last_spot != null ? Number(item.last_spot) : entrySpot))
-    : (item.resolved_spot != null ? Number(item.resolved_spot) : (item.last_spot != null ? Number(item.last_spot) : entrySpot));
+  const currentSpot = (spots && spots[item.instrument] != null)
+    ? Number(spots[item.instrument])
+    : (item.last_spot != null
+        ? Number(item.last_spot)
+        : (item.resolved_spot != null ? Number(item.resolved_spot) : entrySpot));
 
   if (isNaN(entrySpot) || isNaN(currentSpot)) return pEntry;
   const isUp = item.direction === "UP" || item.option_type === "CE";
@@ -324,7 +322,7 @@ export default function WatchlistPage() {
                     <td style={{ color: "#137333", fontWeight: 600 }}>{inr(i.target_spot)}</td>
                     <td style={{ color: "#c5221f", fontWeight: 600 }}>{inr(i.stop_loss_spot)}</td>
                     <td>
-                      {inr(i.last_spot)}
+                      {inr(spots?.[i.instrument] ?? i.last_spot)}
                       <small style={{ display: "block", color: "var(--muted)" }}>{i.checks} checks · {ist(i.last_checked_at)}</small>
                     </td>
                     <td><small>{inr(i.max_favorable_spot)} / {inr(i.max_adverse_spot)}</small></td>

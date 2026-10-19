@@ -157,6 +157,24 @@ def evaluate_open(session: Session, observations: list[dict], now: datetime | No
             row.note = "Session closed before target or stop was observed."
             changed += 1
     session.flush()
+
+    # Also keep last_spot updated for resolved rows so the database preserves the latest spot
+    resolved_rows = session.scalars(
+        select(WatchlistSuggestion).where(WatchlistSuggestion.status.in_(["TARGET_HIT", "SL_HIT"]))
+    ).all()
+    for row in resolved_rows:
+        quote = spots.get(row.instrument)
+        created = row.created_at if row.created_at.tzinfo else row.created_at.replace(tzinfo=timezone.utc)
+        if quote and quote.get("price") is not None:
+            stamp = quote.get("at")
+            if stamp and stamp > created:
+                row_last_at = row.last_checked_at if (row.last_checked_at and row.last_checked_at.tzinfo) else (row.last_checked_at.replace(tzinfo=timezone.utc) if row.last_checked_at else None)
+                if row_last_at is None or stamp > row_last_at:
+                    row.last_spot = Decimal(str(quote["price"]))
+                    row.last_checked_at = stamp
+                    row.checks = (row.checks or 0) + 1
+
+    session.flush()
     return {"checked": len(rows), "resolved": changed}
 
 
