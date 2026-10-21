@@ -26,7 +26,8 @@ def _status(state: AnalysisState, name: str, status: str) -> dict:
 
 
 def _as_of(state: AnalysisState) -> datetime:
-    parsed = datetime.fromisoformat(state["created_at"])
+    raw = str(state["created_at"])
+    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     return parsed
 
 
@@ -454,8 +455,33 @@ def report_node(state: AnalysisState) -> dict:
         "agent_outputs": dict(state.get("agent_outputs") or {}),
     }
     prior_report = dict(state.get("report") or {})
+    prior_decision = prior_report.get("decision") or decision
+    prior_consensus = dict(prior_report.get("consensus") or {})
+    active_vetoes = list(prior_consensus.get("vetoes") or [])
+
     if "consensus" in prior_report:
         report["consensus"] = prior_report["consensus"]
     if "reason_codes" in prior_report:
         report["reason_codes"] = prior_report["reason_codes"]
+    report["decision"] = prior_decision
+
+    # Strict Authoritative Consensus Synchronization:
+    # When backend decision is NO_TRADE or vetoes exist, synchronize all market recommendations to STAND ASIDE
+    if prior_decision == "NO_TRADE" or len(active_vetoes) > 0:
+        for inst, m in intel.get("markets", {}).items():
+            rec = m.get("manual_trade_recommendation")
+            if rec:
+                rec["is_actionable"] = False
+                rec["call"] = "STAND ASIDE (NO TRADE)"
+                rec["bias"] = f"NEUTRAL ({active_vetoes[0]})" if active_vetoes else "NEUTRAL (SAFETY GATED)"
+                rec["conviction"] = "NO TRADE / GATED"
+                rec["target_spot"] = None
+                rec["stop_loss_spot"] = None
+                rec["expected_move_points"] = None
+                rec["stop_loss_points"] = None
+                rec["gating_vetoes"] = list(active_vetoes)
+            if "risk_veto" in m:
+                m["risk_veto"]["vetoed"] = True
+                m["risk_veto"]["reason"] = f"Deterministic consensus vetoes active: {', '.join(active_vetoes) if active_vetoes else 'NO_TRADE mandated'}"
+
     return {"report": report, "node_status": node_status}

@@ -39,6 +39,7 @@ def run_analysis(
     include_derivatives: bool = True,
     include_inference: bool = False,
     include_forecast: bool = False,
+    enable_agent_llm: bool | None = None,
     observations: list[dict] | None = None,
     inference: dict | None = None,
     idempotency_key: str | None = None,
@@ -65,6 +66,7 @@ def run_analysis(
         "include_derivatives": include_derivatives,
         "include_inference": include_inference,
         "include_forecast": include_forecast,
+        "enable_agent_llm": enable_agent_llm,
         "accepted": _jsonable(list(observations or [])),
         "inference": _jsonable(inference or {"status": "NOT_REQUESTED"}),
     }
@@ -90,6 +92,7 @@ def assemble_analysis(
     include_derivatives: bool = True,
     include_inference: bool = False,
     include_forecast: bool = False,
+    enable_agent_llm: bool | None = None,
     idempotency_key: str | None = None,
     created_at: datetime | None = None,
     observations: list[dict] | None = None,
@@ -110,6 +113,7 @@ def assemble_analysis(
             include_derivatives=include_derivatives,
             include_inference=include_inference,
             include_forecast=include_forecast,
+            enable_agent_llm=enable_agent_llm,
             observations=observations,
             inference={"status": "NOT_REQUESTED", "requested": False, "attempted": False, "produced": False, "interpretations": []},
             created_at=created_at,
@@ -198,6 +202,8 @@ def _public(report: dict) -> dict:
     body["paper_approved"] = False
     body["live_approved"] = False
     body["real_market_data_verified"] = False
+    body["live_trading_enabled"] = False
+    body["live_broker_routing_enabled"] = False
     body["confidence"] = None
     body["decision"] = "NO_TRADE"
     try:

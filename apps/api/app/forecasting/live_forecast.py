@@ -655,25 +655,40 @@ def fuse_agents_and_forecast(agent_rec: dict, forecast_item: dict) -> dict:
     raw_model_dir = forecast_item.get("direction", "UNKNOWN")
     p_up = forecast_item.get("probability_up")
 
-    # If model is unavailable or has no probability, do not fabricate fusion
-    if p_up is None or raw_model_dir == "UNKNOWN":
+    # If model is unavailable or has no probability, do not fabricate directional fusion
+    if p_up is None or raw_model_dir in {"UNKNOWN", "UNAVAILABLE"} or forecast_item.get("status") != "ACTIVE":
         return {
             "confluence_status": "NO_MODEL_FORECAST",
-            "fused_bias": agent_bias or "NEUTRAL",
-            "conviction": "STANDARD",
-            "confluence_summary": "No verified model forecast available to fuse with multi-agent consensus.",
+            "fused_bias": "NEUTRAL (NO VERIFIED FORECAST)",
+            "conviction": "UNAVAILABLE",
+            "confluence_summary": "No verified model forecast available. Directional trade action suppressed without empirical forecast authorization.",
+            "call": "STAND ASIDE (NO VERIFIED FORECAST)",
             "agent_score": agent_score,
             "model_probability_up": None,
-            "model_direction": "UNKNOWN",
-            "confidence_boost": 1.0,
+            "model_direction": "UNAVAILABLE",
+            "confidence_boost": 0.0,
         }
 
     p_up_pct = round(float(p_up) * 100.0, 1)
     p_down_pct = round((1.0 - float(p_up)) * 100.0, 1)
 
-    # Treat near-50/50 probabilities (48.0% - 52.0%) as neutral coin-flip so 49.8% does not trigger a false BEARISH divergence
+    # Treat near-50/50 probabilities (48.0% - 52.0%) as neutral coin-flip: NO directional edge
     if 0.48 <= float(p_up) <= 0.52:
         effective_model_dir = "NEUTRAL"
+        return {
+            "confluence_status": "DEADBAND",
+            "fused_bias": "NEUTRAL (MODEL DEADBAND 48%-52%)",
+            "conviction": "DEADBAND / NO EDGE",
+            "confluence_summary": (
+                f"Statistical model is directionally neutral ({p_up_pct}% P(Up) / {p_down_pct}% P(Down)). "
+                f"No statistically significant predictive edge exists. Stand aside."
+            ),
+            "call": "STAND ASIDE (DEADBAND)",
+            "agent_score": agent_score,
+            "model_probability_up": p_up,
+            "model_direction": "NEUTRAL",
+            "confidence_boost": 0.5,
+        }
     elif float(p_up) > 0.52:
         effective_model_dir = "BULLISH"
     else:
@@ -682,46 +697,42 @@ def fuse_agents_and_forecast(agent_rec: dict, forecast_item: dict) -> dict:
     # Confluence Check
     if agent_dir == "BULLISH" and effective_model_dir == "BULLISH":
         fused_bias = "STRONG BULLISH (QUANT CONFLUENCE)"
-        conviction = "HIGH CONFLUENCE"
+        conviction = "HIGH CONFLUENCE" if float(p_up) >= 0.55 and agent_score >= 2 else "MODERATE"
         confluence_status = "ALIGNED"
         confluence_summary = (
             f"High conviction confluence: Multi-Agent consensus (Score {agent_score:+d}) and "
             f"ML statistical forecast ({p_up_pct}% P(Up)) are aligned BULLISH."
         )
         boost = 1.2
+        call = agent_rec.get("call") or "BUY CE (CALL OPTION)"
     elif agent_dir == "BEARISH" and effective_model_dir == "BEARISH":
         fused_bias = "STRONG BEARISH (QUANT CONFLUENCE)"
-        conviction = "HIGH CONFLUENCE"
+        conviction = "HIGH CONFLUENCE" if float(p_up) <= 0.45 and agent_score <= -2 else "MODERATE"
         confluence_status = "ALIGNED"
         confluence_summary = (
             f"High conviction confluence: Multi-Agent consensus (Score {agent_score:+d}) and "
             f"ML statistical forecast ({p_down_pct}% P(Down)) are aligned BEARISH."
         )
         boost = 1.2
-    elif agent_dir != "NEUTRAL" and effective_model_dir != "NEUTRAL" and agent_dir != effective_model_dir:
-        fused_bias = f"{agent_bias} (MODEL DIVERGENCE)"
-        conviction = "CAUTIOUS / REDUCED LOTS"
+        call = agent_rec.get("call") or "BUY PE (PUT OPTION)"
+    else:
+        # Divergence detected: agent and model in conflict
+        fused_bias = f"STAND ASIDE (AGENT {agent_dir} / MODEL {effective_model_dir})"
+        conviction = "VETOED (DIVERGENCE)"
         confluence_status = "DIVERGENCE"
         confluence_summary = (
             f"Divergence detected: Multi-Agent stance is {agent_dir} (Score {agent_score:+d}), but statistical model "
-            f"warns of short-term {effective_model_dir} mean-reversion ({p_up_pct}% P(Up)). Exercise strict stops."
+            f"forecasts {effective_model_dir} ({p_up_pct}% P(Up)). Exercise strict risk control; directional execution blocked."
         )
-        boost = 0.8
-    else:
-        fused_bias = agent_bias or "NEUTRAL / SLIGHT BULLISH"
-        conviction = agent_rec.get("conviction") or "MODERATE"
-        confluence_status = "STANDARD"
-        confluence_summary = (
-            f"Standard confluence: Multi-Agent stance is {agent_dir} (Score {agent_score:+d}) "
-            f"with neutral ML statistical backdrop ({p_up_pct}% P(Up) / {p_down_pct}% P(Down))."
-        )
-        boost = 1.0
+        boost = 0.0
+        call = "STAND ASIDE (MODEL DIVERGENCE)"
 
     return {
         "confluence_status": confluence_status,
         "fused_bias": fused_bias,
         "conviction": conviction,
         "confluence_summary": confluence_summary,
+        "call": call,
         "agent_score": agent_score,
         "model_probability_up": p_up,
         "model_direction": effective_model_dir,

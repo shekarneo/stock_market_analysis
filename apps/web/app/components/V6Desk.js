@@ -2268,80 +2268,101 @@ function InstrumentDecisions({ selected, report }) {
                 </div>
               </div>
 
-              <div
-                className="decision-banner"
-                style={{
-                  background: !session.isOpen
-                    ? "rgba(15, 23, 42, 0.65)"
-                    : isBullish
-                    ? "rgba(16, 185, 129, 0.08)"
-                    : isBearish
-                    ? "rgba(244, 63, 94, 0.08)"
-                    : "rgba(245, 158, 11, 0.08)",
-                  border: `1px solid ${
-                    !session.isOpen
-                      ? "var(--line)"
-                      : isBullish
-                      ? "rgba(16, 185, 129, 0.3)"
-                      : isBearish
-                      ? "rgba(244, 63, 94, 0.3)"
-                      : "rgba(245, 158, 11, 0.3)"
-                  }`,
-                  borderRadius: "10px",
-                  padding: "10px 14px",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                  gap: "10px",
-                  margin: "12px 0",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-                  <span style={{
-                    fontSize: "0.92rem",
-                    fontWeight: 800,
-                    padding: "4px 12px",
-                    borderRadius: "6px",
-                    letterSpacing: "0.02em",
-                    background: !session.isOpen
-                      ? "rgba(255, 255, 255, 0.06)"
-                      : isBullish
-                      ? "rgba(16, 185, 129, 0.2)"
-                      : isBearish
-                      ? "rgba(244, 63, 94, 0.2)"
-                      : "rgba(245, 158, 11, 0.2)",
-                    color: !session.isOpen
-                      ? "var(--muted)"
-                      : isBullish
-                      ? "#34d399"
-                      : isBearish
-                      ? "#fb7185"
-                      : "#fbbf24",
-                    border: `1px solid ${
-                      !session.isOpen
-                        ? "var(--line)"
-                        : isBullish
-                        ? "rgba(16, 185, 129, 0.35)"
-                        : isBearish
-                        ? "rgba(244, 63, 94, 0.35)"
-                        : "rgba(245, 158, 11, 0.35)"
-                    }`,
-                  }}>
-                    {!session.isOpen
-                      ? "STAND ASIDE (MARKET CLOSED)"
-                      : (data.bias ? `SIGNAL: ${data.bias}` : "WAIT_FOR_CONFIRMATION")}
-                  </span>
-                  <span style={{ fontSize: "0.76rem", color: "var(--muted)" }}>
-                    {session.isOpen 
-                      ? "Multi-agent consensus active · Live market feed verified"
-                      : `Market Closed · Stand aside until session opens (${session.nextOpenText})`}
-                  </span>
-                </div>
-                <div style={{ display: "flex", gap: "8px", alignItems: "center", fontSize: "0.75rem", color: "var(--muted)" }}>
-                  <span>Risk Gate: <strong style={{ color: "#34d399" }}>PASS</strong></span>
-                </div>
-              </div>
+                  const consensusVetoes = Array.isArray(report?.consensus?.vetoes) ? report.consensus.vetoes : [];
+                  const isRiskVetoed = data.risk_veto?.vetoed || consensusVetoes.length > 0 || report?.decision === "NO_TRADE";
+                  const signalText = !session.isOpen
+                    ? "STAND ASIDE (MARKET CLOSED)"
+                    : isRiskVetoed
+                    ? "STAND ASIDE (SAFETY GATED / NO TRADE)"
+                    : (data.bias ? `SIGNAL: ${data.bias}` : "WAIT_FOR_CONFIRMATION");
+
+                  return (
+                    <div
+                      className="decision-banner"
+                      style={{
+                        background: !session.isOpen
+                          ? "rgba(15, 23, 42, 0.65)"
+                          : isRiskVetoed
+                          ? "rgba(245, 158, 11, 0.08)"
+                          : isBullish
+                          ? "rgba(16, 185, 129, 0.08)"
+                          : isBearish
+                          ? "rgba(244, 63, 94, 0.08)"
+                          : "rgba(245, 158, 11, 0.08)",
+                        border: `1px solid ${
+                          !session.isOpen
+                            ? "var(--line)"
+                            : isRiskVetoed
+                            ? "rgba(245, 158, 11, 0.3)"
+                            : isBullish
+                            ? "rgba(16, 185, 129, 0.3)"
+                            : isBearish
+                            ? "rgba(244, 63, 94, 0.3)"
+                            : "rgba(245, 158, 11, 0.3)"
+                        }`,
+                        borderRadius: "10px",
+                        padding: "10px 14px",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        flexWrap: "wrap",
+                        gap: "10px",
+                        margin: "12px 0",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                        <span style={{
+                          fontSize: "0.92rem",
+                          fontWeight: 800,
+                          padding: "4px 12px",
+                          borderRadius: "6px",
+                          letterSpacing: "0.02em",
+                          background: !session.isOpen
+                            ? "rgba(255, 255, 255, 0.06)"
+                            : isRiskVetoed
+                            ? "rgba(245, 158, 11, 0.2)"
+                            : isBullish
+                            ? "rgba(16, 185, 129, 0.2)"
+                            : isBearish
+                            ? "rgba(244, 63, 94, 0.2)"
+                            : "rgba(245, 158, 11, 0.2)",
+                          color: !session.isOpen
+                            ? "var(--muted)"
+                            : isRiskVetoed
+                            ? "#fbbf24"
+                            : isBullish
+                            ? "#34d399"
+                            : isBearish
+                            ? "#fb7185"
+                            : "#fbbf24",
+                          border: `1px solid ${
+                            !session.isOpen
+                              ? "var(--line)"
+                              : isRiskVetoed
+                              ? "rgba(245, 158, 11, 0.35)"
+                              : isBullish
+                              ? "rgba(16, 185, 129, 0.35)"
+                              : isBearish
+                              ? "rgba(244, 63, 94, 0.35)"
+                              : "rgba(245, 158, 11, 0.35)"
+                          }`,
+                        }}>
+                          {signalText}
+                        </span>
+                        <span style={{ fontSize: "0.76rem", color: "var(--muted)" }}>
+                          {session.isOpen 
+                            ? (report?.real_market_data_verified
+                                ? "Multi-agent consensus active · Live market feed verified"
+                                : "Multi-agent consensus active · Live provider quote (unverified provenance)")
+                            : `Market Closed · Stand aside until session opens (${session.nextOpenText})`}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", gap: "8px", alignItems: "center", fontSize: "0.75rem", color: "var(--muted)" }}>
+                        <span>Risk Gate: <strong style={{ color: isRiskVetoed ? "#fb7185" : "#34d399" }}>{isRiskVetoed ? `VETOED (${consensusVetoes.length || 1} Active)` : "PASS"}</strong></span>
+                      </div>
+                    </div>
+                  );
+                })()}
 
               {/* Actionable Option Trade Card Priority Placement */}
               {data.manual_trade_recommendation && (
@@ -2350,6 +2371,7 @@ function InstrumentDecisions({ selected, report }) {
                   meta={meta}
                   recommendation={data.manual_trade_recommendation}
                   dataClass={data.data_class}
+                  report={report}
                 />
               )}
 
@@ -2393,12 +2415,15 @@ function InstrumentDecisions({ selected, report }) {
   );
 }
 
-function ManualTradeCard({ instrument, meta, recommendation, dataClass }) {
+function ManualTradeCard({ instrument, meta, recommendation, dataClass, report }) {
   const { spots } = useMarketData();
   const [activeTab, setActiveTab] = useState("recommended");
   const [copiedContract, setCopiedContract] = useState("");
   const [watchState, setWatchState] = useState({});
   const session = getMarketSessionInfo(instrument);
+  const isCommodity = ["CRUDEOILMINI", "CRUDEMINI", "CRUDE", "GOLD", "SILVER"].includes(instrument);
+  const consensusVetoes = Array.isArray(report?.consensus?.vetoes) ? report.consensus.vetoes : [];
+  const isGated = !session.isOpen || report?.decision === "NO_TRADE" || consensusVetoes.length > 0 || recommendation.is_actionable === false || (recommendation.call && recommendation.call.includes("STAND ASIDE"));
 
   const liveSpot = (spots && (spots[instrument] || (instrument === "CRUDEMINI" ? spots["CRUDEOILMINI"] : null))) ?? recommendation.spot_price;
 
@@ -2444,11 +2469,21 @@ function ManualTradeCard({ instrument, meta, recommendation, dataClass }) {
     : recommendation.alt_option_type;
 
   const isCE = optType === "CE";
-  const pillClass = (recommendation.option_type || "").toUpperCase() === "CE"
+  const pillClass = isGated
+    ? "neutral"
+    : (recommendation.option_type || "").toUpperCase() === "CE"
     ? "ce"
     : (recommendation.option_type || "").toUpperCase() === "PE"
     ? "pe"
     : "neutral";
+
+  const pillText = !session.isOpen
+    ? "STAND ASIDE (MARKET CLOSED)"
+    : isGated
+    ? "STAND ASIDE (NO TRADE)"
+    : isCommodity
+    ? `⚡ FUTURES: ${recommendation.call}`
+    : (recommendation.call || "STAND ASIDE");
 
   const agentVotes = recommendation.agent_votes || [];
   const bullVotes = agentVotes.filter((v) => v.stance?.includes("BULLISH")).length;
@@ -2506,10 +2541,8 @@ function ManualTradeCard({ instrument, meta, recommendation, dataClass }) {
           <span style={{ fontSize: "0.72rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: "2px" }}>
             {session.isOpen ? "Combined Multi-Agent Trade Suggestion" : "Market Status (Execution Paused)"}
           </span>
-          <span className={`trade-call-pill ${!session.isOpen ? "neutral" : pillClass}`}>
-            {!session.isOpen
-              ? "STAND ASIDE (MARKET CLOSED)"
-              : (recommendation.call || "STAND ASIDE")}
+          <span className={`trade-call-pill ${pillClass}`}>
+            {pillText}
           </span>
         </div>
         <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap", fontSize: "0.82rem" }}>
@@ -2519,22 +2552,55 @@ function ManualTradeCard({ instrument, meta, recommendation, dataClass }) {
               <strong style={{ fontSize: "0.88rem" }}>₹{Number(liveSpot).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
             </div>
           )}
-          {recommendation.target_spot != null && (
-            <div style={{ background: "rgba(16,185,129,0.08)", padding: "4px 10px", borderRadius: "6px", border: "1px solid rgba(16,185,129,0.25)" }}>
-              <span style={{ color: "var(--muted)", fontSize: "0.72rem" }}>Target: </span>
-              <strong style={{ color: "#34d399", fontSize: "0.88rem" }}>₹{Number(recommendation.target_spot).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
-              <small style={{ color: "#34d399" }}> (+{recommendation.expected_move_points} pts)</small>
-            </div>
-          )}
-          {recommendation.stop_loss_spot != null && (
-            <div style={{ background: "rgba(244,63,94,0.08)", padding: "4px 10px", borderRadius: "6px", border: "1px solid rgba(244,63,94,0.25)" }}>
-              <span style={{ color: "var(--muted)", fontSize: "0.72rem" }}>SL: </span>
-              <strong style={{ color: "#fb7185", fontSize: "0.88rem" }}>₹{Number(recommendation.stop_loss_spot).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
-              <small style={{ color: "#fb7185" }}> (-{recommendation.stop_loss_points} pts)</small>
-            </div>
+          {isGated || recommendation.target_spot == null ? (
+            <>
+              <div style={{ background: "rgba(255,255,255,0.04)", padding: "4px 10px", borderRadius: "6px", border: "1px solid var(--line)" }}>
+                <span style={{ color: "var(--muted)", fontSize: "0.72rem" }}>Target: </span>
+                <strong style={{ color: "var(--muted)", fontSize: "0.88rem" }}>—</strong>
+                <small style={{ color: "var(--muted)" }}> (Gated)</small>
+              </div>
+              <div style={{ background: "rgba(255,255,255,0.04)", padding: "4px 10px", borderRadius: "6px", border: "1px solid var(--line)" }}>
+                <span style={{ color: "var(--muted)", fontSize: "0.72rem" }}>SL: </span>
+                <strong style={{ color: "var(--muted)", fontSize: "0.88rem" }}>—</strong>
+                <small style={{ color: "var(--muted)" }}> (Gated)</small>
+              </div>
+            </>
+          ) : (
+            <>
+              {recommendation.spot_price != null && (
+                <div style={{ background: "rgba(255,255,255,0.04)", padding: "4px 10px", borderRadius: "6px", border: "1px solid var(--line)" }} title="Exact snapshot spot price used to generate target and stop-loss">
+                  <span style={{ color: "var(--muted)", fontSize: "0.72rem" }}>Ref Spot: </span>
+                  <strong style={{ fontSize: "0.88rem" }}>₹{Number(recommendation.spot_price).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                </div>
+              )}
+              {(() => {
+                const refSpot = recommendation.spot_price ?? liveSpot;
+                const refDelta = Number((recommendation.target_spot - refSpot).toFixed(1));
+                const liveDelta = liveSpot != null ? Number((recommendation.target_spot - liveSpot).toFixed(1)) : null;
+                return (
+                  <div style={{ background: "rgba(16,185,129,0.08)", padding: "4px 10px", borderRadius: "6px", border: "1px solid rgba(16,185,129,0.25)" }}>
+                    <span style={{ color: "var(--muted)", fontSize: "0.72rem" }}>Target: </span>
+                    <strong style={{ color: "#34d399", fontSize: "0.88rem" }}>₹{Number(recommendation.target_spot).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                    <small style={{ color: "#34d399" }}> ({refDelta >= 0 ? `+${refDelta}` : refDelta} pts{liveDelta !== null && liveDelta !== refDelta ? ` | ${liveDelta >= 0 ? `+${liveDelta}` : liveDelta} live` : ""})</small>
+                  </div>
+                );
+              })()}
+              {(() => {
+                const refSpot = recommendation.spot_price ?? liveSpot;
+                const refDelta = Number((recommendation.stop_loss_spot - refSpot).toFixed(1));
+                const liveDelta = liveSpot != null ? Number((recommendation.stop_loss_spot - liveSpot).toFixed(1)) : null;
+                return (
+                  <div style={{ background: "rgba(244,63,94,0.08)", padding: "4px 10px", borderRadius: "6px", border: "1px solid rgba(244,63,94,0.25)" }}>
+                    <span style={{ color: "var(--muted)", fontSize: "0.72rem" }}>SL: </span>
+                    <strong style={{ color: "#fb7185", fontSize: "0.88rem" }}>₹{Number(recommendation.stop_loss_spot).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                    <small style={{ color: "#fb7185" }}> ({refDelta >= 0 ? `+${refDelta}` : refDelta} pts{liveDelta !== null && liveDelta !== refDelta ? ` | ${liveDelta >= 0 ? `+${liveDelta}` : liveDelta} live` : ""})</small>
+                  </div>
+                );
+              })()}
+            </>
           )}
           <span className="bias-badge neutral" style={{ fontWeight: 700, padding: "4px 10px" }}>
-            {recommendation.conviction || "MODERATE"} CONVICTION
+            {isGated ? "NO TRADE / GATED" : `${recommendation.conviction || "MODERATE"} CONVICTION`}
           </span>
         </div>
       </div>
@@ -2647,7 +2713,11 @@ function ManualTradeCard({ instrument, meta, recommendation, dataClass }) {
       {/* Option Picks Switcher */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "6px" }}>
         <span style={{ fontSize: "0.72rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-          Top 5 Ranked Strikes {!session.isOpen ? "(Next-Session Model Estimates)" : "for Manual Trade"}
+          {isCommodity
+            ? "⚡ Futures Action Active · Option Chain Estimates (Catalog Reference Only)"
+            : (!session.isOpen
+                ? "Top 5 Ranked Strikes (Next-Session Model Estimates)"
+                : "Top 5 Ranked Strikes for Manual Trade")}
         </span>
         <div className="picks-switcher">
           <button
@@ -2655,14 +2725,14 @@ function ManualTradeCard({ instrument, meta, recommendation, dataClass }) {
             className={activeTab === "recommended" ? "active" : ""}
             onClick={() => setActiveTab("recommended")}
           >
-            Recommended ({recommendation.option_type || "CE"} · {recommendation.top_5_options?.length || 0} Strikes)
+            {isCommodity ? "Call Option Catalog" : "Recommended"} ({recommendation.option_type || "CE"} · {recommendation.top_5_options?.length || 0} Strikes)
           </button>
           <button
             type="button"
             className={activeTab === "alternate" ? "active" : ""}
             onClick={() => setActiveTab("alternate")}
           >
-            Hedge / Alternate ({recommendation.alt_option_type || "PE"} · {recommendation.alternate_options?.length || 0} Strikes)
+            {isCommodity ? "Put Option Catalog" : "Hedge / Alternate"} ({recommendation.alt_option_type || "PE"} · {recommendation.alternate_options?.length || 0} Strikes)
           </button>
         </div>
       </div>

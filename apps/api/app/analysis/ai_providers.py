@@ -567,6 +567,7 @@ class AIProviderRegistry:
     """Registry managing available AI model provider instances."""
 
     _providers: dict[str, BaseAIModelProvider] = {}
+    _custom_registered: set[str] = set()
 
     AUTO_REROUTE_CANDIDATES: list[tuple[str, str]] = [
         ("gemini", "gemini-flash-lite-latest"),
@@ -583,6 +584,10 @@ class AIProviderRegistry:
         "MISSING_API_KEY",
         "invalid_api_key",
         "HTTP_401",
+        "429",
+        "HTTP_429",
+        "RESOURCE_EXHAUSTED",
+        "rate_limit_exceeded",
     }
 
     @staticmethod
@@ -612,7 +617,9 @@ class AIProviderRegistry:
 
     @classmethod
     def register_provider(cls, name: str, provider: BaseAIModelProvider) -> None:
-        cls._providers[name.lower().strip()] = provider
+        clean = name.lower().strip()
+        cls._custom_registered.add(clean)
+        cls._providers[clean] = provider
 
     @classmethod
     def generate_with_fallback(

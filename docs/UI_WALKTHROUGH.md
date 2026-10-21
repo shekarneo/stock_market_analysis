@@ -155,21 +155,50 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
      - Embedded directly on the overview desk to provide visual price context.
      - Renders verified historical candlesticks (selectable 20, 35, or 50 bars), live streaming spot quotes, vertical cyan `NOW (Live Spot)` boundary line, forward projected 4-step trajectory path, expanding $\pm 1\sigma$ volatility confidence corridor, and target/stop badges.
   4. **Visual Multi-Agent Decision & Execution Cockpit (`<VisualAgentDecisionCard />`)**:
-     - **Purpose**: Translates complex 12-agent mathematical, macro, order flow, and regime assessments into high-impact visual indicators, meters, and cards instead of dense text paragraphs.
+     - **Purpose**: Translates complex mathematical, macro, order flow, and regime assessments across 8 implemented LangGraph specialist agents and 4 research reference desks into high-impact visual indicators, meters, and cards instead of dense text paragraphs.
      - **Execution & Context Toolbar**:
+       - `Badge Row`: `🤖 8 SPECIALIST AGENTS · 4 RESEARCH DESKS` and `DETERMINISTIC CONSENSUS` clearly distinguishing implemented agents from research reference entries.
+       - `Active Underlying Indicator`: Displays current symbol (e.g. `NIFTY`).
+       - `Analysis Cycle ID & Timestamp Badge`: Displays `🕒 Cycle: [id] · HH:MM:SS IST` dynamically when analysis is available, explicitly binding consensus score, uncertainty, vetoes, and forecast probability to the active evaluation cycle.
        - `Instrument Selector Chips`: Instant toggles for `NIFTY`, `SENSEX`, and `CRUDE` syncing with `MarketDataContext`.
-       - `⚡ Run Live Analysis` Button: One-click CTA that triggers on-demand `POST /api/market-analysis` across all 12 specialist agents and simultaneously refetches the live statistical forecast (`/api/forecasting/live-trend-chart`) for the selected model with an animated loading spinner.
-       - `🔬 Detailed Desk ▾` Quick Button: Instantly expands into the detailed 12-agent analysis desk.
+       - `⚡ Run Live Analysis` Button: One-click CTA that triggers on-demand `POST /api/market-analysis` across all 8 specialist agents and simultaneously refetches the live statistical forecast (`/api/forecasting/live-trend-chart`) for the selected model with an animated loading spinner (`Synthesizing Specialists…`).
+       - `🔬 Detailed Desk ▾` Quick Button: Instantly expands into the detailed 8-agent analysis desk.
      - **Visual Executive Verdict Deck**:
-       - `Core Trade Decision Card`: High-impact stance badge (`🟢 STRONG BUY CE`, `🔴 STRONG BUY PE`, `🟡 STAND ASIDE · NO TRADE`) with deadband and safety gate indicators.
-       - `Consensus Spectrum Meter`: Horizontal visual spectrum bar (-10 to +10) with Red-to-Green gradient and dynamic pointer showing exact net directional score (e.g. `+3.5 Bullish` or `0.0 Neutral`).
-       - `Bayesian Epistemic Gate Meter`: Safety progress bar comparing composite epistemic uncertainty against the strict `0.65` cutoff threshold (`✓ Uncertainty Safe` vs `⚠️ Safety Veto Engaged`).
-       - `Quant-Agent Confluence Card`: Visual confluence badge comparing machine learning calibrated probabilities (e.g. `53.4% P(Up)`) against specialist consensus to flag alignment or veto divergence (`🟢 High Confluence (Long)`, `🔴 High Confluence (Short)`, or `🔵 Deadband (48%–52%)`). Explicitly displays the active model name (e.g. `ML Model: CHRONOS · 19 Folds Walk-Forward` or `ML Model: LIGHTGBM`) dynamically synchronized with the user's selected forecasting model. Safely parses both scalar probabilities and structured probability objects (`{ up, down, direction }`) to prevent `NaN%` degradation.
-     - **12 Specialist Perspectives Visual Grid**:
-       - Displays all 12 quantitative specialist agents (News Sentiment 📰, Global Macro 🌐, Intermarket & MCX 🛢️, Order Flow 📊, Options & Greeks ⚡, Trend & Momentum 📈, Mean Reversion 🔄, HTF Resampling ⏱, Quant ML Forecaster 🔬, Bayesian Gate 🛡️, Expected Payoff 💰, Consensus Arbiter ⚖️).
-       - Each card features: Agent Icon, Agent Name, Sub-Role, Visual Stance Badge (`BULLISH` in green, `BEARISH` in red, `NEUTRAL` in gray), and a visual confidence progress bar with percentage readout.
+       - `Core Trade Decision Card`: High-impact stance badge (`AWAITING ANALYSIS (NO TRADE)` prior to running, or `STAND ASIDE (NO TRADE)`, `🟢 STRONG BUY CE`, `🔴 STRONG BUY PE` post-run). When backend decision is `NO_TRADE`, or any active gating vetoes are present, strictly preserves `STAND ASIDE (NO TRADE)` and disables trade action eligibility. Includes strict execution gating status badge (`⏸ Awaiting Analysis Cycle` when idle, `🔒 Deadband / Safety Gated (NO TRADE)` when gated or vetoed, or `🔒 Live Routing Disabled (Paper Only)`). Never falsely claims active live execution.
+       - `Consensus Spectrum Meter`: Horizontal visual spectrum bar (-1.0 to +1.0) with Red-to-Green gradient and dynamic pointer showing exact net directional score (e.g. `+0.45 Bullish`, `0.00 Neutral`, or `— Not Run` prior to analysis execution).
+       - `Bayesian Epistemic Gate Meter`: Safety progress bar comparing composite epistemic uncertainty against the backend's true `0.45` cutoff threshold (`✓ Uncertainty Safe` vs `⚠️ Safety Veto Engaged`, or `UNAVAILABLE / 0.45 Limit` prior to execution).
+       - `Quant-Agent Confluence Card`: Visual confluence badge comparing machine learning probabilities (e.g. `50% P(Up)`) against specialist consensus to flag alignment or veto divergence (`🟢 High Confluence (Long)`, `🔴 High Confluence (Short)`, or `🔵 Neutral Deadband (48%–52%)`). Explicitly displays the active model name (e.g. `ML Model: CHAMPION · 15m Horizon`). Strictly anchors P(Up) to the report's active cycle to prevent cross-cycle mixing with asynchronous background queries. When not yet evaluated, displays `— P(Up)` and `⏸ Awaiting Forecast Data`.
+     - **Active Risk & Quorum Vetoes Alert Banner**:
+       - Appears dynamically whenever one or more deterministic risk or participation vetoes fire.
+       - Header: `🛡️ ACTIVE GATING VETOES (X Triggered — All Trades Blocked)`.
+       - Renders individual crimson code tags for every active veto (e.g., `⛔ INSUFFICIENT_DIRECTIONAL_PARTICIPATION`, `⛔ EXCESSIVE_EPISTEMIC_UNCERTAINTY`, `⛔ CORE_SPECIALIST_CONFLICT`, `⛔ REGIME_SIDEWAYS_CONSOLIDATION`, `⛔ UNVERIFIED_DATA_PROVENANCE`, `⛔ INSUFFICIENT_SPECIALIST_WEIGHT`).
+     - **Execution Dimensions & Quorum Truth Strip**: Dedicated telemetry row detailing all execution dimensions and specialist quorum:
+       - `● Ingestion: Active`: Indicates live quote ingestion is actively streaming spot snapshots.
+       - `● Forecast: Evaluated (M15)` / `● Forecast: Snapshot Ready` / `○ Forecast: Pending`: Reflects whether M15 statistical forecasting has run.
+       - `● Paper Execution: Disarmed / Gated`: Truthfully indicates experimental paper trading is disarmed.
+       - `🔒 Live Broker: Hard Locked (Blocked)`: Invariant fail-closed lock asserting that real broker routing is unconditionally blocked.
+       - `● Quorum: X/6 Reporting`: Displays reporting specialists out of configured quorum denominator (6).
+       - `● Participation: Y Voters (Z% / Min 33%)`: Reports count of active directional voters ($N_{\text{dir}}$) and directional participation rate ($R_{\text{part}}$) relative to the mandatory 33% threshold. Highlighted emerald when $\ge 33\%$, amber when below.
+       - `○ Fallback: N`: Appears when specialists (such as unconfigured options) return static/fallback responses without fresh market evidence.
+       - `⚠️ Missing: M`: Appears if any configured specialists failed to report.
+       - `Σ W_eff: W.ww`: Displays point-in-time total effective quality-weighted specialist weight.
+       - `● Cycle: [id] (HH:MM:SS IST)`: Confirms the exact cycle timestamp to rule out stale or mixed-cycle telemetry.
+     - **8 Implemented Specialists & 4 Research Desks Grid**:
+       - Header: Displays `👥 8 Specialist Agents · 4 Research Desks` and dynamic online counter (`X/8 Implemented Online` or `0/8 Online · Awaiting Run`).
+       - `Implemented Specialist Agents (8)`: News Sentiment 📰 (`Specialist Agent`), Global Macro 🌐 (`Specialist Agent`), Order Flow 📊 (`Specialist Agent`), Options & Greeks ⚡ (`Specialist Agent`), Trend & Momentum 📈 (`Specialist Agent`), Quant ML Forecaster 🔬 (`Specialist Agent`), Bayesian Gate 🛡️ (`Specialist Agent`), Consensus Arbiter ⚖️ (`Specialist Agent`).
+       - `Research & Catalog Reference Desks (4)`: Intermarket & MCX 🛢️ (`Catalog Ref`), Mean Reversion 🔄 (`Catalog Ref`), HTF Resampling ⏱ (`Catalog Ref`), Expected Net Payoff 💰 (`Payoff Model`).
+       - `Specialist Semantic Metadata & Weight Badges`:
+         - `Uncalibrated ML Prob` (Purple badge): Displays for `quant_forecast_analyst`, explicitly designating walk-forward tree probabilities as uncalibrated. Never labeled as calibrated.
+         - `Heuristic Signal` (Cyan badge): Displays for rule-based heuristics (`technical_analyst`, `global_macro_analyst`, `news_event_analyst`).
+         - `Static Default` (Slate badge): Displays for specialists reporting static/fallback catalog defaults.
+         - `W_eff: 0.0 (Fallback)` (Crimson badge): Displays when options chain data is unavailable, confirming zero effective weight in consensus aggregation.
+         - `W_eff: X.XX` (Slate badge): Displays exact quality-weighted effective specialist weight.
+         - Dynamic metric row: Displays `Probability` for statistical model outputs, and `Confidence / Score` for heuristic and static specialists.
+       - `Data-Integrity Behavior`:
+         - Pre-run state: Implemented agents display `NOT RUN` with `—` confidence. Catalog references display `UNIMPLEMENTED` or `UNAVAILABLE`. No fake default stances or fabricated percentages.
+         - Post-run state: Expected Net Payoff displays `UNAVAILABLE` with `Options EV Unavailable` and `—` confidence, truthfully reporting that options pricing is disabled. Catalog references display `CATALOG ONLY`. Implemented agents display verified directional stances, confidences, semantic pills, and effective weights.
        - `Grid / Compact View Toggle`: Allows switching between a detailed grid view and a space-saving compact matrix.
-     - **Bottom Expand CTA Button**: `🔬 Expand Detailed 12-Agent Analysis Desk & Full Audit Dossier (Stages 0–14) ▾` switches the view to the detailed institutional analysis desk.
+     - **Bottom Expand CTA Button**: `🔬 Expand Detailed 8-Agent Analysis Desk & Full Audit Dossier (Stages 0–14) ▾` switches the view to the detailed institutional analysis desk.
   5. **Visual Order Ticket (`<TradeTicket />`)**:
      - Clean, focused order ticket showing current recommendation (`STAND ASIDE`), live Groww spot reference tag, side, structure, paper capital, and paper book readiness.
      - `Signal Status Badge`: Visually highlights paper filter qualification status.
@@ -217,14 +246,16 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   1. `🎯 Trade Decisions & Options`: Real spot-based option picks (ATM/OTM/ITM), strike targets, stop losses, and agent consensus. When Quant Fusion is active, embeds `<PredictedTrendChart />` right above the decision matrix for instant trajectory and strike verification.
      - **Decision Matrix & Option Recommendations Section (`InstrumentDecisions`)**:
        - `Section Header & Focus Filter`: Prominently titled with `⚡ OPTION RECOMMENDATIONS` badge and an instrument focus bar (`All Instruments (X)` or single-instrument filter pills with live spot prices).
-       - `Instrument Card Header`: Displays the instrument name, exchange badge (e.g., `NSE`, `BSE`, `MCX`), live session status indicator (`🟢 Live Trading Session Active` or `🌙 Closed`), real-time Spot LTP in prominent typography with decimal precision, and data provenance badge (`🟢 LIVE FEED` / `MISSING DATA`).
-       - `Executive Verdict Banner`: High-contrast, theme-matched signal card displaying the directional verdict (`🟢 SIGNAL: BUY_CE`, `🔴 SIGNAL: BUY_PE`, `🟡 STAND ASIDE (MARKET CLOSED)` or `WAIT_FOR_CONFIRMATION`), multi-agent verification status, and fail-closed risk gate clearance (`Risk Gate: PASS`).
+       - `Instrument Card Header`: Displays the instrument name, exchange badge (e.g., `NSE`, `BSE`, `MCX`), live session status indicator (`🟢 Live Trading Session Active` or `🌙 Closed`), real-time Spot LTP in prominent typography with decimal precision, and data provenance badge (`🟢 LIVE FEED (UNVERIFIED PROVENANCE)` / `MISSING DATA`).
+       - `Executive Verdict Banner`: High-contrast, theme-matched signal card displaying the directional verdict (`🟢 SIGNAL: BUY_CE`, `🔴 SIGNAL: BUY_PE`, `🟡 STAND ASIDE (MARKET CLOSED)` or `🟡 STAND ASIDE (SAFETY GATED / NO TRADE)`), multi-agent verification status, and fail-closed risk gate clearance badge (`🛡️ Risk Gate: PASS` or `🛡️ Risk Gate: VETOED (X Active)`). When consensus vetoes are active or the consensus decision is `NO_TRADE`, the banner locks to `STAND ASIDE` to prevent conflicting rogue signals.
        - `Collapsible Regime Triggers & Invalidation Drawer (`<details className="intelligence-drawer">`)`: Replaces bulky text walls with an elegant expandable accordion (`📋 Regime Triggers & Invalidation Framework (Regime: <REGIME>)`). When expanded, displays the Regime Summary, Bullish Breakout Trigger (`▲`), Bearish Breakdown Trigger (`▼`), and Thesis Invalidation Criteria (`⚠️`).
      - **Actionable Option Trade Card (`ManualTradeCard`)**:
        - `Market Closed Settlement Banner`: Displayed when session is closed, explaining that spot is the official closing settlement and option premiums are next-session Black-Scholes planning estimates.
-       - `Trade Hero Strip`: Features the large directional Call Pill (`BUY CE` in green, `BUY PE` in red, `STAND ASIDE` in amber), underlying spot chip, Target Spot chip with positive points gain, Stop-Loss Spot chip with points risk, and Conviction badge (`HIGH / MODERATE / CAUTION`).
+       - `Commodity Futures Notice Banner`: For commodities like `CRUDEOILMINI`, displays a distinct `⚡ FUTURES: <CONTRACT>` banner specifying that outright futures is the recommended instrument, and clearly notes that the options table below is provided for catalog reference only.
+       - `Trade Hero Strip`: Features the large directional Call Pill (`BUY CE` in green, `BUY PE` in red, `BUY_FUT` in cyan, `STAND ASIDE` in amber), underlying spot chip, snapshot reference spot chip (`Ref Spot: ₹<spot>`), Target Spot chip with positive points gain and dynamic live delta (`+X pts from ref | +Y live`), Stop-Loss Spot chip with points risk and dynamic live delta (`-X pts from ref | -Y live`), and Conviction badge (`HIGH`, `STANDARD`, `DEADBAND / NO EDGE`, `UNAVAILABLE`, or `NO TRADE / GATED`). When gated under consensus vetoes, Target and Stop display `— (Gated)` to eliminate speculative targets.
        - `Agent Consensus Breakdown Ribbon`: Visual vote tally (`X Bullish · Y Bearish · Z Neutral`) followed by a compact horizontal ribbon of mini-chips for each participating specialist agent with color-coded stance badges and hover explanation tooltips.
-       - `Quant-Agent Fusion Confluence Bar`: Sleek horizontal bar displaying alignment status (`🟢 HIGH CONFLUENCE`, `⚠️ DIVERGENCE (VETO RISK)`, or `🔵 STANDARD CONFLUENCE`), ML walk-forward calibrated probability (`<P>% P(Up)`), signed Agent consensus score (`+X` / `-Y`), and one-line qualitative takeaway.
+       - `Quant-Agent Fusion Confluence Bar`: Sleek horizontal bar displaying alignment status (`🟢 HIGH CONFLUENCE`, `⚠️ DIVERGENCE (VETO RISK)`, `🔵 STANDARD CONFLUENCE`, `🟡 MODEL DEADBAND (48%-52%)`, or `⚪ NO VERIFIED FORECAST`), ML walk-forward calibrated probability (`<P>% P(Up)`), signed Agent consensus score (`+X` / `-Y`), and one-line qualitative takeaway. If the forecast is in the deadband (48%–52%) or missing, fusion strictly locks the stance to `STAND ASIDE`.
+       - `Authoritative Consensus Synchronization`: If the consensus engine emits `NO_TRADE` or active vetoes exist, all market cards override legacy heuristics and enforce `STAND ASIDE (NO TRADE)` with `is_actionable = false`.`
        - `Option Picks Switcher`: Toggle between `Recommended (<TYPE> · 5 Strikes)` and `Hedge / Alternate (<ALT_TYPE> · 5 Strikes)`.
        - `Top 5 Ranked Strikes Table`: Clean tabular view with columns `# Strike & Contract` (with ATM/OTM role tags), `Moneyness` badge, `Delta (Δ)`, `Est. Entry Premium`, `Est. Target Premium`, `Est. Stop Premium`, `Risk:Reward Ratio`, `1 Lot Capital & Max Loss/Gain`, and Action CTAs:
          - `Copy` button: Copies contract entry, target, and stop loss specifications to clipboard with instant `"Copied!"` feedback.
@@ -315,13 +346,14 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
 #### 3. Tradable Underlyings Bot Matrix
 - 3 dedicated execution cards for **NIFTY 50**, **BSE SENSEX**, and **CRUDEOIL MINI**.
 - Each card displays:
-  - Real-time Spot LTP and change.
-  - Trading session hours and market state.
-  - Multi-Agent Signal badge (`STRONG_BUY_CE`, `BUY_CE`, `WAIT`, `BUY_PE`, `STRONG_BUY_PE`).
-  - Directional Confidence Score (%) and primary drivers.
-  - Option trade pick with strike, expiry, target spot, stop-loss spot, and estimated premium.
-  - **`+ Add to Watchlist` Button**: Enrolls the trade in the accuracy tracker.
-  - **`⚡ Execute Trade Now` Button**: Submits the order to the active execution mode (Paper or Live).
+  - Real-time Spot LTP and change, alongside snapshot reference spot (`Ref: ₹<price>`).
+  - Trading session hours, exchange tag (`NSE`, `BSE`, `MCX`), and session market state.
+  - Commodity Instrument Tag: Dedicated `⚡ FUTURES` badge appears for MCX commodities (e.g. `CRUDEOILMINI`), recommending outright futures contracts (`CRUDEOILMINI FUTURES`) rather than call options.
+  - Multi-Agent Bias & Signal: Stance badge (`STAND ASIDE (NO TRADE)`, `BUY_CE`, `BUY_PE`, `BUY_FUT`, or `SELL_FUT`). When the backend decision is `NO_TRADE` or active consensus vetoes exist, strictly enforces `STAND ASIDE (NO TRADE)` in red.
+  - Target & Stop-Loss Points: Anchored to reference spot with dynamic live spot delta (`Target: ₹23,079.90 (+129.7 pts ref | +144.6 live)` and `Stop: ₹22,885.40 (-64.8 pts ref | -49.9 live)`). When gated under consensus vetoes, displays `— (Gated)` to eliminate speculative execution targets.
+  - **`+ Watch & Score` Button**: Enrolls the trade into the live accuracy tracker. Disabled with `not-allowed` cursor when gated by consensus vetoes. Automatically records `data_class: "UNVERIFIED_PROVIDER_DATA"` to preserve data provenance integrity.
+  - **`⚡ Fire & Auto-Add / Active Order` Button**: Submits simulated broker orders. When consensus vetoes are active or the decision is `NO_TRADE`, transforms into a disabled `🔒 Gated (<Conviction>)` button, preventing rogue orders.
+  - **Autonomous Bot Safety Gate**: The background auto-trading routine (`triggerAutoTradingScan`) strictly aborts without placing orders or polluting the watchlist whenever `analysisData.decision === "NO_TRADE"` or `rec.is_actionable === false`.
 
 #### 4. Live Watchlist & Active Order Book
 - **Status Filter Tabs**: `ALL`, `OPEN`, `TARGET_HIT`, `SL_HIT`, `EXPIRED`.

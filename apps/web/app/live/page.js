@@ -428,6 +428,11 @@ export default function LiveTradingPage() {
     }
 
     try {
+      if (rec?.is_actionable === false || rec?.call?.includes("STAND ASIDE")) {
+        setActionNotice(`⚠️ Trade rejected: Consensus risk gate is active (${rec?.conviction || "STAND ASIDE"}).`);
+        setTimeout(() => setActionNotice(""), 3500);
+        return false;
+      }
       const liveSpotPrice = getSpot(inst) || rec?.spot_price;
       const payload = {
         instrument: inst,
@@ -437,7 +442,7 @@ export default function LiveTradingPage() {
         entry_spot: liveSpotPrice,
         target_points: rec?.expected_move_points || (inst === "NIFTY" ? 80 : inst === "SENSEX" ? 250 : 50),
         stop_loss_points: rec?.stop_loss_points || (inst === "NIFTY" ? 40 : inst === "SENSEX" ? 120 : 25),
-        data_class: "VERIFIED_LIVE_DATA",
+        data_class: rec?.data_class || "UNVERIFIED_PROVIDER_DATA",
         model_premiums: {
           strike: pick?.strike || rec?.atm_strike,
           moneyness: pick?.moneyness || "ATM",
@@ -469,17 +474,18 @@ export default function LiveTradingPage() {
   // Auto-scan routine for autonomous bot
   const triggerAutoTradingScan = useCallback(() => {
     if (killSwitchTriggered) return;
+    if (analysisData?.decision === "NO_TRADE") return;
     ["NIFTY", "SENSEX", "CRUDEOILMINI"].forEach((inst) => {
       const m = getMarketAnalysis(inst);
       const rec = m?.manual_trade_recommendation;
-      if (rec && rec.top_5_options?.[2]) {
+      if (rec && rec.is_actionable !== false && rec.call && !rec.call.startsWith("STAND ASIDE") && rec.top_5_options?.[2]) {
         const pick = rec.top_5_options[2];
         if (autoAddToWatchlist) {
           addTradeToWatchlist(inst, pick, rec);
         }
       }
     });
-  }, [killSwitchTriggered, autoAddToWatchlist, getMarketAnalysis, addTradeToWatchlist]);
+  }, [killSwitchTriggered, analysisData, autoAddToWatchlist, getMarketAnalysis, addTradeToWatchlist]);
 
   // When live quotes sync or analysis arrives, auto-scan if auto trading is enabled
   useEffect(() => {
@@ -560,6 +566,12 @@ export default function LiveTradingPage() {
   };
 
   const handleFireOrderAndWatch = async (inst, side, contract, price, rec) => {
+    if (rec?.is_actionable === false || rec?.call?.includes("STAND ASIDE") || side?.includes("STAND ASIDE")) {
+      setActionNotice(`⚠️ Trade blocked: Consensus risk gate active (${rec?.conviction || "STAND ASIDE"}). Execution disallowed.`);
+      setTimeout(() => setActionNotice(""), 4500);
+      return;
+    }
+
     const session = getSessionStatus(inst);
     if (!session.isOpen && executionMode === "LIVE") {
       setActionNotice(`Cannot place live order: ${session.exchange} market is currently closed.`);
@@ -1150,9 +1162,17 @@ export default function LiveTradingPage() {
             {underlyings.map((u) => {
               const spotText = u.spot ? `₹${u.spot.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "Loading...";
               const rec = u.analysis?.manual_trade_recommendation;
+              const isGated = rec?.is_actionable === false || rec?.call?.includes("STAND ASIDE") || analysisData?.decision === "NO_TRADE";
+              const isFutures = rec?.contract_type === "FUTURES" || COMMODITY_SET.has(u.symbol);
               const topPick = rec?.top_5_options?.[2] || rec?.top_5_options?.[0];
-              const plannedPick = topPick?.contract || `${u.symbol} ATM`;
-              const side = rec?.option_type === "PE" ? "BUY_PE" : "BUY_CE";
+              const plannedPick = isFutures
+                ? (rec?.contract || `${u.symbol} FUTURES`)
+                : (topPick?.contract || `${u.symbol} ATM`);
+              const side = isGated
+                ? (rec?.call || "STAND ASIDE (NO TRADE)")
+                : (isFutures
+                    ? (rec?.call?.includes("SELL") ? "SELL_FUT" : "BUY_FUT")
+                    : (rec?.option_type === "PE" ? "BUY_PE" : "BUY_CE"));
               const targetSpot = rec?.target_spot;
               const stopLossSpot = rec?.stop_loss_spot;
               const expPts = rec?.expected_move_points;
@@ -1164,7 +1184,7 @@ export default function LiveTradingPage() {
                   key={u.symbol}
                   style={{
                     background: "var(--card, #0f172a)",
-                    border: "1px solid var(--line)",
+                    border: isGated ? "1px solid rgba(244, 63, 94, 0.3)" : "1px solid var(--line)",
                     borderRadius: "12px",
                     padding: "16px 18px",
                     boxShadow: "var(--shadow)",
@@ -1175,9 +1195,19 @@ export default function LiveTradingPage() {
                       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                         <strong style={{ fontSize: "1.1rem", color: "var(--ink, #f8fafc)" }}>{u.name}</strong>
                         <span style={{ fontSize: "0.75rem", color: "var(--muted)", background: "rgba(255, 255, 255, 0.08)", border: "1px solid var(--line)", padding: "2px 6px", borderRadius: "4px" }}>{u.exchange}</span>
+                        {isFutures && (
+                          <span style={{ fontSize: "0.7rem", color: "#38bdf8", background: "rgba(56, 189, 248, 0.15)", border: "1px solid rgba(56, 189, 248, 0.3)", padding: "2px 6px", borderRadius: "4px", fontWeight: 700 }}>
+                            ⚡ FUTURES
+                          </span>
+                        )}
                       </div>
                       <div style={{ fontSize: "1.25rem", fontWeight: 700, color: "var(--ink, #f8fafc)", marginTop: "2px" }}>
                         {spotText}
+                        {rec?.reference_spot != null && (
+                          <span style={{ display: "inline-block", marginLeft: "8px", fontSize: "0.72rem", color: "var(--muted)", fontWeight: 500 }}>
+                            (Ref: ₹{Number(rec.reference_spot).toLocaleString("en-IN")})
+                          </span>
+                        )}
                         {!u.session.isOpen && (
                           <span style={{ display: "block", fontSize: "0.68rem", color: "var(--muted)", fontWeight: 500, marginTop: "1px" }}>
                             Official Close · Context Retained
@@ -1216,16 +1246,16 @@ export default function LiveTradingPage() {
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "3px" }}>
                       <span style={{ color: "var(--muted)" }}>Multi-Agent Bias:</span>
                       <strong style={{
-                        color: rec?.bias?.includes("BULLISH") ? "#34d399" : rec?.bias?.includes("BEARISH") ? "#f87171" : "#60a5fa"
+                        color: isGated ? "#f87171" : rec?.bias?.includes("BULLISH") ? "#34d399" : rec?.bias?.includes("BEARISH") ? "#f87171" : "#60a5fa"
                       }}>
-                        {rec?.bias || "AWAITING TRIGGER"}
+                        {isGated ? (rec?.conviction || "STAND ASIDE (NO TRADE)") : (rec?.bias || "AWAITING TRIGGER")}
                       </strong>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "3px" }}>
                       <span style={{ color: "var(--muted)" }}>Planned Contract:</span>
                       <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                         <strong style={{ color: "#38bdf8" }}>{plannedPick}</strong>
-                        {topPick?.expiry_date && (
+                        {!isFutures && topPick?.expiry_date && (
                           <span style={{ display: "inline-block", background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", padding: "1px 5px", borderRadius: "3px", fontSize: "0.68rem", fontWeight: 700 }}>
                             Exp: {formatExpiry(topPick.expiry_date)}
                           </span>
@@ -1234,11 +1264,35 @@ export default function LiveTradingPage() {
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "3px" }}>
                       <span style={{ color: "var(--muted)" }}>Execution Signal:</span>
-                      <strong style={{ color: side.includes("BUY") ? "#34d399" : "#f87171" }}>{side}</strong>
+                      <strong style={{ color: isGated ? "#f87171" : side.includes("BUY") ? "#34d399" : "#f87171" }}>
+                        {side}
+                      </strong>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.76rem", color: "var(--muted)", borderTop: "1px dashed var(--line)", paddingTop: "4px", marginTop: "4px" }}>
-                      <span>Target: <strong style={{ color: "var(--ink, #f8fafc)" }}>{targetSpot != null ? `₹${Number(targetSpot).toLocaleString("en-IN")}` : expPts != null ? `+${expPts} pts` : "Awaiting feed"}</strong></span>
-                      <span>Stop: <strong style={{ color: "var(--ink, #f8fafc)" }}>{stopLossSpot != null ? `₹${Number(stopLossSpot).toLocaleString("en-IN")}` : slPts != null ? `-${slPts} pts` : "Awaiting feed"}</strong></span>
+                      <span>
+                        Target:{" "}
+                        <strong style={{ color: "var(--ink, #f8fafc)" }}>
+                          {isGated
+                            ? "— (Gated)"
+                            : targetSpot != null
+                            ? `₹${Number(targetSpot).toLocaleString("en-IN")}${expPts != null ? ` (+${expPts} pts ref)` : ""}${u.spot ? ` | ${targetSpot > u.spot ? "+" : ""}${(targetSpot - u.spot).toFixed(1)} live` : ""}`
+                            : expPts != null
+                            ? `+${expPts} pts`
+                            : "Awaiting feed"}
+                        </strong>
+                      </span>
+                      <span>
+                        Stop:{" "}
+                        <strong style={{ color: "var(--ink, #f8fafc)" }}>
+                          {isGated
+                            ? "— (Gated)"
+                            : stopLossSpot != null
+                            ? `₹${Number(stopLossSpot).toLocaleString("en-IN")}${slPts != null ? ` (-${slPts} pts ref)` : ""}${u.spot ? ` | ${(stopLossSpot - u.spot).toFixed(1)} live` : ""}`
+                            : slPts != null
+                            ? `-${slPts} pts`
+                            : "Awaiting feed"}
+                        </strong>
+                      </span>
                     </div>
                   </div>
 
@@ -1256,28 +1310,34 @@ export default function LiveTradingPage() {
                         <button
                           type="button"
                           onClick={() => handleFireOrderAndWatch(u.symbol, side, plannedPick, estPrice, rec)}
-                          disabled={killSwitchTriggered}
+                          disabled={killSwitchTriggered || isGated}
                           style={{
                             flex: 1,
-                            background: killSwitchTriggered
+                            background: (killSwitchTriggered || isGated)
                               ? "rgba(255, 255, 255, 0.08)"
                               : isOrderOpen
                               ? "rgba(56, 189, 248, 0.2)"
                               : "rgba(255, 255, 255, 0.12)",
-                            color: killSwitchTriggered ? "var(--muted)" : "#ffffff",
+                            color: (killSwitchTriggered || isGated) ? "var(--muted)" : "#ffffff",
                             border: isOrderOpen ? "1px solid #38bdf8" : "1px solid var(--line)",
                             padding: "8px 12px",
                             borderRadius: "8px",
                             fontSize: "0.82rem",
                             fontWeight: 600,
-                            cursor: killSwitchTriggered ? "not-allowed" : "pointer",
+                            cursor: (killSwitchTriggered || isGated) ? "not-allowed" : "pointer",
                           }}
                         >
-                          {isOrderOpen ? `⚡ Active Order (${executionMode})` : `⚡ Fire & Auto-Add (${executionMode})`}
+                          {isGated
+                            ? `🔒 Gated (${rec?.conviction || "NO TRADE"})`
+                            : isOrderOpen
+                            ? `⚡ Active Order (${executionMode})`
+                            : `⚡ Fire & Auto-Add (${executionMode})`}
                         </button>
                         <button
                           type="button"
+                          disabled={isGated}
                           onClick={async () => {
+                            if (isGated) return;
                             if (isWatched) {
                               setActionNotice(`ℹ️ ${plannedPick} is already actively tracked in the Watchlist.`);
                               setTimeout(() => setActionNotice(""), 3500);
@@ -1300,13 +1360,13 @@ export default function LiveTradingPage() {
                           }}
                           style={{
                             background: isWatched ? "rgba(16, 185, 129, 0.18)" : "transparent",
-                            color: isWatched ? "#34d399" : "#10b981",
+                            color: isGated ? "var(--muted)" : isWatched ? "#34d399" : "#10b981",
                             border: isWatched ? "1px solid #10b981" : "1px solid rgba(16, 185, 129, 0.4)",
                             padding: "8px 12px",
                             borderRadius: "8px",
                             fontSize: "0.8rem",
                             fontWeight: 600,
-                            cursor: "pointer",
+                            cursor: isGated ? "not-allowed" : "pointer",
                             whiteSpace: "nowrap",
                           }}
                         >

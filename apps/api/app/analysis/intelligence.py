@@ -628,34 +628,34 @@ def _evaluate_market_consensus(rows: list[dict], instrument: str, news: list[dic
 
     if total_score >= 2:
         consensus_call = "BUY_FUT (GO LONG)" if is_commodity else "BUY CE (CALL OPTION)"
-        opt_type = "CE"
+        opt_type = "FUT" if is_commodity else "CE"
         bias = "BULLISH"
         conviction = "HIGH" if total_score >= 3 else "MODERATE"
     elif total_score <= -2:
         consensus_call = "SELL_FUT (GO SHORT)" if is_commodity else "BUY PE (PUT OPTION)"
-        opt_type = "PE"
+        opt_type = "FUT" if is_commodity else "PE"
         bias = "BEARISH"
         conviction = "HIGH" if total_score <= -3 else "MODERATE"
     elif total_score == 1:
         consensus_call = "BUY_FUT (MOMENTUM)" if is_commodity else "BUY CE (MOMENTUM)"
-        opt_type = "CE"
+        opt_type = "FUT" if is_commodity else "CE"
         bias = "MILD BULLISH"
         conviction = "MODERATE"
     elif total_score == -1:
         consensus_call = "SELL_FUT (MOMENTUM)" if is_commodity else "BUY PE (MOMENTUM)"
-        opt_type = "PE"
+        opt_type = "FUT" if is_commodity else "PE"
         bias = "MILD BEARISH"
         conviction = "MODERATE"
     else:
-        consensus_call = "BUY CE (CALL ON BREAKOUT)"
-        opt_type = "CE"
-        bias = "NEUTRAL / SLIGHT BULLISH"
-        conviction = "CAUTIOUS / AWAIT TRIGGER"
+        consensus_call = "STAND ASIDE (NEUTRAL / NO EDGE)"
+        opt_type = "FUT" if is_commodity else "NONE"
+        bias = "NEUTRAL"
+        conviction = "NEUTRAL / NO EDGE"
 
     return {
         "call": consensus_call,
         "option_type": opt_type,
-        "alt_option_type": "PE" if opt_type == "CE" else "CE",
+        "alt_option_type": "PE" if opt_type == "CE" else ("CE" if opt_type == "PE" else "NONE"),
         "bias": bias,
         "conviction": conviction,
         "total_score": total_score,
@@ -698,6 +698,7 @@ def _market(rows: list[dict], instrument: str, news: list[dict] | None = None) -
             "conviction": "NO_FEED",
             "total_score": consensus["total_score"],
             "spot_price": None,
+            "reference_spot": None,
             "atm_strike": None,
             "expected_move_points": None,
             "stop_loss_points": None,
@@ -734,6 +735,7 @@ def _market(rows: list[dict], instrument: str, news: list[dict] | None = None) -
             "manual_trade_recommendation": trade_recommendation,
         }
 
+    is_commodity = instrument in {"CRUDEOILMINI", "CRUDEMINI", "CRUDE", "GOLD", "SILVER"}
     step, _ = _instrument_params(instrument)
     atm = int(round(spot / step) * step)
     iv = consensus["iv"]
@@ -741,26 +743,45 @@ def _market(rows: list[dict], instrument: str, news: list[dict] | None = None) -
     target_pts = max(float(step) * 0.8, daily_move * 0.60)
     sl_pts = max(float(step) * 0.4, daily_move * 0.30)
 
-    primary_picks = _generate_option_picks(instrument, spot, consensus["option_type"], target_pts, sl_pts, iv=iv)
-    alt_picks = _generate_option_picks(instrument, spot, consensus["alt_option_type"], target_pts, sl_pts, iv=iv)
+    # Generate options: research catalog for commodities or when not explicitly directional
+    primary_picks = _generate_option_picks(instrument, spot, "CE" if consensus["option_type"] not in {"CE", "PE"} else consensus["option_type"], target_pts, sl_pts, iv=iv)
+    alt_picks = _generate_option_picks(instrument, spot, "PE" if consensus["option_type"] not in {"CE", "PE"} else consensus["alt_option_type"], target_pts, sl_pts, iv=iv)
+
+    is_neutral = consensus["bias"] == "NEUTRAL" or "STAND ASIDE" in consensus["call"]
+    is_bull = "BUY" in consensus["call"] or consensus["bias"] in {"BULLISH", "MILD BULLISH"}
+
+    target_spot = None if is_neutral else round(spot + target_pts if is_bull else spot - target_pts, 1)
+    stop_loss_spot = None if is_neutral else round(spot - sl_pts if is_bull else spot + sl_pts, 1)
+    exp_pts_val = None if is_neutral else round(target_pts, 1)
+    sl_pts_val = None if is_neutral else round(sl_pts, 1)
 
     trade_recommendation = {
         "call": consensus["call"],
         "option_type": consensus["option_type"],
         "alt_option_type": consensus["alt_option_type"],
+        "contract_type": "FUTURES" if is_commodity else "OPTIONS",
         "bias": consensus["bias"],
         "conviction": consensus["conviction"],
         "total_score": consensus["total_score"],
         "spot_price": spot,
+        "reference_spot": spot,
         "atm_strike": atm,
-        "expected_move_points": round(target_pts, 1),
-        "stop_loss_points": round(sl_pts, 1),
-        "target_spot": round(spot + target_pts if consensus["option_type"] == "CE" else spot - target_pts, 1),
-        "stop_loss_spot": round(spot - sl_pts if consensus["option_type"] == "CE" else spot + sl_pts, 1),
+        "expected_move_points": exp_pts_val,
+        "stop_loss_points": sl_pts_val,
+        "target_spot": target_spot,
+        "stop_loss_spot": stop_loss_spot,
         "agent_votes": consensus["agent_votes"],
         "top_5_options": primary_picks,
         "alternate_options": alt_picks,
-        "execution_guide": f"Top pick: {primary_picks[2]['contract']} (ATM) entry around ₹{primary_picks[2]['entry_premium']} with Target ₹{primary_picks[2]['target_premium']} and SL ₹{primary_picks[2]['stop_loss_premium']} (R:R {primary_picks[2]['risk_reward']}).",
+        "execution_guide": (
+            f"Commodity Futures recommendation: {consensus['call']} for {instrument} at reference spot ₹{spot:.2f}. Option chain is catalog reference only."
+            if is_commodity else
+            (
+                f"Top pick: {primary_picks[2]['contract']} (ATM) entry around ₹{primary_picks[2]['entry_premium']} with Target ₹{primary_picks[2]['target_premium']} and SL ₹{primary_picks[2]['stop_loss_premium']} (R:R {primary_picks[2]['risk_reward']})."
+                if not is_neutral else
+                "Market consensus is neutral with no statistical edge. Stand aside."
+            )
+        ),
     }
 
     direction = item.get("directional_implication")
@@ -775,18 +796,18 @@ def _market(rows: list[dict], instrument: str, news: list[dict] | None = None) -
         "observed_at": item.get("observed_at"),
         "what_happens": {
             "regime": "TRENDING" if direction in {"BULLISH", "BEARISH"} else "RANGE_BOUND",
-            "summary": f"{instrument} spot is at ₹{spot:,.2f} with {direction or 'neutral'} short-term bias. Real-time market feed verified for analysis.",
+            "summary": f"{instrument} spot is at ₹{spot:,.2f} with {direction or 'neutral'} short-term bias. Live quote feed received (unverified market provenance).",
             "bullish_trigger": f"Sustained breakout above ₹{atm + step} with volume expansion and crude/FX stability.",
             "bearish_trigger": f"Breakdown below ₹{atm - step} with increasing sell volume.",
             "invalidation": "Reversal back into prior range or cross-asset divergence invalidates directional bias.",
         },
         "options_evaluation": {
-            "verdict": "ACTIVE",
-            "reason": f"Active strikes and Black-Scholes Greeks computed from spot ₹{spot:,.2f}.",
+            "verdict": "ACTIVE" if not is_neutral else "STAND_ASIDE",
+            "reason": f"Active strikes and Black-Scholes Greeks computed from spot ₹{spot:,.2f}." if not is_neutral else "Market is neutral; options execution gated.",
         },
         "risk_veto": {
             "vetoed": False,
-            "reason": "Analysis risk checks cleared for live market data.",
+            "reason": "Analysis preliminary risk checks cleared for live feed.",
         },
         "manual_trade_recommendation": trade_recommendation,
     }

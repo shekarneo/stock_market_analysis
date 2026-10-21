@@ -32,6 +32,7 @@ class AnalysisBody(BaseModel):
     include_derivatives: bool = True
     include_inference: bool = False
     include_forecast: bool = False
+    enable_agent_llm: bool | None = None
     idempotency_key: str | None = Field(default=None, max_length=80)
 
 
@@ -95,6 +96,7 @@ def create_analysis(
         include_derivatives=body.include_derivatives,
         include_inference=body.include_inference,
         include_forecast=body.include_forecast,
+        enable_agent_llm=body.enable_agent_llm,
         observations=[*stored_observations(), *stored_news_observations()],
         idempotency_key=body.idempotency_key,
         inference_factory=inference_factory,

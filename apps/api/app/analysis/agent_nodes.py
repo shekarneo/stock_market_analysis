@@ -73,10 +73,18 @@ def _should_invoke_llm(state: AnalysisState, cfg: SingleAgentConfig) -> bool:
         return True
     if state.get("enable_agent_llm") is False:
         return False
+
+    # Check for custom/mock test providers registered via AIProviderRegistry.register_provider(...)
+    custom_registered = getattr(AIProviderRegistry, "_custom_registered", set())
+    if not AIProviderRegistry._providers:
+        custom_registered.clear()
     p_name = (cfg.provider or "").lower().strip()
     fb_name = (cfg.fallback_provider or "").lower().strip()
-    if p_name in AIProviderRegistry._providers or (fb_name and fb_name in AIProviderRegistry._providers):
+    if (p_name in custom_registered and p_name in AIProviderRegistry._providers) or (
+        fb_name and fb_name in custom_registered and fb_name in AIProviderRegistry._providers
+    ):
         return True
+
     sys_cfg = load_agent_system_config()
     if sys_cfg.enable_live_llm is False:
         return False
@@ -101,6 +109,10 @@ def _finalize_agent_output(
     limitations: list[str],
     default_status: str = "SUCCESS",
     lock_bias: bool = False,
+    semantic_type: str = "UNKNOWN",
+    is_probability: bool = False,
+    is_calibrated: bool = False,
+    provenance_verified: bool = False,
 ) -> AgentOutput:
     det_latency_ms = max(0.01, round((time.perf_counter() - t0) * 1000, 2))
     clean_refs = [r for r in evidence_references if r]
@@ -126,6 +138,10 @@ def _finalize_agent_output(
             findings=clean_findings,
             directional_bias=clean_bias,  # type: ignore[arg-type]
             confidence=confidence,
+            semantic_type=semantic_type,
+            is_probability=is_probability,
+            is_calibrated=is_calibrated,
+            provenance_verified=provenance_verified,
             evidence_references=clean_refs,
             missing_evidence=clean_missing,
             limitations=clean_limits,
@@ -187,6 +203,10 @@ def _finalize_agent_output(
             findings=clean_findings,
             directional_bias=clean_bias,  # type: ignore[arg-type]
             confidence=confidence,
+            semantic_type=semantic_type,
+            is_probability=is_probability,
+            is_calibrated=is_calibrated,
+            provenance_verified=provenance_verified,
             evidence_references=clean_refs,
             missing_evidence=clean_missing,
             limitations=clean_limits + ["LLM provider invocation raised an exception; using deterministic rule baseline."],
@@ -218,6 +238,10 @@ def _finalize_agent_output(
             findings=clean_findings,
             directional_bias=clean_bias,  # type: ignore[arg-type]
             confidence=confidence,
+            semantic_type=semantic_type,
+            is_probability=is_probability,
+            is_calibrated=is_calibrated,
+            provenance_verified=provenance_verified,
             evidence_references=clean_refs,
             missing_evidence=clean_missing,
             limitations=clean_limits + [f"LLM call failed ({err_code}); preserved deterministic baseline findings."],
@@ -285,6 +309,10 @@ def _finalize_agent_output(
         findings=clean_findings,
         directional_bias=clean_bias,  # type: ignore[arg-type]
         confidence=confidence,
+        semantic_type=semantic_type,
+        is_probability=is_probability,
+        is_calibrated=is_calibrated,
+        provenance_verified=provenance_verified,
         evidence_references=clean_refs,
         missing_evidence=clean_missing,
         limitations=clean_limits,
@@ -355,6 +383,10 @@ def market_data_analyst_node(state: AnalysisState) -> dict:
         missing_evidence=missing_info,
         limitations=limitations,
         lock_bias=True,
+        semantic_type="STATIC_DEFAULT",
+        is_probability=False,
+        is_calibrated=False,
+        provenance_verified=(unverified_count == 0 and synthetic_count == 0 and len(evidence) > 0),
     )
     agent_outputs[role_name] = out.model_dump()
     return {"agent_outputs": agent_outputs}
@@ -447,6 +479,10 @@ def technical_analyst_node(state: AnalysisState) -> dict:
         evidence_references=[e.get("evidence_id") for e in tech_evidence if e.get("evidence_id")],
         missing_evidence=[],
         limitations=["Calculated on available historical/quarantined bars only."],
+        semantic_type="HEURISTIC_SIGNAL_STRENGTH",
+        is_probability=False,
+        is_calibrated=False,
+        provenance_verified=False,
     )
     agent_outputs[role_name] = out.model_dump()
     return {"agent_outputs": agent_outputs}
@@ -525,6 +561,10 @@ def global_macro_analyst_node(state: AnalysisState) -> dict:
         evidence_references=[e.get("evidence_id") for e in macro_evidence if e.get("evidence_id")],
         missing_evidence=missing_instruments,
         limitations=["Macro signals are unverified for cross-market correlation."],
+        semantic_type="HEURISTIC_SIGNAL_STRENGTH",
+        is_probability=False,
+        is_calibrated=False,
+        provenance_verified=False,
     )
     agent_outputs[role_name] = out.model_dump()
     return {"agent_outputs": agent_outputs}
@@ -598,6 +638,10 @@ def news_event_analyst_node(state: AnalysisState) -> dict:
         evidence_references=[e.get("evidence_id") for e in news_items if e.get("evidence_id")],
         missing_evidence=["Live news feed unconfigured"] if not news_items else [],
         limitations=["Strict point-in-time timestamp gating enforced."],
+        semantic_type="HEURISTIC_SIGNAL_STRENGTH",
+        is_probability=False,
+        is_calibrated=False,
+        provenance_verified=False,
     )
     agent_outputs[role_name] = out.model_dump()
     return {"agent_outputs": agent_outputs}
@@ -640,6 +684,10 @@ def options_analyst_node(state: AnalysisState) -> dict:
             limitations=["Fabrication of derivatives data is strictly prohibited by safety invariants."],
             default_status="PARTIAL",
             lock_bias=True,
+            semantic_type="STATIC_DEFAULT",
+            is_probability=False,
+            is_calibrated=False,
+            provenance_verified=False,
         )
     else:
         findings = [f"Evaluated {len(opt_evidence)} verified derivatives items."]
@@ -678,6 +726,10 @@ def options_analyst_node(state: AnalysisState) -> dict:
             evidence_references=[e.get("evidence_id") for e in opt_evidence if e.get("evidence_id")],
             missing_evidence=[],
             limitations=["Options data subject to liquidity and strike coverage constraints."],
+            semantic_type="HEURISTIC_SIGNAL_STRENGTH",
+            is_probability=False,
+            is_calibrated=False,
+            provenance_verified=False,
         )
 
     agent_outputs[role_name] = out.model_dump()
@@ -755,6 +807,10 @@ def quant_forecast_analyst_node(state: AnalysisState) -> dict:
         evidence_references=[],
         missing_evidence=[],
         limitations=limitations,
+        semantic_type="UNCALIBRATED_MODEL_PROBABILITY",
+        is_probability=True,
+        is_calibrated=False,
+        provenance_verified=False,
     )
     agent_outputs[role_name] = out.model_dump()
     return {"agent_outputs": agent_outputs}
@@ -924,16 +980,28 @@ def final_decision_agent_node(state: AnalysisState) -> dict:
     report["paper_approved"] = paper_approved
     report["live_approved"] = live_approved
     report["real_market_data_verified"] = real_market_data_verified
+    report["live_trading_enabled"] = False
+    report["live_broker_routing_enabled"] = False
     report["consensus"] = {
         "consensus_score": consensus_eval.consensus_score,
         "disagreement_index": consensus_eval.disagreement_index,
         "epistemic_uncertainty": consensus_eval.epistemic_uncertainty,
+        "gating_threshold": consensus_eval.gating_threshold,
         "active_specialist_count": consensus_eval.active_specialist_count,
         "total_effective_weight": consensus_eval.total_effective_weight,
         "directional_recommendation": consensus_eval.directional_recommendation,
         "vetoes": consensus_eval.vetoes,
         "reason_codes": consensus_eval.reason_codes,
         "specialist_scores": consensus_eval.specialist_scores,
+        "configured_specialist_count": consensus_eval.configured_specialist_count,
+        "reporting_specialist_count": consensus_eval.reporting_specialist_count,
+        "missing_specialist_count": consensus_eval.missing_specialist_count,
+        "failed_specialist_count": consensus_eval.failed_specialist_count,
+        "skipped_specialist_count": consensus_eval.skipped_specialist_count,
+        "fallback_only_specialist_count": consensus_eval.fallback_only_specialist_count,
+        "directional_voter_count": consensus_eval.directional_voter_count,
+        "directional_participation_rate": consensus_eval.directional_participation_rate,
+        "safety_invariants_preserved": consensus_eval.safety_invariants_preserved,
     }
 
     return {

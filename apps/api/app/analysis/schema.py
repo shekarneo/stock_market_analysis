@@ -127,6 +127,8 @@ class AnalysisReport(BaseModel):
     paper_approved: bool = False
     live_approved: bool = False
     real_market_data_verified: bool = False
+    live_trading_enabled: bool = False
+    live_broker_routing_enabled: bool = False
     agent_outputs: dict = Field(default_factory=dict)
     reason_codes: list[str] = Field(default_factory=list)
     consensus: dict = Field(default_factory=dict)
@@ -136,6 +138,8 @@ class AnalysisReport(BaseModel):
         object.__setattr__(self, "paper_approved", False)
         object.__setattr__(self, "live_approved", False)
         object.__setattr__(self, "real_market_data_verified", False)
+        object.__setattr__(self, "live_trading_enabled", False)
+        object.__setattr__(self, "live_broker_routing_enabled", False)
         object.__setattr__(self, "confidence", None)
         object.__setattr__(self, "decision", "NO_TRADE")
 
@@ -165,6 +169,10 @@ class AgentOutput(BaseModel):
     findings: list[str] = Field(default_factory=list)
     directional_bias: Literal["BULLISH", "BEARISH", "NEUTRAL", "MIXED", "UNKNOWN"] = "UNKNOWN"
     confidence: float | None = None
+    semantic_type: str = "UNKNOWN"
+    is_probability: bool = False
+    is_calibrated: bool = False
+    provenance_verified: bool = False
     evidence_references: list[str] = Field(default_factory=list)
     missing_evidence: list[str] = Field(default_factory=list)
     limitations: list[str] = Field(default_factory=list)

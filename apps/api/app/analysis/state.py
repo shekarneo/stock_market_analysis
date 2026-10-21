@@ -19,6 +19,7 @@ class AnalysisState(TypedDict, total=False):
     include_derivatives: bool
     include_inference: bool
     include_forecast: bool
+    enable_agent_llm: bool | None
     accepted: list[dict]
     rejected: list[dict]
     evidence: list[dict]

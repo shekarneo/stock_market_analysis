@@ -15,7 +15,7 @@ const AGENT_ROLES = [
 ];
 
 const VETO_DESCRIPTIONS = {
-  EXCESSIVE_EPISTEMIC_UNCERTAINTY: "Composite epistemic uncertainty exceeds safety threshold (0.65)",
+  EXCESSIVE_EPISTEMIC_UNCERTAINTY: "Composite epistemic uncertainty exceeds safety threshold (0.45)",
   REGIME_SIDEWAYS_CONSOLIDATION: "Market in sideways consolidation regime; directional trades suppressed",
   CORE_SPECIALIST_CONFLICT: "Core specialist directional conflict between Quant and Technical analysts",
   INSUFFICIENT_SPECIALIST_WEIGHT: "Combined active specialist weight below minimum quorum",
@@ -39,7 +39,7 @@ export default function V6ConsensusCard({ reportData, onRefresh }) {
   const uncertaintyVal = rawConsensus
     ? (rawConsensus.epistemic_uncertainty ?? rawConsensus.composite_epistemic_uncertainty ?? null)
     : null;
-  const thresholdVal = rawConsensus?.gating_threshold ?? 0.65;
+  const thresholdVal = rawConsensus?.gating_threshold ?? 0.45;
   const finalBias = rawConsensus
     ? (rawConsensus.directional_recommendation || rawConsensus.final_bias || effectiveReport?.decision || "NEUTRAL")
     : "NOT_EVALUATED";
@@ -300,7 +300,7 @@ export default function V6ConsensusCard({ reportData, onRefresh }) {
           <div className="v6-math-block">
             <strong>3. Composite Epistemic Uncertainty Gating:</strong>
             <code>{"U_total = α·D + β·(1 - c̄) + γ·(1 - q̄) ∈ [0, 1]"}</code>
-            <p>Execution is deterministically gated to NO TRADE whenever U_total ≥ τ = 0.65 or when regime is choppy consolidation.</p>
+            <p>Execution is deterministically gated to NO TRADE whenever U_total ≥ τ = 0.45 or when regime is choppy consolidation.</p>
           </div>
         </div>
       )}

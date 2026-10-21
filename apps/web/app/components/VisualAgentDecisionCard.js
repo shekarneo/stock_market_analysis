@@ -4,19 +4,23 @@ import { useEffect, useState } from "react";
 import { useMarketData } from "./MarketDataContext";
 import { csrfToken } from "./session";
 
+// Distinctly catalog 8 implemented LangGraph agents vs 4 research/catalog reference desks
 const AGENT_CATALOG = [
-  { id: "news_events", legacyKey: "news_event_analyst", name: "News Sentiment", icon: "📰", role: "Real-time Wire Sentiment", defaultStance: "NEUTRAL", defaultConf: 65 },
-  { id: "global_macro", legacyKey: "global_macro_analyst", name: "Global Macro", icon: "🌐", role: "Yields, FX USD/INR & DOW", defaultStance: "BULLISH", defaultConf: 72 },
-  { id: "commodities", legacyKey: "crude_cross_asset", name: "Intermarket & MCX", icon: "🛢️", role: "Crude Oil & Gold Flows", defaultStance: "NEUTRAL", defaultConf: 60 },
-  { id: "order_flow", legacyKey: "market_data_analyst", name: "Order Flow", icon: "📊", role: "Microstructure & Volumes", defaultStance: "BULLISH", defaultConf: 68 },
-  { id: "options_greeks", legacyKey: "options_analyst", name: "Options & Greeks", icon: "⚡", role: "Black-76, IV & PCR Skew", defaultStance: "NEUTRAL", defaultConf: 55 },
-  { id: "trend_momentum", legacyKey: "technical_analyst", name: "Trend & Momentum", icon: "📈", role: "EMA 20/50 & Supertrend", defaultStance: "BULLISH", defaultConf: 80 },
-  { id: "mean_reversion", legacyKey: "mean_reversion", name: "Mean Reversion", icon: "🔄", role: "RSI & Bollinger Z-Score", defaultStance: "NEUTRAL", defaultConf: 50 },
-  { id: "htf_resampling", legacyKey: "htf_resampling", name: "HTF Resampling", icon: "⏱", role: "Multi-Timeframe Alignment", defaultStance: "BULLISH", defaultConf: 75 },
-  { id: "quant_forecast", legacyKey: "quant_forecast_analyst", name: "Quant ML Model", icon: "🔬", role: "19-Fold Walk-Forward Prob", defaultStance: "BULLISH", defaultConf: 70 },
-  { id: "bayesian_gate", legacyKey: "risk_uncertainty_analyst", name: "Bayesian Epistemic Gate", icon: "🛡️", role: "Dispersion Gating (0.65 Cutoff)", defaultStance: "NEUTRAL", defaultConf: 62 },
-  { id: "expected_payoff", legacyKey: "expected_payoff", name: "Expected Net Payoff", icon: "💰", role: "2.0 bps Friction & EV", defaultStance: "BULLISH", defaultConf: 65 },
-  { id: "final_arbiter", legacyKey: "final_decision_agent", name: "Consensus Arbiter", icon: "⚖️", role: "LangGraph Consensus Engine", defaultStance: "BULLISH", defaultConf: 78 },
+  // 8 Implemented LangGraph Specialist Agents
+  { id: "news_events", legacyKey: "news_event_analyst", name: "News Sentiment", icon: "📰", role: "Real-time Wire Sentiment", isImplemented: true },
+  { id: "global_macro", legacyKey: "global_macro_analyst", name: "Global Macro", icon: "🌐", role: "Yields, FX USD/INR & DOW", isImplemented: true },
+  { id: "order_flow", legacyKey: "market_data_analyst", name: "Order Flow", icon: "📊", role: "Microstructure & Volumes", isImplemented: true },
+  { id: "options_greeks", legacyKey: "options_analyst", name: "Options & Greeks", icon: "⚡", role: "Black-76, IV & PCR Skew", isImplemented: true },
+  { id: "trend_momentum", legacyKey: "technical_analyst", name: "Trend & Momentum", icon: "📈", role: "EMA 20/50 & Supertrend", isImplemented: true },
+  { id: "quant_forecast", legacyKey: "quant_forecast_analyst", name: "Quant ML Model", icon: "🔬", role: "19-Fold Walk-Forward Prob", isImplemented: true },
+  { id: "bayesian_gate", legacyKey: "risk_uncertainty_analyst", name: "Bayesian Epistemic Gate", icon: "🛡️", role: "Dispersion Gating (0.45 Cutoff)", isImplemented: true },
+  { id: "final_arbiter", legacyKey: "final_decision_agent", name: "Consensus Arbiter", icon: "⚖️", role: "LangGraph Consensus Engine", isImplemented: true },
+
+  // 4 Research & Catalog Reference Desks (No standalone LangGraph agent node)
+  { id: "commodities", legacyKey: "crude_cross_asset", name: "Intermarket & MCX", icon: "🛢️", role: "Crude Oil & Gold Flows", isImplemented: false, catalogType: "Catalog Reference" },
+  { id: "mean_reversion", legacyKey: "mean_reversion", name: "Mean Reversion", icon: "🔄", role: "RSI & Bollinger Z-Score", isImplemented: false, catalogType: "Catalog Reference" },
+  { id: "htf_resampling", legacyKey: "htf_resampling", name: "HTF Resampling", icon: "⏱", role: "Multi-Timeframe Alignment", isImplemented: false, catalogType: "Catalog Reference" },
+  { id: "expected_payoff", legacyKey: "expected_payoff", name: "Expected Net Payoff", icon: "💰", role: "2.0 bps Friction Ref", isImplemented: false, catalogType: "Payoff Model" },
 ];
 
 export default function VisualAgentDecisionCard({ onExpandDetailed }) {
@@ -98,36 +102,93 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
     }
   }
 
-  // Derive visual metrics from report or default state
-  const decision = report?.decision || "STAND_ASIDE";
-  const consensus = report?.consensus || {};
+  // Analysis Lifecycle & Integrity States
+  const isReportAvailable = Boolean(report);
+  const decision = isReportAvailable ? (report.decision || "STAND_ASIDE") : "NOT_RUN";
+  const consensus = report?.consensus || null;
   const agentOutputs = report?.agent_outputs || {};
-  const recommendation = report?.recommendation || {};
 
-  const isBuy = decision.includes("BUY") || decision === "BULLISH";
-  const isSell = decision.includes("SELL") || decision === "BEARISH";
-  const isStandAside = !isBuy && !isSell;
+  const activeVetoes = Array.isArray(consensus?.vetoes) ? consensus.vetoes : [];
+  const hasActiveVetoes = activeVetoes.length > 0;
 
-  const decisionColor = isBuy ? "#10b981" : isSell ? "#f43f5e" : "#f59e0b";
-  const decisionBg = isBuy ? "rgba(16, 185, 129, 0.12)" : isSell ? "rgba(244, 63, 94, 0.12)" : "rgba(245, 158, 11, 0.12)";
-  const decisionBorder = isBuy ? "rgba(16, 185, 129, 0.3)" : isSell ? "rgba(244, 63, 94, 0.3)" : "rgba(245, 158, 11, 0.3)";
+  const isBuy = isReportAvailable && !hasActiveVetoes && decision !== "NO_TRADE" && decision !== "STAND_ASIDE" && (decision.includes("BUY") || decision === "BULLISH");
+  const isSell = isReportAvailable && !hasActiveVetoes && decision !== "NO_TRADE" && decision !== "STAND_ASIDE" && (decision.includes("SELL") || decision === "BEARISH");
+  const isStandAside = isReportAvailable && !isBuy && !isSell;
 
-  // Consensus score from -10 to +10 mapped to percentage 0-100%
-  const scoreVal = typeof consensus.consensus_score === "number" ? consensus.consensus_score : (report ? (isBuy ? 3.5 : isSell ? -3.5 : 0.0) : 0.0);
-  const scorePct = Math.max(0, Math.min(100, ((scoreVal + 10) / 20) * 100));
+  const decisionColor = !isReportAvailable
+    ? "#94a3b8"
+    : (isBuy ? "#10b981" : isSell ? "#f43f5e" : "#f59e0b");
+  const decisionBg = !isReportAvailable
+    ? "rgba(148, 163, 184, 0.08)"
+    : (isBuy ? "rgba(16, 185, 129, 0.12)" : isSell ? "rgba(244, 63, 94, 0.12)" : "rgba(245, 158, 11, 0.12)");
+  const decisionBorder = !isReportAvailable
+    ? "rgba(148, 163, 184, 0.2)"
+    : (isBuy ? "rgba(16, 185, 129, 0.3)" : isSell ? "rgba(244, 63, 94, 0.3)" : "rgba(245, 158, 11, 0.3)");
 
-  // Epistemic Uncertainty (0.0 to 1.0)
-  const uncertaintyVal = typeof consensus.epistemic_uncertainty === "number" ? consensus.epistemic_uncertainty : 0.52;
-  const isGated = uncertaintyVal >= 0.65 || (report && (decision === "NO_TRADE" || decision === "STAND_ASIDE"));
+  // Consensus score: strictly [-1.0, +1.0] from backend consensus_engine
+  const rawScore = typeof consensus?.consensus_score === "number" ? consensus.consensus_score : null;
+  const hasScore = rawScore !== null;
+  const scoreVal = hasScore ? rawScore : 0.0;
+  // Map [-1.0, +1.0] to [0%, 100%]
+  const scorePct = hasScore ? Math.max(0, Math.min(100, ((scoreVal + 1.0) / 2.0) * 100)) : 50;
 
-  // Quant Confluence probability extraction (safely handle object or number)
+  // Epistemic Uncertainty (0.0 to 1.0) with genuine backend veto threshold (0.45)
+  const thresholdVal = typeof consensus?.gating_threshold === "number" ? consensus.gating_threshold : 0.45;
+  const rawUncertainty = typeof consensus?.epistemic_uncertainty === "number" ? consensus.epistemic_uncertainty : null;
+  const hasUncertainty = rawUncertainty !== null;
+  const uncertaintyVal = hasUncertainty ? rawUncertainty : null;
+  const isUncertaintyVetoed = hasUncertainty && (uncertaintyVal >= thresholdVal || activeVetoes.includes("EXCESSIVE_EPISTEMIC_UNCERTAINTY"));
+
+  // Quorum & Directional Participation Metrics
+  const configuredCount = typeof consensus?.configured_specialist_count === "number" ? consensus.configured_specialist_count : 6;
+  const reportingCount = typeof consensus?.reporting_specialist_count === "number"
+    ? consensus.reporting_specialist_count
+    : (typeof consensus?.active_specialist_count === "number" ? consensus.active_specialist_count : 0);
+  const directionalVoters = typeof consensus?.directional_voter_count === "number" ? consensus.directional_voter_count : 0;
+  const participationRate = typeof consensus?.directional_participation_rate === "number" ? consensus.directional_participation_rate : 0.0;
+  const missingCount = typeof consensus?.missing_specialist_count === "number" ? consensus.missing_specialist_count : 0;
+  const failedCount = typeof consensus?.failed_specialist_count === "number" ? consensus.failed_specialist_count : 0;
+  const fallbackCount = typeof consensus?.fallback_only_specialist_count === "number" ? consensus.fallback_only_specialist_count : 0;
+  const totalWeight = typeof consensus?.total_effective_weight === "number" ? consensus.total_effective_weight : null;
+
+  // Execution Gating Status: Strictly prevent false "Active Execution" claims
+  let executionBadgeText = "⏸ Awaiting Analysis Cycle";
+  let executionBadgeBg = "rgba(148, 163, 184, 0.1)";
+  let executionBadgeColor = "#94a3b8";
+
+  if (isReportAvailable) {
+    if (decision === "NO_TRADE" || decision === "STAND_ASIDE" || isUncertaintyVetoed || hasActiveVetoes) {
+      executionBadgeText = "🔒 Deadband / Safety Gated (NO TRADE)";
+      executionBadgeBg = "rgba(245, 158, 11, 0.15)";
+      executionBadgeColor = "#fbbf24";
+    } else {
+      // Live broker routing is hard locked to blocked state across the repository
+      executionBadgeText = "🔒 Live Routing Disabled (Paper Only)";
+      executionBadgeBg = "rgba(56, 189, 248, 0.15)";
+      executionBadgeColor = "#38bdf8";
+    }
+  }
+
+  // Quant Confluence probability extraction
   const rawProbObj = report?.intelligence?.forecast?.probabilities?.[instrument];
   const reportProbUp = typeof rawProbObj === "number" ? rawProbObj : (typeof rawProbObj?.up === "number" ? rawProbObj.up : null);
   const liveProb = typeof liveForecast?.calibrated_probability === "number" ? liveForecast.calibrated_probability : null;
-  const rawProb = liveProb ?? reportProbUp ?? report?.intelligence?.forecast?.calibrated_probability ?? 0.534;
-  const mlProb = (typeof rawProb === "number" && !isNaN(rawProb)) ? rawProb : 0.534;
-  const mlProbUp = Math.round(mlProb * 100);
+  const rawProb = isReportAvailable ? (reportProbUp ?? liveProb ?? null) : (liveProb ?? null);
+  const hasMlProb = typeof rawProb === "number" && !isNaN(rawProb);
+  const mlProb = hasMlProb ? rawProb : null;
+  const mlProbUp = hasMlProb ? Math.round(mlProb * 100) : null;
   const activeModelDisplay = (liveForecast?.model_name || selectedModel || "CHAMPION").toUpperCase();
+
+  // Agent Count breakdown
+  const implementedCount = AGENT_CATALOG.filter((a) => a.isImplemented).length; // 8
+  const catalogCount = AGENT_CATALOG.filter((a) => !a.isImplemented).length; // 4
+  const executedCount = isReportAvailable
+    ? AGENT_CATALOG.filter((a) => {
+        if (!a.isImplemented) return false;
+        const out = agentOutputs[a.id] || agentOutputs[a.legacyKey];
+        return out && out.status && out.status !== "SKIPPED" && out.status !== "FAILED";
+      }).length
+    : 0;
 
   return (
     <section
@@ -145,7 +206,7 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
             <span style={{ fontSize: "0.72rem", fontWeight: 700, padding: "2px 8px", borderRadius: "4px", background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8", border: "1px solid rgba(56, 189, 248, 0.3)" }}>
-              🤖 12-AGENT QUANT DECISION ENGINE
+              🤖 8 SPECIALIST AGENTS · 4 RESEARCH DESKS
             </span>
             <span style={{ fontSize: "0.72rem", fontWeight: 700, padding: "2px 8px", borderRadius: "4px", background: "rgba(16, 185, 129, 0.15)", color: "#34d399", border: "1px solid rgba(16, 185, 129, 0.3)" }}>
               DETERMINISTIC CONSENSUS
@@ -153,6 +214,21 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
             <span style={{ fontSize: "0.72rem", color: "var(--sub, #94a3b8)" }}>
               Active Underlying: <strong style={{ color: "var(--ink, #fff)" }}>{instrument}</strong>
             </span>
+            {isReportAvailable && report?.created_at && (
+              <span
+                style={{
+                  fontSize: "0.72rem",
+                  color: "#38bdf8",
+                  background: "rgba(56, 189, 248, 0.1)",
+                  padding: "2px 8px",
+                  borderRadius: "4px",
+                  border: "1px solid rgba(56, 189, 248, 0.25)",
+                }}
+                title={`Cycle ID: ${report.analysis_id || "N/A"}`}
+              >
+                🕒 Cycle: {report.analysis_id ? `${report.analysis_id.slice(0, 8)} · ` : ""}{new Date(report.created_at).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", second: "2-digit" })} IST
+              </span>
+            )}
           </div>
           <h2 id="agent-visual-heading" style={{ margin: 0, fontSize: "1.2rem", fontWeight: 800, color: "var(--ink, #fff)" }}>
             Visual Multi-Agent Consensus &amp; Trade Signal
@@ -209,7 +285,7 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
             {running ? (
               <>
                 <span className="spinner" style={{ display: "inline-block", width: "12px", height: "12px", border: "2px solid #fff", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-                <span>Synthesizing 12 Agents…</span>
+                <span>Synthesizing Specialists…</span>
               </>
             ) : (
               <>
@@ -234,7 +310,7 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
                 alignItems: "center",
                 gap: "6px",
               }}
-              title="Expand to detailed 12-agent analysis desk with full institutional dossier"
+              title="Expand to detailed multi-agent analysis desk with full institutional dossier"
             >
               <span>🔬 Detailed Desk ▾</span>
             </button>
@@ -254,7 +330,7 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
           display: "grid",
           gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
           gap: "12px",
-          marginBottom: "18px",
+          marginBottom: "12px",
         }}
       >
         {/* Card 1: Core Trade Decision */}
@@ -282,17 +358,19 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
                 display: "inline-block",
               }}
             >
-              {decision === "NO_TRADE" || decision === "STAND_ASIDE" ? "STAND ASIDE (NO TRADE)" : decision}
+              {!isReportAvailable
+                ? "AWAITING ANALYSIS (NO TRADE)"
+                : (decision === "NO_TRADE" || decision === "STAND_ASIDE" || hasActiveVetoes ? "STAND ASIDE (NO TRADE)" : decision)}
             </span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <span style={{ fontSize: "0.72rem", padding: "2px 6px", borderRadius: "4px", background: "rgba(255,255,255,0.06)", color: "var(--sub, #94a3b8)" }}>
-              {isGated ? "🔒 Deadband / Safety Gated" : "✓ Active Execution"}
+            <span style={{ fontSize: "0.72rem", padding: "3px 8px", borderRadius: "4px", background: executionBadgeBg, color: executionBadgeColor, fontWeight: 650 }}>
+              {executionBadgeText}
             </span>
           </div>
         </div>
 
-        {/* Card 2: Consensus Spectrum Meter (-10 to +10) */}
+        {/* Card 2: Consensus Spectrum Meter (-1.0 to +1.0) */}
         <div
           style={{
             background: "rgba(18, 26, 43, 0.65)",
@@ -308,8 +386,10 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
             <span style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--sub, #94a3b8)" }}>
               Consensus Score
             </span>
-            <span style={{ fontSize: "0.88rem", fontWeight: 800, color: scoreVal > 0 ? "#10b981" : scoreVal < 0 ? "#f43f5e" : "#fbbf24" }}>
-              {scoreVal > 0 ? `+${scoreVal.toFixed(1)} Bullish` : scoreVal < 0 ? `${scoreVal.toFixed(1)} Bearish` : "0.0 Neutral"}
+            <span style={{ fontSize: "0.88rem", fontWeight: 800, color: !hasScore ? "#94a3b8" : (scoreVal > 0 ? "#10b981" : scoreVal < 0 ? "#f43f5e" : "#fbbf24") }}>
+              {!hasScore
+                ? "— Not Run"
+                : (scoreVal > 0 ? `+${scoreVal.toFixed(2)} Bullish` : scoreVal < 0 ? `${scoreVal.toFixed(2)} Bearish` : "0.00 Neutral")}
             </span>
           </div>
 
@@ -319,32 +399,36 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
               style={{
                 height: "8px",
                 borderRadius: "4px",
-                background: "linear-gradient(to right, #f43f5e 0%, #f59e0b 50%, #10b981 100%)",
+                background: hasScore
+                  ? "linear-gradient(to right, #f43f5e 0%, #f59e0b 50%, #10b981 100%)"
+                  : "rgba(255, 255, 255, 0.08)",
                 width: "100%",
-                opacity: 0.85,
+                opacity: hasScore ? 0.85 : 0.4,
               }}
             />
             {/* Pointer Indicator */}
-            <div
-              style={{
-                position: "absolute",
-                top: "-4px",
-                left: `${scorePct}%`,
-                transform: "translateX(-50%)",
-                width: "16px",
-                height: "16px",
-                borderRadius: "50%",
-                background: "#fff",
-                boxShadow: "0 0 6px rgba(255,255,255,0.9), 0 2px 4px rgba(0,0,0,0.5)",
-                border: "2px solid #0f172a",
-              }}
-            />
+            {hasScore ? (
+              <div
+                style={{
+                  position: "absolute",
+                  top: "-4px",
+                  left: `${scorePct}%`,
+                  transform: "translateX(-50%)",
+                  width: "16px",
+                  height: "16px",
+                  borderRadius: "50%",
+                  background: "#fff",
+                  boxShadow: "0 0 6px rgba(255,255,255,0.9), 0 2px 4px rgba(0,0,0,0.5)",
+                  border: "2px solid #0f172a",
+                }}
+              />
+            ) : null}
           </div>
 
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.68rem", color: "var(--sub, #64748b)" }}>
-            <span>-10 Bearish</span>
-            <span>0 Neutral</span>
-            <span>+10 Bullish</span>
+            <span>-1.0 Bearish</span>
+            <span>0.0 Neutral</span>
+            <span>+1.0 Bullish</span>
           </div>
         </div>
 
@@ -364,8 +448,10 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
             <span style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--sub, #94a3b8)" }}>
               Epistemic Gate
             </span>
-            <span style={{ fontSize: "0.85rem", fontWeight: 800, color: isGated ? "#f43f5e" : "#10b981" }}>
-              {uncertaintyVal.toFixed(2)} / 0.65 Limit
+            <span style={{ fontSize: "0.85rem", fontWeight: 800, color: !hasUncertainty ? "#94a3b8" : (isUncertaintyVetoed ? "#f43f5e" : "#10b981") }}>
+              {hasUncertainty
+                ? `${uncertaintyVal.toFixed(2)} / ${thresholdVal.toFixed(2)} Limit`
+                : `UNAVAILABLE / ${thresholdVal.toFixed(2)} Limit`}
             </span>
           </div>
 
@@ -374,8 +460,8 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
             <div
               style={{
                 height: "100%",
-                width: `${Math.min(100, Math.round(uncertaintyVal * 100))}%`,
-                background: isGated ? "#f43f5e" : "#10b981",
+                width: hasUncertainty ? `${Math.min(100, Math.round(uncertaintyVal * 100))}%` : "0%",
+                background: isUncertaintyVetoed ? "#f43f5e" : "#10b981",
                 borderRadius: "4px",
                 transition: "width 0.3s ease",
               }}
@@ -384,8 +470,10 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
 
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.68rem", color: "var(--sub, #64748b)" }}>
             <span>0.0 Certain</span>
-            <span style={{ color: isGated ? "#fb7185" : "#34d399", fontWeight: 600 }}>
-              {isGated ? "⚠️ Safety Veto Engaged" : "✓ Uncertainty Safe"}
+            <span style={{ color: !hasUncertainty ? "#94a3b8" : (isUncertaintyVetoed ? "#fb7185" : "#34d399"), fontWeight: 600 }}>
+              {!hasUncertainty
+                ? "Awaiting Analysis"
+                : (isUncertaintyVetoed ? "⚠️ Safety Veto Engaged" : "✓ Uncertainty Safe")}
             </span>
             <span>1.0 High Noise</span>
           </div>
@@ -407,8 +495,8 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
             <span style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--sub, #94a3b8)" }}>
               Quant-Agent Confluence
             </span>
-            <span style={{ fontSize: "0.85rem", fontWeight: 800, color: "#38bdf8" }}>
-              {mlProbUp}% P(Up)
+            <span style={{ fontSize: "0.85rem", fontWeight: 800, color: hasMlProb ? "#38bdf8" : "#94a3b8" }}>
+              {hasMlProb ? `${mlProbUp}% P(Up)` : "— P(Up)"}
             </span>
           </div>
 
@@ -420,32 +508,137 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
                 borderRadius: "4px",
                 fontSize: "0.74rem",
                 fontWeight: 700,
-                background: mlProb >= 0.52 ? "rgba(16, 185, 129, 0.15)" : mlProb <= 0.48 ? "rgba(244, 63, 94, 0.15)" : "rgba(56, 189, 248, 0.15)",
-                color: mlProb >= 0.52 ? "#34d399" : mlProb <= 0.48 ? "#fb7185" : "#38bdf8",
+                background: !hasMlProb
+                  ? "rgba(148, 163, 184, 0.15)"
+                  : (mlProb >= 0.52 ? "rgba(16, 185, 129, 0.15)" : mlProb <= 0.48 ? "rgba(244, 63, 94, 0.15)" : "rgba(56, 189, 248, 0.15)"),
+                color: !hasMlProb
+                  ? "#94a3b8"
+                  : (mlProb >= 0.52 ? "#34d399" : mlProb <= 0.48 ? "#fb7185" : "#38bdf8"),
               }}
             >
-              {mlProb >= 0.52 ? "🟢 High Confluence (Long)" : mlProb <= 0.48 ? "🔴 High Confluence (Short)" : "🔵 Deadband (48%–52%)"}
+              {!hasMlProb
+                ? "⏸ Awaiting Forecast Data"
+                : (mlProb >= 0.52 ? "🟢 High Confluence (Long)" : mlProb <= 0.48 ? "🔴 High Confluence (Short)" : "🔵 Neutral Deadband (48%–52%)")}
             </span>
           </div>
 
           <div style={{ fontSize: "0.68rem", color: "var(--sub, #64748b)" }}>
-            ML Model: {activeModelDisplay} · 19 Folds Walk-Forward
+            ML Model: {activeModelDisplay} · 15m Horizon
           </div>
         </div>
       </div>
 
-      {/* 12 Specialist Agents Visual Grid (Visual Matrix) */}
-      <div style={{ marginTop: "16px" }}>
+      {/* Active Deterministic Risk & Quorum Vetoes Banner */}
+      {isReportAvailable && hasActiveVetoes && (
+        <div
+          style={{
+            background: "rgba(244, 63, 94, 0.12)",
+            border: "1px solid rgba(244, 63, 94, 0.35)",
+            borderRadius: "8px",
+            padding: "10px 14px",
+            marginBottom: "12px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "6px",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{ fontSize: "0.85rem" }}>🛡️</span>
+            <span style={{ fontSize: "0.76rem", fontWeight: 800, color: "#fb7185", letterSpacing: "0.04em", textTransform: "uppercase" }}>
+              Active Gating Vetoes ({activeVetoes.length} Triggered — All Trades Blocked)
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+            {activeVetoes.map((veto) => (
+              <span
+                key={veto}
+                style={{
+                  padding: "2px 8px",
+                  borderRadius: "4px",
+                  background: "rgba(244, 63, 94, 0.2)",
+                  color: "#fecdd3",
+                  fontSize: "0.72rem",
+                  fontWeight: 700,
+                  fontFamily: "monospace",
+                  border: "1px solid rgba(244, 63, 94, 0.4)",
+                }}
+              >
+                ⛔ {veto}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Execution Dimensions Truth Strip */}
+      <div
+        style={{
+          display: "flex",
+          gap: "8px",
+          alignItems: "center",
+          flexWrap: "wrap",
+          padding: "8px 12px",
+          background: "rgba(0, 0, 0, 0.25)",
+          borderRadius: "8px",
+          border: "1px solid rgba(255, 255, 255, 0.05)",
+          marginBottom: "16px",
+          fontSize: "0.7rem",
+          color: "var(--sub, #94a3b8)",
+        }}
+      >
+        <span style={{ fontWeight: 700, color: "var(--ink, #fff)", marginRight: "4px" }}>System State:</span>
+        <span style={{ padding: "2px 6px", borderRadius: "4px", background: "rgba(16, 185, 129, 0.1)", color: "#34d399" }}>
+          ● Ingestion: Active
+        </span>
+        <span style={{ padding: "2px 6px", borderRadius: "4px", background: isReportAvailable ? "rgba(56, 189, 248, 0.1)" : "rgba(148, 163, 184, 0.1)", color: isReportAvailable ? "#38bdf8" : "#94a3b8" }}>
+          {isReportAvailable ? "● Forecast: Evaluated (M15)" : (liveForecast ? "● Forecast: Snapshot Ready" : "○ Forecast: Pending")}
+        </span>
+        <span style={{ padding: "2px 6px", borderRadius: "4px", background: "rgba(245, 158, 11, 0.1)", color: "#fbbf24" }}>
+          ● Paper Execution: Disarmed / Gated
+        </span>
+        <span style={{ padding: "2px 6px", borderRadius: "4px", background: "rgba(244, 63, 94, 0.1)", color: "#fb7185" }}>
+          🔒 Live Broker: Hard Locked (Blocked)
+        </span>
+        <span style={{ padding: "2px 6px", borderRadius: "4px", background: "rgba(56, 189, 248, 0.1)", color: "#38bdf8" }}>
+          ● Quorum: {isReportAvailable ? `${reportingCount}/${configuredCount} Reporting` : "6 Configured"}
+        </span>
+        <span style={{ padding: "2px 6px", borderRadius: "4px", background: isReportAvailable && participationRate >= 0.33 ? "rgba(16, 185, 129, 0.1)" : "rgba(245, 158, 11, 0.1)", color: isReportAvailable && participationRate >= 0.33 ? "#34d399" : "#fbbf24" }}>
+          ● Participation: {isReportAvailable ? `${directionalVoters} Voters (${Math.round(participationRate * 100)}% / Min 33%)` : "—"}
+        </span>
+        {isReportAvailable && fallbackCount > 0 && (
+          <span style={{ padding: "2px 6px", borderRadius: "4px", background: "rgba(148, 163, 184, 0.12)", color: "#94a3b8" }}>
+            ○ Fallback: {fallbackCount}
+          </span>
+        )}
+        {isReportAvailable && missingCount > 0 && (
+          <span style={{ padding: "2px 6px", borderRadius: "4px", background: "rgba(244, 63, 94, 0.12)", color: "#fb7185" }}>
+            ⚠️ Missing: {missingCount}
+          </span>
+        )}
+        {isReportAvailable && totalWeight !== null && (
+          <span style={{ padding: "2px 6px", borderRadius: "4px", background: "rgba(255, 255, 255, 0.05)", color: "#cbd5e1" }}>
+            Σ W_eff: {totalWeight.toFixed(2)}
+          </span>
+        )}
+        {isReportAvailable && report?.created_at && (
+          <span style={{ padding: "2px 6px", borderRadius: "4px", background: "rgba(56, 189, 248, 0.1)", color: "#38bdf8" }} title={`Analysis Cycle ID: ${report.analysis_id || "N/A"}`}>
+            ● Cycle: {report.analysis_id ? `${report.analysis_id.slice(0, 8)}…` : "Live"} ({new Date(report.created_at).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", second: "2-digit" })} IST)
+          </span>
+        )}
+      </div>
+
+      {/* Specialist Perspectives Grid */}
+      <div style={{ marginTop: "12px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
           <div>
             <h3 style={{ margin: 0, fontSize: "0.92rem", fontWeight: 700, color: "var(--ink, #fff)", display: "flex", alignItems: "center", gap: "6px" }}>
-              <span>👥 12 Specialist Perspectives</span>
+              <span>👥 8 Specialist Agents · 4 Research Desks</span>
               <span style={{ fontSize: "0.72rem", padding: "1px 6px", borderRadius: "10px", background: "rgba(255,255,255,0.08)", color: "#cbd5e1" }}>
-                12/12 Online
+                {isReportAvailable ? `${executedCount}/${implementedCount} Implemented Online` : `0/${implementedCount} Online · Awaiting Run`}
               </span>
             </h3>
             <span style={{ fontSize: "0.72rem", color: "var(--sub, #94a3b8)" }}>
-              Instant visual breakdown of stance, confidence, and role across all 12 quantitative specialists.
+              Point-in-time stance and confidence across 8 LangGraph specialist agents and 4 research reference desks.
             </span>
           </div>
 
@@ -475,29 +668,93 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
           }}
         >
           {AGENT_CATALOG.map((agent) => {
-            const out = agentOutputs[agent.id] || agentOutputs[agent.legacyKey] || {};
-            let stance = out.directional_bias;
-            let conf = typeof out.confidence === "number" && !isNaN(out.confidence) && out.confidence > 0 
-              ? Math.round(out.confidence * 100) 
-              : null;
+            let stance = null;
+            let conf = null;
+            let categoryLabel = agent.isImplemented ? "Specialist Agent" : (agent.id === "expected_payoff" ? "Payoff Model" : "Catalog Ref");
 
-            // Dynamically sync the Quant ML Model specialist with the user's selected forecasting model
-            if (agent.id === "quant_forecast" && liveForecast?.predicted_direction) {
-              stance = liveForecast.predicted_direction;
-              conf = Math.round(mlProb * 100);
-            }
+            if (!isReportAvailable) {
+              // Pre-analysis run state: strictly no mock stances or fake confidences
+              if (agent.id === "expected_payoff") {
+                stance = "UNAVAILABLE";
+              } else if (!agent.isImplemented) {
+                stance = "UNIMPLEMENTED";
+              } else {
+                stance = "NOT RUN";
+              }
+              conf = null;
+            } else {
+              // Live analysis run state
+              if (agent.id === "expected_payoff") {
+                // Expected net payoff options engine check
+                const evNet = report?.intelligence?.options?.expected_net ?? null;
+                stance = evNet !== null ? (evNet > 0 ? "BULLISH" : evNet < 0 ? "BEARISH" : "NEUTRAL") : "UNAVAILABLE";
+                conf = null;
+              } else if (!agent.isImplemented) {
+                // Catalog-only entries without standalone LangGraph nodes
+                stance = "CATALOG ONLY";
+                conf = null;
+              } else {
+                // Implemented LangGraph specialist agents
+                const out = agentOutputs[agent.id] || agentOutputs[agent.legacyKey] || {};
+                stance = out.directional_bias;
+                conf = typeof out.confidence === "number" && !isNaN(out.confidence) && out.confidence > 0
+                  ? Math.round(out.confidence * 100)
+                  : null;
 
-            if (!stance || stance === "UNKNOWN") {
-              stance = agent.defaultStance;
-            }
-            if (conf === null) {
-              conf = agent.defaultConf;
+                // Sync the Quant ML Model specialist with model forecast if present
+                if (agent.id === "quant_forecast" && !stance) {
+                  if (liveForecast?.predicted_direction) {
+                    stance = liveForecast.predicted_direction;
+                    conf = mlProb !== null ? Math.round(mlProb * 100) : null;
+                  }
+                }
+
+                if (!stance || stance === "UNKNOWN") {
+                  stance = out.status === "FAILED" ? "FAILED" : out.status === "SKIPPED" ? "SKIPPED" : "UNAVAILABLE";
+                }
+              }
             }
 
             const isBull = stance === "BULLISH";
             const isBear = stance === "BEARISH";
-            const stanceColor = isBull ? "#10b981" : isBear ? "#f43f5e" : "#94a3b8";
-            const stanceBg = isBull ? "rgba(16, 185, 129, 0.15)" : isBear ? "rgba(244, 63, 94, 0.15)" : "rgba(255, 255, 255, 0.08)";
+            const isUnavail = stance === "UNAVAILABLE" || stance === "UNIMPLEMENTED" || stance === "CATALOG ONLY";
+            const stanceColor = isBull ? "#10b981" : isBear ? "#f43f5e" : isUnavail ? "#64748b" : "#94a3b8";
+            const stanceBg = isBull
+              ? "rgba(16, 185, 129, 0.15)"
+              : isBear
+              ? "rgba(244, 63, 94, 0.15)"
+              : "rgba(255, 255, 255, 0.05)";
+
+            const specialistScores = consensus?.specialist_scores || {};
+            const specScore = specialistScores[agent.legacyKey] || specialistScores[agent.id] || {};
+            const out = agent.isImplemented ? (agentOutputs[agent.id] || agentOutputs[agent.legacyKey] || {}) : {};
+            const semanticType = out.semantic_type || specScore.semantic_type || (agent.id === "quant_forecast" ? "UNCALIBRATED_MODEL_PROBABILITY" : (agent.id === "order_flow" ? "STATIC_DEFAULT" : "HEURISTIC_SIGNAL_STRENGTH"));
+            const isProb = Boolean(out.is_probability || specScore.is_probability || agent.id === "quant_forecast");
+            const isCalibrated = Boolean(out.is_calibrated || specScore.is_calibrated);
+            const effectiveWeight = typeof specScore.effective_weight === "number" ? specScore.effective_weight : (typeof out.effective_weight === "number" ? out.effective_weight : null);
+            const isZeroWeight = effectiveWeight === 0.0 || (agent.id === "options_greeks" && semanticType === "STATIC_DEFAULT");
+
+            let semanticPillText = null;
+            let semanticPillBg = "rgba(255, 255, 255, 0.05)";
+            let semanticPillColor = "#94a3b8";
+
+            if (agent.isImplemented && isReportAvailable) {
+              if (semanticType === "UNCALIBRATED_MODEL_PROBABILITY" || (isProb && !isCalibrated)) {
+                semanticPillText = "Uncalibrated ML Prob";
+                semanticPillBg = "rgba(168, 85, 247, 0.12)";
+                semanticPillColor = "#c084fc";
+              } else if (semanticType === "HEURISTIC_SIGNAL_STRENGTH") {
+                semanticPillText = "Heuristic Signal";
+                semanticPillBg = "rgba(56, 189, 248, 0.12)";
+                semanticPillColor = "#38bdf8";
+              } else if (semanticType === "STATIC_DEFAULT") {
+                semanticPillText = "Static Default";
+                semanticPillBg = "rgba(148, 163, 184, 0.12)";
+                semanticPillColor = "#94a3b8";
+              } else {
+                semanticPillText = semanticType;
+              }
+            }
 
             return (
               <div
@@ -510,6 +767,7 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
                   display: "flex",
                   flexDirection: "column",
                   gap: "6px",
+                  opacity: agent.isImplemented ? 1 : 0.8,
                   transition: "transform 0.15s ease",
                 }}
               >
@@ -523,36 +781,60 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
                   </div>
                   <span
                     style={{
-                      fontSize: "0.65rem",
+                      fontSize: "0.62rem",
                       fontWeight: 800,
-                      padding: "2px 6px",
+                      padding: "2px 5px",
                       borderRadius: "4px",
                       background: stanceBg,
                       color: stanceColor,
+                      letterSpacing: "0.02em",
                     }}
                   >
                     {stance}
                   </span>
                 </div>
 
-                {/* Subtitle / Role */}
-                {viewMode === "grid" && (
-                  <span style={{ fontSize: "0.68rem", color: "var(--sub, #64748b)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {agent.role}
+                {/* Subtitle / Role & Category Badge */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.65rem", color: "var(--sub, #64748b)" }}>
+                  <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "115px" }}>
+                    {agent.id === "expected_payoff" && isReportAvailable ? "Options EV Unavailable" : agent.role}
                   </span>
+                  <span style={{ fontSize: "0.58rem", padding: "1px 4px", borderRadius: "3px", background: "rgba(255,255,255,0.04)", color: "#94a3b8" }}>
+                    {categoryLabel}
+                  </span>
+                </div>
+
+                {/* Semantic Type & Weight Pill */}
+                {agent.isImplemented && isReportAvailable && semanticPillText && (
+                  <div style={{ display: "flex", gap: "4px", alignItems: "center", flexWrap: "wrap", margin: "2px 0 4px" }}>
+                    <span style={{ fontSize: "0.58rem", padding: "1px 5px", borderRadius: "3px", background: semanticPillBg, color: semanticPillColor, fontWeight: 700 }}>
+                      {semanticPillText}
+                    </span>
+                    {isZeroWeight ? (
+                      <span style={{ fontSize: "0.58rem", padding: "1px 4px", borderRadius: "3px", background: "rgba(244, 63, 94, 0.15)", color: "#fb7185", fontWeight: 700 }} title="Zero effective weight in consensus aggregation">
+                        W_eff: 0.0 (Fallback)
+                      </span>
+                    ) : effectiveWeight !== null ? (
+                      <span style={{ fontSize: "0.58rem", padding: "1px 4px", borderRadius: "3px", background: "rgba(255, 255, 255, 0.05)", color: "#94a3b8" }} title="Effective quality-weighted consensus weight">
+                        W_eff: {effectiveWeight.toFixed(2)}
+                      </span>
+                    ) : null}
+                  </div>
                 )}
 
                 {/* Visual Confidence Bar */}
-                <div style={{ marginTop: "auto" }}>
+                <div style={{ marginTop: "auto", paddingTop: "4px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.65rem", color: "var(--sub, #94a3b8)", marginBottom: "3px" }}>
-                    <span>Confidence</span>
-                    <strong style={{ color: stanceColor }}>{conf}%</strong>
+                    <span>{isProb ? "Probability" : "Confidence / Score"}</span>
+                    <strong style={{ color: conf !== null ? stanceColor : "#64748b" }}>
+                      {conf !== null ? `${conf}%` : "—"}
+                    </strong>
                   </div>
                   <div style={{ height: "4px", borderRadius: "2px", background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
                     <div
                       style={{
                         height: "100%",
-                        width: `${conf}%`,
+                        width: conf !== null ? `${conf}%` : "0%",
                         background: stanceColor,
                         borderRadius: "2px",
                       }}
@@ -563,6 +845,7 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
             );
           })}
         </div>
+
         {onExpandDetailed && (
           <div style={{ textAlign: "center", marginTop: "16px", borderTop: "1px dashed var(--line, rgba(255,255,255,0.08))", paddingTop: "14px" }}>
             <button
@@ -582,7 +865,7 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
                 gap: "8px",
               }}
             >
-              <span>🔬 Expand Detailed 12-Agent Analysis Desk &amp; Full Audit Dossier (Stages 0–14) ▾</span>
+              <span>🔬 Expand Detailed 8-Agent Analysis Desk &amp; Full Audit Dossier (Stages 0–14) ▾</span>
             </button>
           </div>
         )}
