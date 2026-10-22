@@ -101,6 +101,7 @@ def test_experimental_paper_executes_without_prior_model_approval(db):
         risk_dict["max_open_positions"] = 2
         risk_dict["max_risk_fraction_per_trade"] = 0.02
         risk_dict["daily_loss_fraction"] = 0.03
+        risk_dict["experimental_requires_server_ev"] = False  # no EV model yet: operator opts in
         replace_section(session, settings, "risk", risk_dict, actor="tester")
         session.commit()
 
@@ -289,6 +290,7 @@ def test_experimental_paper_idempotency_and_no_double_fill(db):
         risk_dict["max_open_positions"] = 2
         risk_dict["max_risk_fraction_per_trade"] = 0.02
         risk_dict["daily_loss_fraction"] = 0.03
+        risk_dict["experimental_requires_server_ev"] = False  # no EV model yet: operator opts in
         replace_section(session, settings, "risk", risk_dict, actor="tester")
         session.commit()
 
@@ -352,6 +354,7 @@ def test_deterministic_full_lifecycle_entry_exit_ledger_and_idempotency(db):
         risk_dict["max_open_positions"] = 2
         risk_dict["max_risk_fraction_per_trade"] = 0.02
         risk_dict["daily_loss_fraction"] = 0.03
+        risk_dict["experimental_requires_server_ev"] = False  # no EV model yet: operator opts in
         replace_section(session, settings, "risk", risk_dict, actor="tester")
         session.commit()
     finally:

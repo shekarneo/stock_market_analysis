@@ -105,10 +105,11 @@ def run_paper_simulation(session: Session, body: dict, *, actor: str) -> dict:
     occurred_at = body.get("occurred_at")
     if not isinstance(intent_id, str) or not isinstance(occurred_at, datetime):
         return _finish(session, actor, None, "INVALID_INTENT", ["INVALID_INTENT"], state=None, risk=None)
-    # Never trust a client-sent grant; compute it from the operator's configuration
-    body = {key: value for key, value in body.items() if key != "_experimental_granted"}
+    # Never trust client-sent grants or EV; compute both from server state
+    body = {key: value for key, value in body.items() if not str(key).startswith("_")}
     if body.get("execution_context") == "EXPERIMENTAL":
         body["_experimental_granted"] = _server_experimental(session)
+    body["_server_expected_net"], body["_expected_net_basis"] = _server_expected_net(session, body)
     snapshot = _snapshot(body, occurred_at)
     if snapshot is None:
         return _finish(session, actor, intent_id, "INVALID_INTENT", ["INVALID_INTENT"], state=None, risk=None)
@@ -148,6 +149,40 @@ def reconcile_intent(session: Session, intent_id: str) -> dict:
     }
 
 
+def _server_expected_net(session: Session, body: dict) -> tuple[str | None, str]:
+    """(expected_net, basis). The server's own EV, never the client's number.
+
+    The EV module refuses to turn a direction probability into a premium, so today it
+    returns no expected net and the expected_net gate vetoes. Only an operator config of
+    experimental_requires_server_ev=false lets the client figure through, labelled as such.
+    """
+    from app.config.store import current_config
+    from app.options.expected_value import evaluate_expected_value
+
+    quote = body.get("quote") if isinstance(body.get("quote"), dict) else {}
+    contract = {
+        "underlying": body.get("underlying"),
+        "expiry": body.get("expiry"),
+        "strike": body.get("strike"),
+        "option_type": body.get("option_type"),
+        "bid": quote.get("bid"),
+        "ask": quote.get("ask"),
+        "quote_timestamp": quote.get("quote_timestamp"),
+        "lot_size": body.get("lot_size"),
+    }
+    ev = evaluate_expected_value(body.get("forecast"), contract, None)
+    if ev.get("expected_net") is not None:
+        return str(ev["expected_net"]), "SERVER_EV"
+    try:
+        requires_server = current_config(session).risk.experimental_requires_server_ev
+    except Exception:
+        requires_server = True
+    if not requires_server and body.get("expected_net") is not None:
+        return str(body["expected_net"]), "CLIENT_SUPPLIED_OPERATOR_ALLOWED"
+    reasons = ",".join((ev.get("reasons") or [])[:3]) or "UNAVAILABLE"
+    return None, f"SERVER_EV_UNAVAILABLE:{reasons}"
+
+
 def _server_experimental(session: Session) -> bool:
     """Experimental paper gates are granted only when the operator's own config allows them:
     PAPER mode, kill switch off, and every virtual risk control configured."""
@@ -179,7 +214,10 @@ def _risk_intent(body: dict) -> dict:
         "option_type": body.get("option_type"),
         "quote": quote,
         "forecast": body.get("forecast"),
-        "expected_net": body.get("expected_net"),
+        # expected_net is the server's figure; the client's number is only recorded
+        "expected_net": body.get("_server_expected_net"),
+        "expected_net_basis": body.get("_expected_net_basis"),
+        "expected_net_client": body.get("expected_net"),
         "ask": None if quote is None else quote.get("ask"),
         "bid": None if quote is None else quote.get("bid"),
         "lots": body.get("lots"),
@@ -193,7 +231,7 @@ def _risk_intent(body: dict) -> dict:
         "execution_context": body.get("execution_context"),
         "experimental_requested": body.get("execution_context") == "EXPERIMENTAL",
         "experimental_granted": bool(body.get("_experimental_granted")),
-        "expected_net_source": "CLIENT_SUPPLIED" if body.get("expected_net") is not None else None,
+
         "side": body.get("side", "BUY"),
     }
 
@@ -299,15 +337,18 @@ def _recover(session: Session, actor: str, intent_id: str, snapshot: dict, state
 
 
 # Statutory charge schedules per exchange and instrument type, as fractions of turnover
-# (premium turnover for options, notional for futures). Re-check whenever SEBI or an
-# exchange revises them. MCX rates are marked unverified until checked against the
-# current MCX circular.
+# (premium turnover for options, notional for futures). Checked 2026-10-23 against the
+# Zerodha exchange-charges and MCX charges pages: NSE totals include the IPFT levy
+# (options 0.03503% + 0.0005%; futures 0.00173% + 0.0001%); BSE SENSEX options 0.0325%;
+# MCX options 0.0418% exchange + 0.05% CTT on sells; MCX futures 0.0021% + 0.01% CTT.
+# Re-check whenever SEBI or an exchange revises them.
+CHARGES_REVIEWED_ON = "2026-10-23"
 CHARGE_SCHEDULES: dict[tuple[str, str], dict] = {
-    ("NSE", "OPTION"): {"stt_sell": "0.001", "stamp_buy": "0.00003", "exchange": "0.0003503", "verified": True, "tax_label": "STT"},
+    ("NSE", "OPTION"): {"stt_sell": "0.001", "stamp_buy": "0.00003", "exchange": "0.0003553", "verified": True, "tax_label": "STT"},
     ("BSE", "OPTION"): {"stt_sell": "0.001", "stamp_buy": "0.00003", "exchange": "0.000325", "verified": True, "tax_label": "STT"},
-    ("NSE", "FUTURE"): {"stt_sell": "0.0002", "stamp_buy": "0.00002", "exchange": "0.0000173", "verified": True, "tax_label": "STT"},
-    ("MCX", "OPTION"): {"stt_sell": "0.0005", "stamp_buy": "0.00003", "exchange": "0.000418", "verified": False, "tax_label": "CTT"},
-    ("MCX", "FUTURE"): {"stt_sell": "0.0001", "stamp_buy": "0.00002", "exchange": "0.000021", "verified": False, "tax_label": "CTT"},
+    ("NSE", "FUTURE"): {"stt_sell": "0.0002", "stamp_buy": "0.00002", "exchange": "0.0000183", "verified": True, "tax_label": "STT"},
+    ("MCX", "OPTION"): {"stt_sell": "0.0005", "stamp_buy": "0.00003", "exchange": "0.000418", "verified": True, "tax_label": "CTT"},
+    ("MCX", "FUTURE"): {"stt_sell": "0.0001", "stamp_buy": "0.00002", "exchange": "0.000021", "verified": True, "tax_label": "CTT"},
 }
 SEBI_FEE = Decimal("0.000001")  # Rs10 per crore
 GST_RATE = Decimal("0.18")

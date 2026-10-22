@@ -12,6 +12,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
+from app.features.definitions import FEATURE_SET_VERSION
 from app.features.pipeline import content_hash
 from app.forecasting.store import ExperimentStore, WalkForwardStore
 from app.instruments import TRADABLE_UNDERLYINGS, underlying_list_text
@@ -379,7 +380,7 @@ def _from_holdout(artifact: dict, actor: str) -> tuple[dict, list[dict]]:
     if artifact.get("evaluation_version") != "m3-holdout-1":
         raise RegistryError("VERSION_MISMATCH", "This is not an m3-holdout-1 artifact.")
     if artifact.get("target_version") != TARGET_VERSION or artifact.get("feature_set_version") != FEATURE_SET:
-        raise RegistryError("VERSION_MISMATCH", "The holdout is not binary-1 on ohlc-1.")
+        raise RegistryError("VERSION_MISMATCH", f"The holdout is not binary-1 on {FEATURE_SET_VERSION}.")
     instrument = _instrument(artifact.get("instrument"))
     created_at = artifact.get("created_at")
     outcomes = {}
@@ -442,7 +443,7 @@ def _from_walkforward(artifact: dict, actor: str) -> tuple[dict, list[dict]]:
     if artifact.get("evaluation_version") != "m4-expanding-1":
         raise RegistryError("VERSION_MISMATCH", "This is not an m4-expanding-1 artifact.")
     if artifact.get("target_version") != TARGET_VERSION or artifact.get("feature_set_version") != FEATURE_SET:
-        raise RegistryError("VERSION_MISMATCH", "The walk-forward run is not binary-1 on ohlc-1.")
+        raise RegistryError("VERSION_MISMATCH", f"The walk-forward run is not binary-1 on {FEATURE_SET_VERSION}.")
     instrument = _instrument(artifact.get("instrument"))
     folds = artifact.get("folds") or []
     outcomes = {}
@@ -981,7 +982,7 @@ def _scope(instrument: str, horizon: str, feature_schema_version: str, target_ve
     if instrument not in INSTRUMENTS or horizon != HORIZON:
         raise RegistryError("UNSUPPORTED_SCOPE", f"Supported scope is {underlying_list_text(TRADABLE_UNDERLYINGS)} at M15.")
     if feature_schema_version != FEATURE_SET or target_version != TARGET_VERSION:
-        raise RegistryError("VERSION_MISMATCH", "The implemented pair is ohlc-1 and binary-1.")
+        raise RegistryError("VERSION_MISMATCH", f"The implemented pair is {FEATURE_SET_VERSION} and binary-1.")
 
 
 def _instrument(value: str | None) -> str:

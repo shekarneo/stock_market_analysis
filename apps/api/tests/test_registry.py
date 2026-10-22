@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.features.definitions import FEATURE_SET_VERSION
+
 import json
 import threading
 
@@ -53,7 +55,7 @@ def test_definition_is_registered_not_trained_and_is_immutable(tmp_path):
             family="base_rate",
             instrument="NIFTY",
             horizon="M15",
-            feature_schema_version="ohlc-1",
+            feature_schema_version=FEATURE_SET_VERSION,
             target_version="binary-1",
             actor="operator",
             recorded_at="2026-01-05T15:30:00+05:30",
@@ -75,7 +77,7 @@ def test_definition_is_registered_not_trained_and_is_immutable(tmp_path):
             family="majority_class",
             instrument="NIFTY",
             horizon="M15",
-            feature_schema_version="ohlc-1",
+            feature_schema_version=FEATURE_SET_VERSION,
             target_version="binary-1",
             actor="operator",
             recorded_at="2026-01-05T15:30:00+05:30",
@@ -451,7 +453,7 @@ def test_revision_conflict_and_atomic_failure(tmp_path):
             family="logistic_regression",
             instrument="SENSEX",
             horizon="M15",
-            feature_schema_version="ohlc-1",
+            feature_schema_version=FEATURE_SET_VERSION,
             target_version="binary-1",
             actor="operator",
             recorded_at=None,
@@ -468,7 +470,7 @@ def test_revision_conflict_and_atomic_failure(tmp_path):
                 family="logistic_regression",
                 instrument="BANKNIFTY",
                 horizon="M15",
-                feature_schema_version="ohlc-1",
+                feature_schema_version=FEATURE_SET_VERSION,
                 target_version="binary-1",
                 actor="operator",
                 recorded_at=None,
@@ -513,7 +515,7 @@ def test_concurrent_registrations_do_not_drop_a_write(tmp_path):
                 family="majority_class",
                 instrument=instrument,
                 horizon="M15",
-                feature_schema_version="ohlc-1",
+                feature_schema_version=FEATURE_SET_VERSION,
                 target_version="binary-1",
                 actor="operator",
                 recorded_at=None,

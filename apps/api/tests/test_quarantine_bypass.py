@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.features.definitions import FEATURE_SET_VERSION
+
 import json
 from datetime import datetime, timedelta
 
@@ -103,7 +105,7 @@ def test_direct_feature_generation_rejects_a_quarantine_record():
         "quarantine_id": "stored-response",
         "label": "UNVERIFIED_PROVIDER",
         "forecast_eligible": True,
-        "feature_set_version": "ohlc-1",
+        "feature_set_version": FEATURE_SET_VERSION,
         "source_candles": [],
     }
     built = build_dataset(record, fixture_calendar())

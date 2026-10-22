@@ -12,6 +12,7 @@ import statistics
 
 from pydantic import BaseModel, ConfigDict
 
+from app.features.definitions import FEATURE_SET_VERSION
 from app.features.pipeline import content_hash
 from app.forecasting.experiment import (
     SELECTION_INPUTS,
@@ -276,7 +277,7 @@ def _fold_header(index: int, bounds: tuple[int, int, int], config: WalkForwardCo
     return {
         "fold_id": f"fold-{index}",
         "dataset_id": eligibility.get("source_dataset_id"),
-        "feature_set_version": "ohlc-1",
+        "feature_set_version": FEATURE_SET_VERSION,
         "target_version": TARGET_VERSION,
         "evaluation_version": EVALUATION_VERSION,
         "embargo_rule": EMBARGO_RULE,

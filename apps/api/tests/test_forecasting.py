@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.features.definitions import FEATURE_SET_VERSION
+
 import json
 import math
 from datetime import datetime, timedelta
@@ -260,7 +262,7 @@ def test_experiment_artifact_is_reproducible_and_not_forecast_ready(tmp_path):
     assert artifact["split"]["embargo_rule"]
     assert artifact["origin"] == "SYNTHETIC"
     assert artifact["target_version"] == "binary-1"
-    assert artifact["feature_set_version"] == "ohlc-1"
+    assert artifact["feature_set_version"] == FEATURE_SET_VERSION
     assert artifact["approved_for_live"] is False
     assert artifact["production_approved"] is False
     assert artifact["readiness"]["forecast_ready"] is False
@@ -304,10 +306,10 @@ def test_version_and_checksum_guards():
     assert mismatch["code"] == "TARGET_VERSION_MISMATCH"
     assert mismatch["forecast_ready"] is False
     broken = dict(dataset)
-    broken["feature_set_version"] = "ohlc-2"
+    broken["feature_set_version"] = "ohlc-99"
     assert label_dataset(broken)["code"] == "CHECKSUM_MISMATCH"
     unsigned = _hand_candles([100, 110])
-    unsigned["feature_set_version"] = "ohlc-2"
+    unsigned["feature_set_version"] = "ohlc-99"
     assert label_dataset(unsigned)["code"] == "FEATURE_VERSION_MISMATCH"
     dataset["rows"][0]["values"]["ret_1"]["value"] = 123
     assert run_experiment(dataset, config=SMALL)["code"] == "CHECKSUM_MISMATCH"
@@ -338,7 +340,7 @@ def _hand_candles(closes: list[float]) -> dict:
             }
         )
     return {
-        "feature_set_version": "ohlc-1",
+        "feature_set_version": FEATURE_SET_VERSION,
         "interval": "M15",
         "forecast_ready": False,
         "dataset_id": "hand",

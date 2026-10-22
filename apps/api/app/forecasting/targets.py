@@ -24,15 +24,17 @@ LABEL_AVAILABILITY = (
 INTERVAL = timedelta(minutes=INTERVAL_MINUTES)
 
 # session_confirmed is a calendar gate, not a model input. It is constant on a listed session.
+# Every model input is scale-free (a return, ratio or position), so the fitted scaler does
+# not drift out of distribution as the index level moves. Price-level columns (sma_3,
+# sma_5, sma_3_minus_sma_5, atr_3) stay in the dataset but are not model inputs.
 MODEL_FEATURES: tuple[str, ...] = (
     "ret_1",
     "ret_3",
-    "sma_3",
-    "sma_5",
+    "close_vs_sma_3",
     "close_vs_sma_5",
-    "sma_3_minus_sma_5",
+    "sma_3_vs_sma_5",
     "ret_std_5",
-    "atr_3",
+    "atr_3_pct",
     "hl_range_vs_prev_close",
     "oc_return",
     "close_position",
@@ -78,7 +80,7 @@ def label_dataset(artifact: dict) -> dict:
         if lineage_error is not None:
             return _failure(lineage_error[0], lineage_error[1])
     if artifact.get("feature_set_version") != FEATURE_SET_VERSION:
-        return _failure("FEATURE_VERSION_MISMATCH", "The dataset feature set is not ohlc-1.")
+        return _failure("FEATURE_VERSION_MISMATCH", f"The dataset feature set is not {FEATURE_SET_VERSION}.")
     if artifact.get("interval") != "M15":
         return _failure("UNSUPPORTED_INTERVAL", "The binary-1 target is defined for M15 only.")
     if artifact.get("forecast_ready") is not False:

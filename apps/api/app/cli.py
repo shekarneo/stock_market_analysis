@@ -279,6 +279,132 @@ def cmd_health(args: argparse.Namespace) -> int:
     return 0 if database_ok else 1
 
 
+def cmd_retrain_live(args: argparse.Namespace) -> int:
+    """Rebuild features (current feature set), run the M3 holdout and register the live model.
+
+    Reuses the same steps as History -> Evaluate (M3) -> Model Studio -> Register, so the
+    registry keeps its checksums and lineage. Needed after a feature-set change: older
+    registered models are refused by the live loader because their inputs no longer match.
+    """
+    from app.features.definitions import FEATURE_SET_VERSION
+    from app.features.service import feature_store
+    from app.forecasting.experiment import run_experiment
+    from app.forecasting.splits import SplitConfig
+    from app.forecasting.store import experiment_store
+    from app.market.history import features_from_source, history_store
+    from app.registry.service import apply, register_artifact
+    from app.registry.store import registry_store
+
+    store = history_store()
+    dataset_id = args.dataset_id
+    if not dataset_id:
+        ids = store.list_ids()
+        print("Pass --dataset-id. Stored history datasets:")
+        for item in ids:
+            print(f"  - {item}")
+        return 2
+    source = store.read(dataset_id)
+    if not source.get("forecast_eligible"):
+        print(f"Dataset {dataset_id} is not eligible for forecasting evaluation.")
+        return 1
+    built = features_from_source(source, feature_store=feature_store())
+    if not built["ok"] or built["artifact"] is None:
+        print(f"Feature build failed: {built.get('code')}: {built.get('message')}")
+        return 1
+    result = run_experiment(built["artifact"], config=SplitConfig())
+    if not result.get("ok") or result.get("artifact") is None:
+        print(f"Experiment failed: {result.get('code')}: {result.get('message')}")
+        return 1
+    artifact = result["artifact"]
+    experiment_store().write(artifact)
+    registered = apply(
+        registry_store(),
+        lambda document: register_artifact(document, artifact, kind="m3", actor="cli-retrain", expected_revision=None),
+        idempotency_key=None,
+        body={"experiment_id": artifact.get("experiment_id"), "kind": "m3"},
+    )
+    versions = [v.get("version_id") for v in registered.get("versions") or []]
+    print(f"Feature set     : {FEATURE_SET_VERSION}")
+    print(f"Experiment      : {artifact.get('experiment_id')}")
+    print(f"Registered      : {', '.join(versions) or 'already registered (duplicate)'}")
+    print("Note: the model is research-only; it has no after-cost validation and probabilities are uncalibrated.")
+    return 0
+
+
+def cmd_refresh_expiries(args: argparse.Namespace) -> int:
+    """Refresh listed expiries (and check lot sizes) from the Groww instrument master.
+
+    --csv PATH   read a downloaded instrument.csv
+    --download   fetch the public instrument.csv from Groww
+    --api        also query the authenticated Groww Expiries API for NSE/BSE underlyings
+    """
+    from app.integrations.http import HttpxCaller
+    from app.market.instrument_master import (
+        INSTRUMENTS_CSV_URL,
+        MASTER_SYMBOLS,
+        contract_spec_mismatches,
+        expiries_from_api_payload,
+        front_month_future_symbol,
+        option_expiries_from_rows,
+        parse_instruments_csv,
+        save_listed_expiries,
+    )
+
+    rows: list[dict] = []
+    sources = []
+    if args.csv:
+        with open(args.csv, encoding="utf-8") as handle:
+            rows = parse_instruments_csv(handle.read())
+        sources.append(f"csv:{args.csv}")
+    elif args.download:
+        result = HttpxCaller().send("GET", INSTRUMENTS_CSV_URL, headers={"Accept": "text/csv"}, json_body=None, timeout=60.0)
+        if result.status_code != 200 or not result.text:
+            print(f"Download failed: HTTP {result.status_code}")
+            return 1
+        rows = parse_instruments_csv(result.text)
+        sources.append(INSTRUMENTS_CSV_URL)
+
+    expiries = {name: option_expiries_from_rows(rows, name) for name in MASTER_SYMBOLS} if rows else {}
+
+    if args.api:
+        from app.db import get_session_factory
+        from app.integrations.groww import read_expiries
+        from app.integrations.service import groww_read_token
+        from app.settings import get_settings
+
+        session = get_session_factory()()
+        try:
+            token = groww_read_token(session, get_settings())
+        finally:
+            session.close()
+        now = datetime.now(timezone.utc)
+        for name, (exchange, symbol) in MASTER_SYMBOLS.items():
+            if exchange not in {"NSE", "BSE"}:
+                continue
+            found = set(expiries.get(name, []))
+            for year in (now.year, now.year + 1):
+                result = read_expiries(HttpxCaller(), token, exchange=exchange, underlying_symbol=symbol, year=year)
+                if result.status_code == 200:
+                    found.update(expiries_from_api_payload(result.body))
+            expiries[name] = sorted(found)
+        sources.append("groww-expiries-api")
+
+    if not sources:
+        print("Pass --csv PATH, --download and/or --api.")
+        return 2
+    path = save_listed_expiries(expiries, source=", ".join(sources))
+    for name in MASTER_SYMBOLS:
+        listed = expiries.get(name) or []
+        print(f"{name:13s}: {len(listed)} expiries" + (f" (next {listed[0]})" if listed else " - none found"))
+    if rows:
+        today = datetime.now(timezone.utc).date()
+        print(f"MCX front-month crude mini future: {front_month_future_symbol(rows, 'CRUDEOILMINI', today) or 'not found'}")
+        for issue in contract_spec_mismatches(rows):
+            print(f"LOT SIZE MISMATCH {issue['instrument']}: configured {issue['configured']}, master {issue['master']} - update app/instrument_specs.py")
+    print(f"Saved to {path}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="imm-cli",
@@ -319,6 +445,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_ks.add_argument("action", choices=["status", "trip", "clear"], help="Kill switch action")
     p_ks.add_argument("--reason", default="", help="Audit reason for state change")
     p_ks.set_defaults(func=cmd_kill_switch)
+
+    # refresh-expiries
+    p_exp = subparsers.add_parser("refresh-expiries", help="Load listed expiries and check lot sizes from the Groww instrument master")
+    p_exp.add_argument("--csv", default=None, help="Path to a downloaded instrument.csv")
+    p_exp.add_argument("--download", action="store_true", help="Download the public instrument.csv from Groww")
+    p_exp.add_argument("--api", action="store_true", help="Also query the Groww Expiries API (NSE/BSE; needs a saved token)")
+    p_exp.set_defaults(func=cmd_refresh_expiries)
+
+    # retrain-live
+    p_retrain = subparsers.add_parser("retrain-live", help="Rebuild features, run the M3 holdout and register the live model")
+    p_retrain.add_argument("--dataset-id", default=None, help="Stored history dataset id (omit to list them)")
+    p_retrain.set_defaults(func=cmd_retrain_live)
 
     # health
     p_health = subparsers.add_parser("health", help="Check operational health and invariants")

@@ -227,3 +227,43 @@ Still open:
 - SENSEX and MCX expiry lists, which need loading from the BSE and MCX instrument masters.
 - The always-UNVERIFIED provenance veto.
 - Live-model feature normalization, which needs a retrain.
+
+
+## Phase 6 status (2026-10-23): implemented
+
+**Scale-free model inputs (feature set `ohlc-2`)**
+- New features: `close_vs_sma_3`, `sma_3_vs_sma_5` and `atr_3_pct`.
+- `MODEL_FEATURES` now drops the price-level inputs (`sma_3`, `sma_5`, `sma_3_minus_sma_5`, `atr_3`). Those columns stay in datasets for lineage.
+- A check confirms the features are identical at index levels 25,000 and 82,000.
+- Hard-coded `"ohlc-1"` strings now use `FEATURE_SET_VERSION`.
+- Models trained on the old inputs are refused by the live loader. **Run `retrain-live` before expecting an ACTIVE forecast.**
+
+**Retrain command (`python -m app.cli retrain-live --dataset-id <id>`)**
+- It rebuilds features from a stored history dataset, runs the M3 holdout, and registers the model through the existing registry path, keeping checksums and lineage.
+- Without `--dataset-id`, it lists the stored datasets.
+
+**Server-side expected net (`execution/simulation.py`)**
+- A client-sent `expected_net` is never used for gating. The server asks the EV module, which today returns no expected net, so `EXPECTED_NET_UNAVAILABLE` vetoes experimental simulations by default.
+- There is a new risk config setting, `experimental_requires_server_ev`, which defaults to true. Setting it to false in the operator's stored config lets the client figure through, labelled `CLIENT_SUPPLIED_OPERATOR_ALLOWED`.
+
+**Expiries from the instrument master (`market/instrument_master.py`)**
+- The command `python -m app.cli refresh-expiries --download [--api]` reads Groww's public instruments CSV. With `--api`, it also queries the authenticated Groww Expiries API (`GET /v1/historical/expiries`, NSE/BSE only).
+- It writes `var/market/listed_expiries.json`, which `groww_options.listed_expiries_for` prefers over the built-in NIFTY list.
+- It reports lot-size mismatches against `instrument_specs.py`, and prints the MCX crude-mini front-month future.
+- `read_mcx_quote` now requires a trading symbol, replacing the stale default `CRUDEOILM19OCT26FUT`.
+
+**Charges**
+- Rates checked 2026-10-23 against the Zerodha exchange-charges pages:
+  - NSE totals now include the IPFT levy: options 0.03553%, futures 0.00183%.
+  - BSE SENSEX options: 0.0325%.
+  - MCX options: 0.0418% exchange charge plus 0.05% CTT on sells.
+  - MCX futures: 0.0021% plus 0.01% CTT.
+- Every schedule is marked verified. The futures cost model is updated to match.
+
+**Tests**
+- Tests that hard-coded `"ohlc-1"` as the current version now use the constant. Tests that used `"ohlc-2"` as an unsupported version now use `"ohlc-99"`.
+
+**Operator actions after deploying**
+1. `python -m app.cli refresh-expiries --download --api`
+2. `python -m app.cli retrain-live --dataset-id <NIFTY history dataset>`
+3. Check the lot-size mismatch output (for example, NIFTY 65).

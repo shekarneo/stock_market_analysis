@@ -68,7 +68,7 @@ def test_irrelevant_headlines_do_not_vote():
 
 def test_nse_option_exchange_rate():
     c = calculate_indian_regulatory_charges(side="BUY", price=Decimal("100"), quantity=Decimal("1000"))
-    assert Decimal(c["exchange_charges"]) == Decimal("35.03")  # 0.03503% of Rs1,00,000 premium
+    assert Decimal(c["exchange_charges"]) == Decimal("35.53")  # 0.03553% (incl. IPFT) of Rs1,00,000 premium
     assert c["exchange"] == "NSE" and c["rates_verified"] is True
 
 
@@ -79,7 +79,8 @@ def test_sensex_uses_bse_schedule_and_crude_uses_ctt():
     c = calculate_indian_regulatory_charges(side="SELL", price=Decimal("100"), quantity=Decimal("100"),
                                             exchange="MCX", instrument_type="OPTION")
     assert c["transaction_tax_label"] == "CTT"
-    assert c["rates_verified"] is False  # flagged until checked against the MCX circular
+    assert c["rates_verified"] is True  # checked 2026-10-23 (CTT 0.05% on sells, exchange 0.0418%)
+    assert Decimal(c["stt"]) == Decimal("5.00")  # 0.05% CTT of Rs10,000 premium
 
 
 def test_unknown_schedule_is_refused():
@@ -129,7 +130,8 @@ def _configure_risk(session, capital=1000000.0):
     settings = get_settings()
     ensure_seed(session, settings)
     risk = current_config(session).risk.model_dump()
-    risk.update(risk_capital_inr=capital, max_open_positions=3, max_risk_fraction_per_trade=0.02, daily_loss_fraction=0.03)
+    risk.update(risk_capital_inr=capital, max_open_positions=3, max_risk_fraction_per_trade=0.02, daily_loss_fraction=0.03,
+                experimental_requires_server_ev=False)
     replace_section(session, settings, "risk", risk, actor="tester")
     session.commit()
 

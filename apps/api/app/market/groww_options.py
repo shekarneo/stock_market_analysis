@@ -69,9 +69,13 @@ def ist_today(now: datetime | None = None) -> date:
 
 
 def listed_expiries_for(underlying: str | None) -> tuple[str, ...] | None:
+    """Listed expiries: the refreshed instrument-master file first, then the built-in list."""
     from app.instruments import canonical_underlying
+    from app.market.instrument_master import load_listed_expiries
 
-    return LISTED_EXPIRIES.get(canonical_underlying(underlying) or "")
+    key = canonical_underlying(underlying) or ""
+    refreshed = load_listed_expiries().get(key)
+    return refreshed or LISTED_EXPIRIES.get(key)
 
 
 def validate_contract_expiry(

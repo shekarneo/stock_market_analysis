@@ -115,7 +115,7 @@ def test_quantitative_forecast_generation_and_no_model():
     assert feats is not None
     assert "ret_1" in feats
     assert "ret_3" in feats
-    assert "sma_3" in feats
+    assert "close_vs_sma_3" in feats  # scale-free model input (ohlc-2)
     assert "close_position" in feats
 
     # 2. Live forecast for NIFTY

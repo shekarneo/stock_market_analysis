@@ -176,8 +176,24 @@ def compute_feature_row(candles: list[Candle], index: int, calendar: ExchangeCal
     else:
         values["sma_3_minus_sma_5"] = _number(values["sma_3"].value - values["sma_5"].value)
 
+    # Scale-free versions of the moving averages (ohlc-2)
+    if values["sma_3"].status != "VALID" or not values["sma_3"].value:
+        values["close_vs_sma_3"] = FeatureValue(value=None, status=values["sma_3"].status if values["sma_3"].status != "VALID" else "INVALID_INPUT")
+    else:
+        values["close_vs_sma_3"] = _number(candle.close / values["sma_3"].value - 1)
+    if spread_status != "VALID" or values["sma_3"].value is None or not values["sma_5"].value:
+        values["sma_3_vs_sma_5"] = FeatureValue(value=None, status=spread_status if spread_status != "VALID" else "INVALID_INPUT")
+    else:
+        values["sma_3_vs_sma_5"] = _number(values["sma_3"].value / values["sma_5"].value - 1)
+
     values["ret_std_5"] = _return_std(candles, index)
     values["atr_3"] = _atr(candles, index)
+    if values["atr_3"].status != "VALID" or values["atr_3"].value is None:
+        values["atr_3_pct"] = FeatureValue(value=None, status=values["atr_3"].status)
+    elif candle.close <= 0 or not math.isfinite(candle.close):
+        values["atr_3_pct"] = FeatureValue(value=None, status="INVALID_INPUT")
+    else:
+        values["atr_3_pct"] = _number(values["atr_3"].value / candle.close)
     if candle.open <= 0 or not math.isfinite(candle.open):
         values["oc_return"] = FeatureValue(value=None, status="INVALID_INPUT")
     else:

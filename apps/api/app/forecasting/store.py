@@ -6,6 +6,7 @@ import json
 import re
 from pathlib import Path
 
+from app.features.definitions import FEATURE_SET_VERSION
 from app.features.pipeline import content_hash
 from app.settings import REPO_ROOT
 
@@ -68,7 +69,7 @@ class ExperimentStore:
             raise ExperimentStoreError("CHECKSUM_MISMATCH", "Experiment checksum does not match its contents.")
         if artifact.get("forecast_ready") is not False:
             raise ExperimentStoreError("APPROVAL_REFUSED", "An experiment cannot claim forecast readiness.")
-        if artifact.get("target_version") != "binary-1" or artifact.get("feature_set_version") != "ohlc-1":
+        if artifact.get("target_version") != "binary-1" or artifact.get("feature_set_version") != FEATURE_SET_VERSION:
             raise ExperimentStoreError("VERSION_MISMATCH", "Artifact versions are not the implemented pair.")
 
 
@@ -109,7 +110,7 @@ class WalkForwardStore(ExperimentStore):
             raise ExperimentStoreError("APPROVAL_REFUSED", "A walk-forward run cannot approve a model.")
         if artifact.get("live_approved") is not False or artifact.get("real_market_data_verified") is not False:
             raise ExperimentStoreError("APPROVAL_REFUSED", "A walk-forward run cannot claim verified market data.")
-        if artifact.get("target_version") != "binary-1" or artifact.get("feature_set_version") != "ohlc-1":
+        if artifact.get("target_version") != "binary-1" or artifact.get("feature_set_version") != FEATURE_SET_VERSION:
             raise ExperimentStoreError("VERSION_MISMATCH", "Artifact versions are not the implemented pair.")
         if artifact.get("evaluation_version") != "m4-expanding-1":
             raise ExperimentStoreError("VERSION_MISMATCH", "The walk-forward evaluation version is not m4-expanding-1.")

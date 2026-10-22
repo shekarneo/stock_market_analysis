@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
+from app.features.definitions import FEATURE_SET_VERSION
 from app.features.pipeline import content_hash
 from app.forecasting.metrics import binary_metrics
 from app.forecasting.models import (
@@ -205,7 +206,7 @@ def score_saved_logistic(artifact: dict, rows: list[dict]) -> dict:
     """Score rows with a sealed experiment. The caller passes the artifact, not a path."""
     if not _experiment_checksum(artifact):
         return _failure("CHECKSUM_MISMATCH", "The experiment checksum does not match its contents.")
-    if artifact.get("target_version") != TARGET_VERSION or artifact.get("feature_set_version") != "ohlc-1":
+    if artifact.get("target_version") != TARGET_VERSION or artifact.get("feature_set_version") != FEATURE_SET_VERSION:
         return _failure("VERSION_MISMATCH", "The artifact target or feature set is not the implemented pair.")
     if artifact.get("forecast_ready") is not False or artifact.get("production_approved") is not False:
         return _failure("APPROVAL_REFUSED", "This artifact cannot be loaded as an approved model.")
@@ -213,7 +214,7 @@ def score_saved_logistic(artifact: dict, rows: list[dict]) -> dict:
     if not model or not model.get("ok"):
         return _failure("MODEL_UNAVAILABLE", "The saved logistic model did not train.")
     if list(model.get("feature_names") or []) != list(MODEL_FEATURES):
-        return _failure("FEATURE_MISMATCH", "The saved features do not match ohlc-1 model inputs.")
+        return _failure("FEATURE_MISMATCH", f"The saved features do not match {FEATURE_SET_VERSION} model inputs.")
     probabilities = predict_logistic(model, rows)
     if probabilities is None:
         return _failure("MODEL_UNAVAILABLE", "The saved logistic model did not score.")

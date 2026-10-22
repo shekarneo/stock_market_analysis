@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.features.definitions import FEATURE_SET_VERSION
+
 from app.instruments import TRADABLE_UNDERLYINGS
 
 SCHEMA_VERSION = "m5-registry-1"
@@ -48,7 +50,7 @@ NOT_IMPLEMENTED_FAMILIES = frozenset(
 
 INSTRUMENTS = frozenset(TRADABLE_UNDERLYINGS)
 HORIZON = "M15"
-FEATURE_SET = "ohlc-1"
+FEATURE_SET = FEATURE_SET_VERSION
 TARGET_VERSION = "binary-1"
 TARGET_ID = "m15_next_close_direction"
 

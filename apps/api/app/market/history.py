@@ -13,6 +13,7 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+from app.features.definitions import FEATURE_SET_VERSION
 from app.features.pipeline import build_dataset, content_hash, seal
 from app.features.store import DatasetStore
 from app.instruments import REMOVED_UNDERLYINGS
@@ -497,7 +498,7 @@ def store_source_candles(
         "calendar_authoritative": False,
         "calendar_listed_sessions": sorted(day.isoformat() for day in calendar.listed_sessions),
         "calendar_closed_dates": sorted(day.isoformat() for day in calendar.closed_dates),
-        "feature_set_compatibility": "ohlc-1",
+        "feature_set_compatibility": FEATURE_SET_VERSION,
         "known_limitations": [
             "The fixture calendar is not an NSE or BSE holiday calendar.",
             "Provider candle revisions are not available.",

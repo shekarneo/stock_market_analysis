@@ -1,4 +1,10 @@
-"""Feature set ohlc-1.
+"""Feature set ohlc-2.
+
+ohlc-2 adds scale-free versions of the price-level features (close_vs_sma_3,
+sma_3_vs_sma_5, atr_3_pct). Model inputs use only scale-free features, so a model
+fitted on one price range is not pushed out of distribution as the index trends.
+The raw sma_3, sma_5, sma_3_minus_sma_5 and atr_3 columns are kept for lineage.
+
 
 These formulas describe the tape. They are not a claim that any feature predicts a return.
 Windows are trailing and end at the observation candle. Nothing in this set is centered,
@@ -7,7 +13,7 @@ scaled from a future sample, or filled from a missing bar.
 
 from __future__ import annotations
 
-FEATURE_SET_VERSION = "ohlc-1"
+FEATURE_SET_VERSION = "ohlc-2"
 PIPELINE_VERSION = "m2"
 DATASET_SCHEMA_VERSION = "1.0"
 MISSING_DATA_POLICY = "explicit_status_no_fill"
@@ -75,6 +81,20 @@ FEATURE_SPECS: dict[str, dict[str, str | int]] = {
         "warmup_bars": 4,
         "missing": "Unavailable when either moving average is unavailable; the stronger status is kept",
     },
+    "close_vs_sma_3": {
+        "formula": "close[t] / sma_3[t] - 1",
+        "inputs": "close, sma_3",
+        "lookback_bars": 3,
+        "warmup_bars": 2,
+        "missing": "Same status as sma_3 when sma_3 is unavailable",
+    },
+    "sma_3_vs_sma_5": {
+        "formula": "sma_3[t] / sma_5[t] - 1",
+        "inputs": "sma_3, sma_5",
+        "lookback_bars": 5,
+        "warmup_bars": 4,
+        "missing": "Unavailable when either moving average is unavailable; the stronger status is kept",
+    },
     "ret_std_5": {
         "formula": "sample standard deviation (divisor n-1) of ret_1[t-4] .. ret_1[t]",
         "inputs": "close",
@@ -88,6 +108,13 @@ FEATURE_SPECS: dict[str, dict[str, str | int]] = {
         "lookback_bars": 4,
         "warmup_bars": 3,
         "missing": "Arithmetic mean of three true ranges, not Wilder smoothing. WARMUP until three true ranges exist",
+    },
+    "atr_3_pct": {
+        "formula": "atr_3[t] / close[t]",
+        "inputs": "atr_3, close",
+        "lookback_bars": 4,
+        "warmup_bars": 3,
+        "missing": "Same status as atr_3 when atr_3 is unavailable; INVALID_INPUT if close is not positive",
     },
     "hl_range_vs_prev_close": {
         "formula": "(high[t] - low[t]) / close[t-1]",

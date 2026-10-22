@@ -198,8 +198,12 @@ def read_documented_ltp(caller, access_token: str) -> HttpResult:
     )
 
 
-def read_mcx_quote(caller, access_token: str, trading_symbol: str = "CRUDEOILM19OCT26FUT") -> HttpResult:
-    """GET the live MCX commodity quote from Groww official API."""
+def read_mcx_quote(caller, access_token: str, trading_symbol: str) -> HttpResult:
+    """GET the live MCX commodity quote from Groww official API.
+
+    The contract symbol is required: a hard-coded month goes stale. Resolve the front-month
+    future with app.market.instrument_master.front_month_future_symbol().
+    """
     params = {"exchange": "MCX", "segment": "COMMODITY", "trading_symbol": trading_symbol}
     return caller.send(
         "GET",
@@ -284,6 +288,36 @@ class GrowwCallError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+def expiries_url(exchange: str, underlying_symbol: str, year: int | None = None, month: int | None = None) -> str:
+    params = {"exchange": exchange, "underlying_symbol": underlying_symbol}
+    if year is not None:
+        params["year"] = str(year)
+    if month is not None:
+        params["month"] = str(month)
+    return f"{GROWW_ORIGIN}/v1/historical/expiries?" + urlencode(params)
+
+
+def read_expiries(
+    caller,
+    access_token: str,
+    *,
+    exchange: str,
+    underlying_symbol: str,
+    year: int | None = None,
+    month: int | None = None,
+) -> HttpResult:
+    """GET listed expiries for an NSE or BSE underlying (Groww Expiries API)."""
+    if exchange not in {"NSE", "BSE"}:
+        raise ValueError("The Groww Expiries API covers NSE and BSE only.")
+    return caller.send(
+        "GET",
+        expiries_url(exchange, underlying_symbol, year, month),
+        headers=_read_headers(access_token),
+        json_body=None,
+        timeout=15.0,
+    )
 
 
 def option_chain_url(exchange: str, underlying: str, expiry_date: str) -> str:

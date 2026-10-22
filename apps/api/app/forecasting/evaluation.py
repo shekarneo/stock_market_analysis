@@ -53,13 +53,13 @@ class FuturesCostModel:
     """Per-side cost of trading an index future, as a fraction of notional.
 
     Statutory rates for NSE index futures (re-check when SEBI/exchanges revise them):
-    STT 0.02% on the sell side, exchange transaction charge 0.00173%, SEBI fee
+    STT 0.02% on the sell side, exchange transaction charge 0.00173% plus 0.0001% IPFT, SEBI fee
     Rs10/crore (0.0001%), stamp duty 0.002% on the buy side, GST 18% on
     (brokerage + exchange + SEBI). Slippage is an assumption, not a statutory rate.
     """
 
     stt_sell: float = 0.0002
-    exchange_txn: float = 0.0000173
+    exchange_txn: float = 0.0000183
     sebi_fee: float = 0.000001
     stamp_buy: float = 0.00002
     gst_rate: float = 0.18

@@ -152,6 +152,10 @@ class RiskConfig(StrictModel):
     allowed_underlyings: list[Literal["NIFTY", "SENSEX", "CRUDEOILMINI", "BANKNIFTY", "CRUDEMINI"]]
     max_futures_lots_per_trade: int = Field(1, ge=1)
     quote_max_age_seconds: int = Field(15, ge=1)
+    # When true (default), experimental paper simulations need a server-computed expected
+    # net; a client-sent expected_net is never trusted. Operators may set it false in their
+    # stored config to exercise the paper pipeline while no EV model exists.
+    experimental_requires_server_ev: bool = True
 
     @field_validator("risk_capital_inr", "drawdown_lockout_fraction")
     @classmethod

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.features.definitions import FEATURE_SET_VERSION
+
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -260,7 +262,7 @@ def test_m2_m3_and_m4_accept_only_an_explicit_synthetic_source(tmp_path):
     artifact = built["artifact"]
     assert artifact["history_dataset_id"] == source["dataset_id"]
     assert artifact["history_checksum"] == source["checksum"]
-    assert artifact["feature_set_version"] == "ohlc-1"
+    assert artifact["feature_set_version"] == FEATURE_SET_VERSION
     assert artifact["forecast_ready"] is False
     direct = build_dataset(bars(25), fixture_calendar())
     assert [row["as_of"] for row in artifact["rows"]] == [row["as_of"] for row in direct.artifact["rows"]]

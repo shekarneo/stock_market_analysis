@@ -286,9 +286,9 @@ def test_identical_inputs_are_stable_and_versions_change_the_id(tmp_path):
     shifted = build_dataset(candles, custom)
     assert shifted.artifact["dataset_id"] != first.artifact["dataset_id"]
     body = {key: value for key, value in first.artifact.items() if key not in {"dataset_id", "checksum"}}
-    changed = {**body, "feature_set_version": "ohlc-2"}
+    changed = {**body, "feature_set_version": "ohlc-99"}
     assert content_hash(changed) != first.artifact["dataset_id"]
-    refused = build_dataset(candles, calendar, feature_set_version="ohlc-2")
+    refused = build_dataset(candles, calendar, feature_set_version="ohlc-99")
     assert refused.ok is False
     assert refused.code == "UNKNOWN_FEATURE_SET"
     assert refused.artifact is None

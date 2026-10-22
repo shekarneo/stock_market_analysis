@@ -61,6 +61,7 @@ risk:
   allowed_underlyings: [NIFTY, SENSEX, CRUDEOILMINI]
   max_futures_lots_per_trade: 1
   quote_max_age_seconds: 15
+  experimental_requires_server_ev: true
 execution:
   quote_max_age_seconds: 15
   paper_haircut: half_spread

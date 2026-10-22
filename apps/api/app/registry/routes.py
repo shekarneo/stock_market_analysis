@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.registry.schema import FEATURE_SET
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -49,7 +51,7 @@ class DefineBody(BaseModel):
     family: str
     instrument: str
     horizon: str
-    feature_schema_version: str = "ohlc-1"
+    feature_schema_version: str = FEATURE_SET
     target_version: str = "binary-1"
     recorded_at: str | None = None
     expected_revision: int | None = None
