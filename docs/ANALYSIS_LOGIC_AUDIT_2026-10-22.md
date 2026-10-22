@@ -153,3 +153,44 @@ Still open:
 - **Option P&L backtest:** this needs historical option-chain data, which is not in the repo. Costs remain futures-based.
 - **Results:** regenerate the M37/M40/M42 artifacts on the Linux box. Past report numbers (M28–M42 docs) were produced with the old aggregation and should not be quoted.
 - **CLI golden test:** since Phase 2, NIFTY sizing uses lot 65 (the earlier tests assumed 25). Any golden numbers from older runs no longer apply.
+
+
+---
+
+## Phase 4 status (2026-10-23): implemented
+
+Verified on a temporary SQLite database with Postgres functions stubbed. The Postgres test suite has not been run.
+
+**Headline sentiment (`analysis/intelligence.py`)**
+- Matching is now whole-word and negation-aware. "war" no longer matches "software", "gain" no longer matches "against", and "bull" no longer matches "bulletin".
+- IPO terms are dropped.
+- A relevance filter decides which headlines count for each instrument: equity terms for NIFTY and SENSEX, crude terms for CRUDEOILMINI.
+- Equity risk words such as war and recession are not applied to crude.
+- A news vote needs at least 2 relevant headlines, with the dominant side at least twice the other.
+- Directions supplied by the news provider are stored separately from inferred ones.
+
+**Paper simulation (`execution/simulation.py`)**
+- The bid is carried into the intent. A missing quote side returns `QUOTE_SIDE_UNAVAILABLE` instead of crashing.
+- Quantity is `lots` × lot size. `lots` is a new request field, and the exposure gate vetoes `LOTS_EXCEED_RISK_BUDGET` when it is above the risk-sized lot count.
+- A close needs an exit price, or an exit quote with the right side. It is no longer booked flat at the entry price.
+- Exit charges reuse the entry's charges-per-lot.
+- Charge schedules are set per exchange and instrument type:
+  - NSE options: exchange charge 0.03503%.
+  - BSE options: 0.0325%.
+  - NSE futures: their own rates.
+  - MCX: uses CTT and is flagged `rates_verified: false`.
+- The fill breakdown records the exchange, lot size and charges-per-lot.
+
+**Risk gates (`risk/gates.py`)**
+- Selling an option to open is `SHORT_CE` / `SHORT_PE`, which is not on the allow-list. Selling to exit is still allowed.
+- Experimental relaxed gates are granted only server-side (`_server_experimental`: PAPER mode, kill switch off, all virtual risk controls configured). A request body can ask but cannot grant.
+- The daily-loss lockout counts realized P&L by IST session day only. It no longer also matches the UTC date.
+- `expected_net` is now labelled `CLIENT_SUPPLIED` in the intent. It is still accepted as input.
+
+Still open:
+- Server-side EV for `expected_net`.
+- MCX charge rate verification.
+- Expiry calendars for SENSEX and MCX.
+- The m39 options-analytics defaults and theta sign.
+- Consensus veto design.
+- Live-model feature normalization.

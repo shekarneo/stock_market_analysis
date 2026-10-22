@@ -51,7 +51,9 @@ def evaluate(
     if purpose not in {"ENTRY", "EXIT"}:
         reasons.append("INVALID_INTENT_PURPOSE")
 
-    is_experimental = intent.get("execution_context") == "EXPERIMENTAL" or intent.get("experimental") is True
+    # Only the server may grant the relaxed experimental gates (see simulation._server_experimental);
+    # a request asking for EXPERIMENTAL is ignored unless experimental_granted is set server-side.
+    is_experimental = intent.get("experimental_granted") is True
 
     gates = [
         _mode_gate(intent.get("mode"), reasons),
@@ -229,6 +231,13 @@ def _exposure_gate(intent: dict, risk: RiskConfig, reasons: list[str], *, apply:
         if "LOT_COUNT_BELOW_ONE" in sized["reasons"]:
             reasons.append("LOT_COUNT_BELOW_ONE")
             return _gate("exposure", "VETO", True, "LOT_COUNT_BELOW_ONE")
+        if sized["reasons"]:
+            reasons.extend(sized["reasons"])
+            return _gate("exposure", "VETO", True, sized["reasons"][0])
+        requested_lots = intent.get("lots") or 1
+        if sized["lot_count"] is not None and int(requested_lots) > sized["lot_count"]:
+            reasons.append("LOTS_EXCEED_RISK_BUDGET")
+            return _gate("exposure", "VETO", True, "LOTS_EXCEED_RISK_BUDGET")
         return _gate("exposure", "PASS", True, "ESTIMATED_STATUTORY_CHARGES")
     sized = size_position(
         ask=intent.get("ask"),
@@ -290,8 +299,9 @@ def _experimental_paper_portfolio_state(session: Session, session_date_str: str 
             if target_day is None:
                 daily_realized_pnl += pnl_float
             elif isinstance(row.occurred_at, datetime):
-                row_day = row.occurred_at.astimezone(ist_tz).date() if row.occurred_at.tzinfo else row.occurred_at.date()
-                if row_day == target_day or row.occurred_at.date() == target_day:
+                # Session days are IST; naive timestamps are stored as UTC
+                occurred = row.occurred_at if row.occurred_at.tzinfo else row.occurred_at.replace(tzinfo=timezone.utc)
+                if occurred.astimezone(ist_tz).date() == target_day:
                     daily_realized_pnl += pnl_float
 
     open_count = len(fill_intents - exit_intents)
@@ -422,7 +432,13 @@ def _allow_list_gate(intent: dict, risk: RiskConfig, reasons: list[str]) -> dict
         side = intent.get("side") or intent.get("action")
         structure = "LONG_FUT" if side == "BUY" else "SHORT_FUT" if side == "SELL" else None
     else:
-        structure = {"CE": "LONG_CE", "PE": "LONG_PE"}.get(intent.get("option_type"))
+        option_type = intent.get("option_type")
+        side = intent.get("side") or "BUY"
+        # Selling an option to open is a short position; selling to exit closes a long one
+        if side == "SELL" and intent.get("intent_purpose") != "EXIT":
+            structure = {"CE": "SHORT_CE", "PE": "SHORT_PE"}.get(option_type)
+        else:
+            structure = {"CE": "LONG_CE", "PE": "LONG_PE"}.get(option_type)
     if intent.get("underlying") not in risk.allowed_underlyings or structure not in risk.allowed_structures:
         reasons.append("NOT_ON_ALLOW_LIST")
         return _gate("allow_list", "VETO", True, "NOT_ON_ALLOW_LIST")

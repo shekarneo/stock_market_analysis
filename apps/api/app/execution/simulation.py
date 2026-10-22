@@ -105,6 +105,10 @@ def run_paper_simulation(session: Session, body: dict, *, actor: str) -> dict:
     occurred_at = body.get("occurred_at")
     if not isinstance(intent_id, str) or not isinstance(occurred_at, datetime):
         return _finish(session, actor, None, "INVALID_INTENT", ["INVALID_INTENT"], state=None, risk=None)
+    # Never trust a client-sent grant; compute it from the operator's configuration
+    body = {key: value for key, value in body.items() if key != "_experimental_granted"}
+    if body.get("execution_context") == "EXPERIMENTAL":
+        body["_experimental_granted"] = _server_experimental(session)
     snapshot = _snapshot(body, occurred_at)
     if snapshot is None:
         return _finish(session, actor, intent_id, "INVALID_INTENT", ["INVALID_INTENT"], state=None, risk=None)
@@ -144,6 +148,26 @@ def reconcile_intent(session: Session, intent_id: str) -> dict:
     }
 
 
+def _server_experimental(session: Session) -> bool:
+    """Experimental paper gates are granted only when the operator's own config allows them:
+    PAPER mode, kill switch off, and every virtual risk control configured."""
+    from app.config.store import current_config
+    from app.risk.ledger import read_kill_switch
+
+    try:
+        config = current_config(session)
+    except Exception:
+        return False
+    risk = config.risk
+    configured = (
+        risk.risk_capital_inr is not None and float(risk.risk_capital_inr) > 0
+        and risk.max_open_positions is not None and risk.max_open_positions > 0
+        and risk.max_risk_fraction_per_trade is not None and risk.max_risk_fraction_per_trade > 0
+        and risk.daily_loss_fraction is not None and risk.daily_loss_fraction > 0
+    )
+    return config.runtime.mode.value == "PAPER" and not bool(read_kill_switch(session)) and configured
+
+
 def _risk_intent(body: dict) -> dict:
     quote = body.get("quote") if isinstance(body.get("quote"), dict) else None
     return {
@@ -157,14 +181,19 @@ def _risk_intent(body: dict) -> dict:
         "forecast": body.get("forecast"),
         "expected_net": body.get("expected_net"),
         "ask": None if quote is None else quote.get("ask"),
+        "bid": None if quote is None else quote.get("bid"),
+        "lots": body.get("lots"),
         "lot_size": body.get("lot_size"),
         "tick_size": body.get("tick_size"),
         "charges_per_lot": body.get("charges_per_lot"),
         "session_date": body.get("session_date"),
         "master": body.get("master"),
         "entry_plan": _entry_plan(body.get("entry_plan")),
+        # What the client asked for is recorded; whether it is granted is decided server-side
         "execution_context": body.get("execution_context"),
-        "experimental": body.get("experimental") or (body.get("execution_context") == "EXPERIMENTAL"),
+        "experimental_requested": body.get("execution_context") == "EXPERIMENTAL",
+        "experimental_granted": bool(body.get("_experimental_granted")),
+        "expected_net_source": "CLIENT_SUPPLIED" if body.get("expected_net") is not None else None,
         "side": body.get("side", "BUY"),
     }
 
@@ -269,20 +298,56 @@ def _recover(session: Session, actor: str, intent_id: str, snapshot: dict, state
     return _evaluate_stored(session, actor, intent_id, stored, recovery=True)
 
 
-def calculate_indian_regulatory_charges(*, side: str, price: Decimal, quantity: Decimal, charges_per_lot: Decimal | None = None, lot_size: Decimal | None = None) -> dict:
-    """Calculate Indian regulatory and exchange charges for options trading on NSE."""
+# Statutory charge schedules per exchange and instrument type, as fractions of turnover
+# (premium turnover for options, notional for futures). Re-check whenever SEBI or an
+# exchange revises them. MCX rates are marked unverified until checked against the
+# current MCX circular.
+CHARGE_SCHEDULES: dict[tuple[str, str], dict] = {
+    ("NSE", "OPTION"): {"stt_sell": "0.001", "stamp_buy": "0.00003", "exchange": "0.0003503", "verified": True, "tax_label": "STT"},
+    ("BSE", "OPTION"): {"stt_sell": "0.001", "stamp_buy": "0.00003", "exchange": "0.000325", "verified": True, "tax_label": "STT"},
+    ("NSE", "FUTURE"): {"stt_sell": "0.0002", "stamp_buy": "0.00002", "exchange": "0.0000173", "verified": True, "tax_label": "STT"},
+    ("MCX", "OPTION"): {"stt_sell": "0.0005", "stamp_buy": "0.00003", "exchange": "0.000418", "verified": False, "tax_label": "CTT"},
+    ("MCX", "FUTURE"): {"stt_sell": "0.0001", "stamp_buy": "0.00002", "exchange": "0.000021", "verified": False, "tax_label": "CTT"},
+}
+SEBI_FEE = Decimal("0.000001")  # Rs10 per crore
+GST_RATE = Decimal("0.18")
+BROKERAGE_PER_ORDER_INR = Decimal("20.00")
+
+
+def charge_schedule_for(underlying: object, instrument_type: str = "OPTION") -> tuple[str, dict] | None:
+    """Exchange and schedule for an underlying from the instrument master; None if unknown."""
+    from app.instrument_specs import get_spec
+
+    spec = get_spec(underlying if isinstance(underlying, str) else None)
+    if spec is None:
+        return None
+    schedule = CHARGE_SCHEDULES.get((spec.exchange, instrument_type))
+    return (spec.exchange, schedule) if schedule else None
+
+
+def calculate_indian_regulatory_charges(
+    *,
+    side: str,
+    price: Decimal,
+    quantity: Decimal,
+    charges_per_lot: Decimal | None = None,
+    lot_size: Decimal | None = None,
+    exchange: str = "NSE",
+    instrument_type: str = "OPTION",
+) -> dict:
+    """Statutory and exchange charges for one fill on the given exchange and instrument type."""
+    schedule = CHARGE_SCHEDULES.get((exchange.upper(), instrument_type.upper()))
+    if schedule is None:
+        raise ValueError(f"CHARGE_SCHEDULE_UNAVAILABLE: no charge schedule for {exchange} {instrument_type}.")
     turnover = (price * quantity).quantize(Decimal("0.01"))
-    brokerage = Decimal("20.00")
-    # STT: 0.1% on sell side premium turnover
-    stt = (turnover * Decimal("0.001")).quantize(Decimal("0.01")) if side.upper() == "SELL" else Decimal("0.00")
-    # Stamp duty: 0.003% on buy side premium turnover
-    stamp_duty = (turnover * Decimal("0.00003")).quantize(Decimal("0.01")) if side.upper() == "BUY" else Decimal("0.00")
-    # Exchange transaction charges: 0.05% of premium turnover
-    exchange_charges = (turnover * Decimal("0.0005")).quantize(Decimal("0.01"))
-    # SEBI turnover charge: 10 per crore (0.0001%)
-    sebi_charges = (turnover * Decimal("0.000001")).quantize(Decimal("0.01"))
-    # GST: 18% on (brokerage + exchange_charges + sebi_charges)
-    gst = ((brokerage + exchange_charges + sebi_charges) * Decimal("0.18")).quantize(Decimal("0.01"))
+    brokerage = BROKERAGE_PER_ORDER_INR
+    is_sell = side.upper() == "SELL"
+    # STT (equity derivatives) or CTT (commodity derivatives) on the sell side
+    stt = (turnover * Decimal(schedule["stt_sell"])).quantize(Decimal("0.01")) if is_sell else Decimal("0.00")
+    stamp_duty = (turnover * Decimal(schedule["stamp_buy"])).quantize(Decimal("0.01")) if not is_sell else Decimal("0.00")
+    exchange_charges = (turnover * Decimal(schedule["exchange"])).quantize(Decimal("0.01"))
+    sebi_charges = (turnover * SEBI_FEE).quantize(Decimal("0.01"))
+    gst = ((brokerage + exchange_charges + sebi_charges) * GST_RATE).quantize(Decimal("0.01"))
     statutory_total = (brokerage + stt + stamp_duty + exchange_charges + sebi_charges + gst).quantize(Decimal("0.01"))
     if charges_per_lot is not None and lot_size is not None and lot_size > 0:
         lots = (quantity / lot_size).quantize(Decimal("1"))
@@ -293,11 +358,17 @@ def calculate_indian_regulatory_charges(*, side: str, price: Decimal, quantity: 
     return {
         "brokerage": str(brokerage),
         "stt": str(stt),
+        "transaction_tax_label": schedule["tax_label"],
         "stamp_duty": str(stamp_duty),
         "exchange_charges": str(exchange_charges),
         "sebi_charges": str(sebi_charges),
         "gst": str(gst),
         "total_charges_inr": str(total),
+        "exchange": exchange.upper(),
+        "instrument_type": instrument_type.upper(),
+        "rates_verified": bool(schedule["verified"]),
+        "lot_size": str(lot_size) if lot_size is not None else None,
+        "charges_per_lot": str(charges_per_lot) if charges_per_lot is not None else None,
     }
 
 
@@ -334,9 +405,20 @@ def _execute_simulated_paper_trade(
     ask = intent.get("ask")
     haircut = "half_spread"
     priced = simulated_execution_price(side=side, bid=bid, ask=ask, haircut=haircut, extra_tick_penalty=False)
-    fill_price = Decimal(str(priced["price"])) if priced.get("price") is not None else (Decimal(str(ask)) if side == "BUY" else Decimal(str(bid)))
+    if priced.get("price") is not None:
+        fill_price = Decimal(str(priced["price"]))
+    else:
+        touch = ask if side == "BUY" else bid
+        if touch is None:
+            # A SELL needs a bid and a BUY needs an ask; never price a fill from nothing
+            return _finish(session, actor, intent_id, "QUOTE_SIDE_UNAVAILABLE", ["QUOTE_SIDE_UNAVAILABLE"], state=current_state(session, intent_id), risk=risk)
+        fill_price = Decimal(str(touch))
     lot_size = _resolve_lot_size(intent.get("lot_size"), intent.get("underlying"))
-    quantity = lot_size
+    lots = int(intent.get("lots") or 1)
+    quantity = lot_size * lots
+    schedule = charge_schedule_for(intent.get("underlying"), "OPTION" if intent.get("option_type") else "FUTURE")
+    if schedule is None:
+        return _finish(session, actor, intent_id, "CHARGE_SCHEDULE_UNAVAILABLE", ["CHARGE_SCHEDULE_UNAVAILABLE"], state=current_state(session, intent_id), risk=risk)
 
     charges_info = calculate_indian_regulatory_charges(
         side=side,
@@ -344,6 +426,8 @@ def _execute_simulated_paper_trade(
         quantity=quantity,
         charges_per_lot=Decimal(str(intent["charges_per_lot"])) if intent.get("charges_per_lot") else None,
         lot_size=lot_size,
+        exchange=schedule[0],
+        instrument_type="OPTION" if intent.get("option_type") else "FUTURE",
     )
     total_charges = Decimal(charges_info["total_charges_inr"])
 
@@ -371,6 +455,7 @@ def _execute_simulated_paper_trade(
         "strike": intent.get("strike"),
         "option_type": intent.get("option_type"),
         "quantity": str(quantity),
+        "lots": lots,
         "price": str(fill_price),
         "charges_inr": str(total_charges),
         "slippage_inr": "0.05",
@@ -472,7 +557,7 @@ def _evaluate_stored(session: Session, actor: str, intent_id: str, snapshot: dic
             recovery=recovery,
         )
     if risk["passed"]:
-        if snapshot.get("risk_intent", {}).get("execution_context") == "EXPERIMENTAL":
+        if snapshot.get("risk_intent", {}).get("experimental_granted") is True:
             return _execute_simulated_paper_trade(
                 session,
                 actor,
@@ -947,7 +1032,10 @@ def close_paper_position(
         }
 
     entry_payload = entry_event.payload or {}
-    entry_price = Decimal(str(entry_payload.get("price") or entry_event.price or "0.0"))
+    recorded_entry = entry_payload.get("price") or entry_event.price
+    if recorded_entry is None:
+        return {"ok": False, "status": "ENTRY_PRICE_MISSING", "message": f"Entry price for {intent_id} is not recorded; P&L cannot be computed."}
+    entry_price = Decimal(str(recorded_entry))
     entry_charges = Decimal(str(entry_payload.get("charges_inr") or entry_event.charges_inr or "0.0"))
     entry_side = entry_payload.get("side", "BUY")
     underlying = entry_payload.get("underlying")
@@ -967,17 +1055,34 @@ def close_paper_position(
         ask = exit_quote.get("ask")
         haircut = "half_spread"
         priced = simulated_execution_price(side=exit_side, bid=bid, ask=ask, haircut=haircut, extra_tick_penalty=False)
-        final_exit_price = Decimal(str(priced["price"])) if priced.get("price") is not None else (Decimal(str(bid)) if exit_side == "SELL" else Decimal(str(ask)))
+        touch = bid if exit_side == "SELL" else ask
+        if priced.get("price") is not None:
+            final_exit_price = Decimal(str(priced["price"]))
+        elif touch is not None:
+            final_exit_price = Decimal(str(touch))
+        else:
+            return {"ok": False, "status": "EXIT_PRICE_REQUIRED",
+                    "message": f"The exit quote has no {'bid' if exit_side == 'SELL' else 'ask'} to {exit_side.lower()} into."}
     else:
-        final_exit_price = entry_price
+        # Never book an exit at the entry price: that would fabricate a flat result
+        return {"ok": False, "status": "EXIT_PRICE_REQUIRED",
+                "message": "An exit price or a live exit quote is required to close a paper position."}
 
     # 4. Calculate Indian regulatory exit charges
+    entry_breakdown = entry_payload.get("charges_breakdown") or {}
+    entry_cpl = entry_breakdown.get("charges_per_lot")
+    exit_instrument = entry_breakdown.get("instrument_type") or ("OPTION" if entry_payload.get("option_type") else "FUTURE")
+    exit_schedule = charge_schedule_for(underlying, exit_instrument)
+    if exit_schedule is None:
+        return {"ok": False, "status": "CHARGE_SCHEDULE_UNAVAILABLE", "message": f"No charge schedule for {underlying}."}
     exit_charges_info = calculate_indian_regulatory_charges(
         side=exit_side,
         price=final_exit_price,
         quantity=quantity,
-        charges_per_lot=Decimal("25.00"),
+        charges_per_lot=Decimal(str(entry_cpl)) if entry_cpl else None,
         lot_size=lot_size,
+        exchange=exit_schedule[0],
+        instrument_type=exit_instrument,
     )
     exit_charges_total = Decimal(exit_charges_info["total_charges_inr"])
 

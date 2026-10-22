@@ -174,25 +174,92 @@ def build_intelligence(
     }
 
 
-def _infer_headline_direction(text: str) -> str:
+# Headline lexicon. Whole words only (so "war" never matches "software" and "gain" never
+# matches "against"). Price-move words apply to whatever the headline is about; the
+# macro words describe risk appetite for Indian equities and are not used for crude.
+_MOVE_UP = (
+    "surge", "surges", "surged", "jump", "jumps", "jumped", "rally", "rallies", "rallied",
+    "gain", "gains", "gained", "soar", "soars", "soared", "climb", "climbs", "climbed",
+    "rise", "rises", "rose", "rebound", "rebounds", "rebounded", "record high", "hits high",
+)
+_MOVE_DOWN = (
+    "plunge", "plunges", "plunged", "fall", "falls", "fell", "drop", "drops", "dropped",
+    "slump", "slumps", "slumped", "crash", "crashes", "crashed", "decline", "declines", "declined",
+    "tumble", "tumbles", "tumbled", "slide", "slides", "slid", "sink", "sinks", "sank",
+    "selloff", "sell-off", "hits low",
+)
+_EQUITY_RISK_ON = ("upgrade", "upgrades", "rate cut", "inflows", "beats estimates", "outperform", "outperforms")
+_EQUITY_RISK_OFF = (
+    "downgrade", "downgrades", "recession", "war", "crisis", "outflows", "rate hike",
+    "misses estimates", "underperform", "underperforms",
+)
+_NEGATORS = {"no", "not", "never", "without", "halts", "halted", "ends", "ended", "fails", "failed", "denies", "denied"}
+
+_RELEVANCE = {
+    "EQUITY": (
+        "nifty", "sensex", "dalal street", "indian equities", "indian shares", "indian stocks",
+        "stock market", "stocks", "markets", "equities", "bse", "nse", "fii", "fpi", "india inc", "rbi",
+    ),
+    "CRUDE": ("crude", "oil", "brent", "wti", "opec", "petroleum"),
+}
+
+
+def _phrase_pattern(phrase: str) -> re.Pattern:
+    return re.compile(r"(?<![\w-])" + r"\s+".join(re.escape(part) for part in phrase.split()) + r"(?![\w-])")
+
+
+_PATTERNS = {phrase: _phrase_pattern(phrase) for phrase in
+             _MOVE_UP + _MOVE_DOWN + _EQUITY_RISK_ON + _EQUITY_RISK_OFF + _RELEVANCE["EQUITY"] + _RELEVANCE["CRUDE"]}
+
+
+def _count_hits(lower: str, phrases: tuple[str, ...]) -> int:
+    """Whole-word hits, skipping any preceded by a negator within three words."""
+    hits = 0
+    for phrase in phrases:
+        for match in _PATTERNS[phrase].finditer(lower):
+            preceding = re.findall(r"[\w-]+", lower[:match.start()])[-3:]
+            if not any(word in _NEGATORS for word in preceding):
+                hits += 1
+    return hits
+
+
+def _instrument_family(instrument: str | None) -> str | None:
+    if instrument is None:
+        return None
+    return "CRUDE" if canonical_underlying(instrument) in CRUDE_FAMILY or instrument.upper() in COMMODITY_TARGETS else "EQUITY"
+
+
+def headline_is_relevant(text: str, instrument: str) -> bool:
+    family = _instrument_family(instrument)
     lower = text.lower()
-    bullish_keywords = (
-        "profit", "surge", "surges", "jump", "jumps", "rally", "rallies", "gain", "gains",
-        "record high", "soar", "soars", "upbeat", "boost", "boosts", "breakout", "bull",
-        "growth", "outperform", "dividend", "revenue up", "expansion", "allotment", "gmp at"
-    )
-    bearish_keywords = (
-        "loss", "plunge", "plunges", "fall", "falls", "drop", "drops", "slump", "slumps",
-        "crash", "decline", "declines", "tumble", "tumbles", "deficit", "inflation", "war",
-        "recession", "threat", "selloff", "bear", "downgrade", "crisis", "warning", "probe"
-    )
-    bull_count = sum(1 for kw in bullish_keywords if kw in lower)
-    bear_count = sum(1 for kw in bearish_keywords if kw in lower)
-    if bull_count > bear_count:
+    return family is not None and any(_PATTERNS[term].search(lower) for term in _RELEVANCE[family])
+
+
+def _infer_headline_direction(text: str, instrument: str | None = None) -> str:
+    """BULLISH / BEARISH / UNKNOWN for a headline, optionally from one instrument's view.
+
+    With an instrument, an irrelevant headline is UNKNOWN, and equity risk words are not
+    applied to crude. Ties and negated cues are UNKNOWN.
+    """
+    lower = text.lower()
+    family = _instrument_family(instrument)
+    if instrument is not None and not headline_is_relevant(text, instrument):
+        return "UNKNOWN"
+    up = _count_hits(lower, _MOVE_UP)
+    down = _count_hits(lower, _MOVE_DOWN)
+    if family != "CRUDE":
+        up += _count_hits(lower, _EQUITY_RISK_ON)
+        down += _count_hits(lower, _EQUITY_RISK_OFF)
+    if up > down:
         return "BULLISH"
-    if bear_count > bull_count:
+    if down > up:
         return "BEARISH"
     return "UNKNOWN"
+
+
+# A news vote needs at least this many relevant directional headlines, with the
+# dominant side at least twice the other; one headline never moves the call.
+NEWS_MIN_HEADLINES = 2
 
 
 def _news(rows: list[dict]) -> list[dict]:
@@ -213,6 +280,7 @@ def _news(rows: list[dict]) -> list[dict]:
                 "event_category": row.get("event_category"),
                 "affected_entities": list(row.get("affected_entities") or []),
                 "directions": [],
+                "explicit_directions": [],
                 "data_class": data_class(row),
                 "verification_status": row.get("verification_status") or "UNVERIFIED",
                 "conflicts": False,
@@ -222,6 +290,8 @@ def _news(rows: list[dict]) -> list[dict]:
         if source not in event["sources"]:
             event["sources"].append(source)
         direction = row.get("directional_implication")
+        if direction in {"BULLISH", "BEARISH"} and direction not in event["explicit_directions"]:
+            event["explicit_directions"].append(direction)
         if (not direction or direction == "UNKNOWN") and row.get("claim"):
             inferred = _infer_headline_direction(f"{row.get('claim', '')} {row.get('summary', '')}")
             if inferred != "UNKNOWN":
@@ -450,21 +520,33 @@ def _row_price_direction(row: dict | None) -> str:
 
 
 def _evaluate_market_consensus(rows: list[dict], instrument: str, news: list[dict] | None = None) -> dict:
-    # 1. News Sentiment Agent
-    news_items = news or []
-    n_bull = sum(1 for n in news_items if "BULLISH" in n.get("directions", []))
-    n_bear = sum(1 for n in news_items if "BEARISH" in n.get("directions", []))
-    if n_bull > n_bear:
+    # 1. News Sentiment Agent: only headlines relevant to this instrument count
+    n_bull = n_bear = n_relevant = 0
+    for item in news or []:
+        text = f"{item.get('claim') or ''} {item.get('summary') or ''}"
+        if not headline_is_relevant(text, instrument):
+            continue
+        n_relevant += 1
+        explicit = [d for d in item.get("explicit_directions") or [] if d in {"BULLISH", "BEARISH"}]
+        direction = explicit[0] if len(set(explicit)) == 1 else _infer_headline_direction(text, instrument)
+        if direction == "BULLISH":
+            n_bull += 1
+        elif direction == "BEARISH":
+            n_bear += 1
+    if n_bull >= NEWS_MIN_HEADLINES and n_bull >= 2 * n_bear:
         news_stance = "BULLISH"
-        news_summary = f"{n_bull} bullish headline(s) lead sentiment vs {n_bear} bearish."
+        news_summary = f"{n_bull} bullish vs {n_bear} bearish headline(s) relevant to {instrument}."
         news_score = 1
-    elif n_bear > n_bull:
+    elif n_bear >= NEWS_MIN_HEADLINES and n_bear >= 2 * n_bull:
         news_stance = "BEARISH"
-        news_summary = f"{n_bear} bearish headline(s) lead sentiment vs {n_bull} bullish."
+        news_summary = f"{n_bear} bearish vs {n_bull} bullish headline(s) relevant to {instrument}."
         news_score = -1
     else:
         news_stance = "NEUTRAL"
-        news_summary = f"Balanced sentiment ({n_bull} bull / {n_bear} bear)."
+        news_summary = (
+            f"No clear headline signal for {instrument} ({n_bull} bull / {n_bear} bear of {n_relevant} relevant); "
+            f"a vote needs {NEWS_MIN_HEADLINES}+ agreeing headlines."
+        )
         news_score = 0
 
     # 2. Macro & Cross-Asset Agent

@@ -6,7 +6,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.auth import read_session, require_csrf
@@ -40,6 +40,7 @@ class PaperSimulationBody(BaseModel):
     strike: str | None = None
     option_type: str | None = None
     lot_size: str | None = None
+    lots: int | None = Field(default=None, ge=1)
     tick_size: str | None = None
     charges_per_lot: str | None = None
     expected_net: str | None = None
