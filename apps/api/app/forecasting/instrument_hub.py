@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.instrument_specs import lot_size_for, strike_step_for
 from app.market.live_quotes import load_read
 from app.market.schemas import IST
 from app.market.session_intelligence import (
@@ -49,8 +50,8 @@ INSTRUMENT_CATALOG: dict[str, dict[str, Any]] = {
         "exchange": "NSE",
         "segment": "NSE_CASH",
         "asset_class": "EQUITY_INDEX",
-        "contract_lot_size": 25,
-        "strike_step": 50,
+        "contract_lot_size": lot_size_for("NIFTY"),
+        "strike_step": strike_step_for("NIFTY"),
         "session_timings": "09:15 - 15:30 IST",
         "session_type": "NSE Regular Session",
         "data_source": "Groww Trade API / Quarantined Storage",
@@ -87,8 +88,8 @@ INSTRUMENT_CATALOG: dict[str, dict[str, Any]] = {
         "exchange": "BSE",
         "segment": "BSE_CASH",
         "asset_class": "EQUITY_INDEX",
-        "contract_lot_size": 20,
-        "strike_step": 100,
+        "contract_lot_size": lot_size_for("SENSEX"),
+        "strike_step": strike_step_for("SENSEX"),
         "session_timings": "09:15 - 15:30 IST",
         "session_type": "BSE Regular Session",
         "data_source": "BSE Cash Feed / Groww LTP",
@@ -119,8 +120,8 @@ INSTRUMENT_CATALOG: dict[str, dict[str, Any]] = {
         "exchange": "MCX",
         "segment": "MCX_COMMODITY",
         "asset_class": "COMMODITY_FUTURES",
-        "contract_lot_size": 10,  # 10 barrels
-        "strike_step": 50,
+        "contract_lot_size": lot_size_for("CRUDEOILMINI"),  # barrels
+        "strike_step": strike_step_for("CRUDEOILMINI"),
         "session_timings": "09:00 - 23:30 IST (23:55 winter)",
         "session_type": "MCX Extended Commodity Session",
         "data_source": "MCX Real-time Feed / International Benchmark Proxies",

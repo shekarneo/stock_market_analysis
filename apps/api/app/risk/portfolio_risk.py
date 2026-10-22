@@ -28,19 +28,16 @@ import math
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app.instrument_specs import INSTRUMENT_SPECS, lot_size_for
 from app.risk.money import decimal_or_none
 from app.settings import REPO_ROOT
 
 log = logging.getLogger("imm.risk.portfolio")
 ASIA_KOLKATA = ZoneInfo("Asia/Kolkata")
 
-# Standard lot sizes for major Indian index derivatives
+# Lot sizes for tradable underlyings, derived from the instrument master (app/instrument_specs.py)
 INDIAN_LOT_SIZES: dict[str, int] = {
-    "NIFTY": 25,
-    "BANKNIFTY": 15,
-    "FINNIFTY": 25,
-    "MIDCPNIFTY": 50,
-    "SENSEX": 10,
+    inst: spec.lot_size for inst, spec in INSTRUMENT_SPECS.items() if spec.lot_size is not None
 }
 
 # Maximum permissible risk fraction of total capital per individual trade
@@ -119,8 +116,8 @@ def calculate_volatility_parity_size(
     if atr_dec is None or atr_dec <= Decimal("0"):
         reasons.append("INVALID_ATR_VALUE")
 
-    lot_size = custom_lot_size or INDIAN_LOT_SIZES.get(instrument.upper(), 1)
-    if lot_size <= 0:
+    lot_size = custom_lot_size or lot_size_for(instrument)
+    if lot_size is None or lot_size <= 0:
         reasons.append("INVALID_LOT_SIZE")
 
     if reasons:

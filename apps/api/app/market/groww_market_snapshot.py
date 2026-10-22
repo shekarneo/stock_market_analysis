@@ -552,13 +552,26 @@ def _fallback_sectoral_indices(retrieved_at: datetime | None = None) -> list[dic
     return []
 
 
+def _price_direction(change: object) -> str:
+    """UP / DOWN / FLAT from a day change; UNKNOWN when the change is missing or invalid."""
+    if change is None or isinstance(change, bool):
+        return "UNKNOWN"
+    try:
+        value = float(change)
+    except (TypeError, ValueError):
+        return "UNKNOWN"
+    if value != value:  # NaN
+        return "UNKNOWN"
+    return "UP" if value > 0 else "DOWN" if value < 0 else "FLAT"
+
+
 def build_groww_market_observations(
     commodities: list[dict],
     global_indices: list[dict],
     sectoral_indices: list[dict],
 ) -> list[dict]:
     """Build analysis observation records from Groww commodities and global snapshots."""
-    from app.instruments import canonical_underlying
+    from app.instruments import CRUDE_FAMILY, canonical_underlying, is_vix_row
     import math
 
     obs = []
@@ -567,9 +580,15 @@ def build_groww_market_observations(
         if lp is None or not isinstance(lp, (int, float)) or not math.isfinite(lp) or lp <= 0:
             continue
         inst = canonical_underlying(c.get("instrument")) or c.get("instrument")
-        chg = c.get("day_change") or 0.0
-        # For Indian equities/macro: falling crude is bullish, rising crude is bearish
-        direction = "BULLISH" if chg < 0 else "BEARISH" if chg > 0 else "NEUTRAL"
+        chg = c.get("day_change")
+        # price_direction is the commodity's own move; directional_implication is the
+        # implication for Indian equities (rising crude is a headwind). Other commodities
+        # have no established equity implication. A missing change is UNKNOWN, never 0.
+        price_direction = _price_direction(chg)
+        if str(inst or "").upper() in CRUDE_FAMILY:
+            direction = {"UP": "BEARISH", "DOWN": "BULLISH"}.get(price_direction, "UNKNOWN")
+        else:
+            direction = "UNKNOWN"
         obs.append({
             "instrument": inst,
             "category": "MACRO",
@@ -584,6 +603,7 @@ def build_groww_market_observations(
             "retrieved_at": c.get("retrieved_at"),
             "freshness": "FRESH",
             "directional_implication": direction,
+            "price_direction": price_direction,
             "time_horizon": "INTRADAY",
         })
 
@@ -592,7 +612,12 @@ def build_groww_market_observations(
         if lp is None or not isinstance(lp, (int, float)) or not math.isfinite(lp) or lp <= 0:
             continue
         inst = g.get("instrument")
-        direction = "BULLISH" if (g.get("day_change") or 0) > 0 else "BEARISH" if (g.get("day_change") or 0) < 0 else "UNKNOWN"
+        price_direction = _price_direction(g.get("day_change"))
+        if is_vix_row(g):
+            # Rising volatility is risk-off for equities
+            direction = {"UP": "BEARISH", "DOWN": "BULLISH"}.get(price_direction, "UNKNOWN")
+        else:
+            direction = {"UP": "BULLISH", "DOWN": "BEARISH"}.get(price_direction, "UNKNOWN")
         obs.append({
             "instrument": inst,
             "category": "GLOBAL_MARKET",
@@ -606,6 +631,7 @@ def build_groww_market_observations(
             "published_at": None,
             "retrieved_at": g.get("retrieved_at"),
             "directional_implication": direction,
+            "price_direction": price_direction,
             "time_horizon": "INTRADAY",
         })
 
@@ -627,6 +653,7 @@ def build_groww_market_observations(
             "published_at": None,
             "retrieved_at": s.get("retrieved_at"),
             "directional_implication": "UNKNOWN",
+            "price_direction": _price_direction(s.get("day_change")),
             "time_horizon": "INTRADAY",
         })
 

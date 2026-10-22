@@ -65,7 +65,7 @@ export default function InstrumentSelector({ compact = false }) {
                 onClick={() => setSelectedInstrument(inst.id)}
               >
                 <strong>{inst.name}</strong>
-                <small>{inst.exchange} • Lot: {inst.lotSize || inst.contract_lot_size}</small>
+                <small>{inst.exchange} • Lot: {inst.contract_lot_size ?? "N/A"}</small>
               </button>
             );
           })}
@@ -79,7 +79,7 @@ export default function InstrumentSelector({ compact = false }) {
             <strong>{cfg.name || activeId}</strong>
             <span className="v6-pill indigo">{cfg.exchange} {cfg.segment}</span>
           </div>
-          <small className="v6-meta-sub">Lot Size: {cfg.lotSize || cfg.contract_lot_size} units • Strike Step: ₹{cfg.strikeStep || cfg.strike_step}</small>
+          <small className="v6-meta-sub">Lot Size: {cfg.contract_lot_size ?? "N/A"} units • Strike Step: {cfg.strike_step != null ? `₹${cfg.strike_step}` : "N/A"}</small>
         </div>
 
         <div className="v6-meta-cell">

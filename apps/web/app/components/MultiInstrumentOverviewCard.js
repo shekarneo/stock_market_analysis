@@ -60,7 +60,7 @@ export default function MultiInstrumentOverviewCard() {
                 <div className="v6-inst-price-val">
                   {price != null ? `₹${Number(price).toLocaleString("en-IN", { minimumFractionDigits: 1, maximumFractionDigits: 2 })}` : "Fetching…"}
                 </div>
-                <small className="v6-inst-lot">Contract Lot: {inst.lotSize || inst.contract_lot_size} units</small>
+                <small className="v6-inst-lot">Contract Lot: {inst.contract_lot_size ?? "N/A"} units</small>
               </div>
 
               <div className="v6-inst-meta-rows">

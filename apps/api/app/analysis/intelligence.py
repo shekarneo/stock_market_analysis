@@ -9,7 +9,9 @@ from __future__ import annotations
 import math
 import re
 
-from app.instruments import TRADABLE_UNDERLYINGS
+from app.instruments import CRUDE_FAMILY, TRADABLE_UNDERLYINGS, canonical_underlying, is_india_vix_row, is_vix_row
+
+COMMODITY_TARGETS = frozenset({"CRUDEOILMINI", "CRUDEMINI", "CRUDE", "GOLD", "SILVER"})
 
 _GEOPOLITICAL = {
     "OIL_SUPPLY": {
@@ -91,12 +93,12 @@ def build_intelligence(
         "global_context": _named(rows, "GLOBAL_MARKET"),
         "markets": markets,
         "breadth_flows": {
-            "status": "PRESENT" if (any(r.get("instrument") in {"INDIA_VIX", "VIX", "INDIAVIX"} for r in rows) or any(r.get("instrument") in {"BANKNIFTY", "NIFTYIT", "NIFTYMETAL", "NIFTYAUTO", "BANKEX"} for r in rows)) else "MISSING_DATA",
-            "vix": next((r for r in rows if r.get("instrument") in {"INDIA_VIX", "VIX", "INDIAVIX"}), None),
+            "status": "PRESENT" if (any(is_india_vix_row(r) for r in rows) or any(r.get("instrument") in {"BANKNIFTY", "NIFTYIT", "NIFTYMETAL", "NIFTYAUTO", "BANKEX"} for r in rows)) else "MISSING_DATA",
+            "vix": next((r for r in rows if is_india_vix_row(r)), None),
             "sectors": [r.get("instrument") for r in rows if r.get("instrument") in {"BANKNIFTY", "NIFTYIT", "NIFTYMETAL", "NIFTYAUTO", "BANKEX"}],
             "breadth": None,
             "flows": next((r for r in rows if r.get("instrument") in {"FII_DII", "FII_DII_FLOWS"}), None),
-            "reason": "Observed VIX and sectoral indices. Advance/decline breadth series pending." if (any(r.get("instrument") in {"INDIA_VIX", "VIX", "INDIAVIX"} for r in rows)) else "No breadth or FII/DII flow series was supplied.",
+            "reason": "Observed VIX and sectoral indices. Advance/decline breadth series pending." if (any(is_india_vix_row(r) for r in rows)) else "No breadth or FII/DII flow series was supplied.",
         },
         "scenarios": {
             "bullish": {
@@ -324,41 +326,14 @@ def _challenges(news: list[dict], rows: list[dict], conflicts: list[dict]) -> li
     return notes
 
 
-def _instrument_params(instrument: str) -> tuple[int, int]:
-    inst = instrument.upper()
-    if inst == "NIFTY":
-        return 50, 75
-    if inst == "SENSEX":
-        return 100, 20
-    if inst == "FINNIFTY":
-        return 50, 25
-    if inst == "MIDCPNIFTY":
-        return 25, 75
-    if inst == "BANKEX":
-        return 100, 15
-    if inst == "NIFTYIT":
-        return 100, 25
-    if inst in {"CRUDE", "CRUDEOIL"}:
-        return 50, 100
-    if inst in {"CRUDEMINI", "CRUDEOILMINI", "CRUDEOILM"}:
-        return 50, 10
-    if inst == "GOLD":
-        return 100, 1
-    if inst == "GOLDMINI":
-        return 100, 1
-    if inst == "SILVER":
-        return 500, 30
-    if inst == "SILVERMINI":
-        return 500, 5
-    if inst == "NATURALGAS":
-        return 5, 1250
-    if inst == "NATURALGASMINI":
-        return 5, 250
-    if inst == "COPPER":
-        return 5, 2500
-    if inst == "ZINC":
-        return 5, 5000
-    return 100, 10
+def _instrument_params(instrument: str) -> tuple[int | None, int | None]:
+    """(strike_step, lot_size) from the instrument master; (None, None) for untracked symbols."""
+    from app.instrument_specs import get_spec
+
+    spec = get_spec(instrument)
+    if spec is None:
+        return None, None
+    return spec.strike_step, spec.lot_size
 
 
 def _generate_option_picks(
@@ -456,6 +431,24 @@ def _generate_option_picks(
     return picks
 
 
+def _row_price_direction(row: dict | None) -> str:
+    """The row's own price move: UP / DOWN / FLAT / UNKNOWN.
+
+    Uses the explicit price_direction field, then a percentage in the claim text. It never
+    reads directional_implication, which describes the implication for Indian equities.
+    """
+    if not row:
+        return "UNKNOWN"
+    pd = row.get("price_direction")
+    if pd in {"UP", "DOWN", "FLAT"}:
+        return pd
+    m = re.search(r"\(?\s*([+-]?\d+(?:\.\d+)?)\s*%", str(row.get("claim") or ""))
+    if m:
+        val = float(m.group(1))
+        return "UP" if val > 0.2 else ("DOWN" if val < -0.2 else "FLAT")
+    return "UNKNOWN"
+
+
 def _evaluate_market_consensus(rows: list[dict], instrument: str, news: list[dict] | None = None) -> dict:
     # 1. News Sentiment Agent
     news_items = news or []
@@ -475,9 +468,16 @@ def _evaluate_market_consensus(rows: list[dict], instrument: str, news: list[dic
         news_score = 0
 
     # 2. Macro & Cross-Asset Agent
-    crude = next((r for r in rows if r.get("instrument") in {"CRUDE", "BRENT", "WTI", "CRUDEOILMINI", "CRUDEMINI", "CRUDEOIL"}), None)
+    is_commodity_target = instrument in COMMODITY_TARGETS
+    crude_rows = [r for r in rows if str(r.get("instrument") or "").upper() in CRUDE_FAMILY]
+    if is_commodity_target:
+        # The target's own row is not a macro cue for itself; use other crude benchmarks only
+        crude_rows = [r for r in crude_rows if canonical_underlying(r.get("instrument")) != canonical_underlying(instrument)]
+    crude = crude_rows[0] if crude_rows else None
     usdinr = next((r for r in rows if r.get("instrument") in {"USDINR", "USD/INR", "USD_INR"}), None)
-    global_rows = [r for r in rows if r.get("category") == "GLOBAL_MARKET" and r.get("instrument") not in {"VIX", "INDIA_VIX"}]
+    global_rows = [] if is_commodity_target else [
+        r for r in rows if r.get("category") == "GLOBAL_MARKET" and not is_vix_row(r)
+    ]
 
     macro_score = 0
     macro_reasons = []
@@ -494,30 +494,32 @@ def _evaluate_market_consensus(rows: list[dict], instrument: str, news: list[dic
         lead_global = ", ".join(g.get("instrument") for g in global_rows if g.get("directional_implication") == "BEARISH")[:30]
         macro_reasons.append(f"Global headwind ({g_bear} global red: {lead_global})")
 
-    # Crude oil transmission
+    # Crude oil transmission, applied exactly once from the raw crude price move
     if crude:
-        c_dir = crude.get("directional_implication")
-        if c_dir == "UNKNOWN" and crude.get("claim"):
-            m = re.search(r"(-?\d+(?:\.\d+)?)\s*%", crude.get("claim", ""))
-            if m:
-                val = float(m.group(1))
-                c_dir = "BULLISH" if val > 0.2 else ("BEARISH" if val < -0.2 else "NEUTRAL")
-        if c_dir == "BULLISH":
+        c_move = _row_price_direction(crude)
+        if is_commodity_target:
+            if c_move == "UP":
+                macro_score += 1
+                macro_reasons.append(f"Crude benchmark {crude.get('instrument')} rising")
+            elif c_move == "DOWN":
+                macro_score -= 1
+                macro_reasons.append(f"Crude benchmark {crude.get('instrument')} falling")
+        elif c_move == "UP":
             macro_score -= 1
             macro_reasons.append("Crude rising (inflationary pressure on INR)")
-        elif c_dir == "BEARISH":
+        elif c_move == "DOWN":
             macro_score += 1
             macro_reasons.append("Crude softening (positive for margins)")
 
-    # Currency transmission
-    if usdinr:
-        u_dir = usdinr.get("directional_implication")
-        if u_dir == "BULLISH":
+    # Currency transmission (USD/INR rising = rupee weakening), equities only
+    if usdinr and not is_commodity_target:
+        u_move = _row_price_direction(usdinr)
+        if u_move == "UP":
             macro_score -= 1
-            macro_reasons.append("USD/INR depreciating (capital outflow risk)")
-        elif u_dir == "BEARISH":
+            macro_reasons.append("USD/INR rising, rupee weakening (capital outflow risk)")
+        elif u_move == "DOWN":
             macro_score += 1
-            macro_reasons.append("USD/INR strengthening (macro stability)")
+            macro_reasons.append("USD/INR falling, rupee strengthening (macro stability)")
 
     if macro_score > 0:
         macro_stance = "BULLISH"
@@ -546,7 +548,14 @@ def _evaluate_market_consensus(rows: list[dict], instrument: str, news: list[dic
     tech_summary = f"{instrument} trading inside session boundaries."
 
     if item:
-        t_dir = item.get("directional_implication")
+        own_move = _row_price_direction(item)
+        if own_move in {"UP", "DOWN"}:
+            t_dir = "BULLISH" if own_move == "UP" else "BEARISH"
+        elif item.get("category") in {"MACRO", "COMMODITY"}:
+            # directional_implication on macro/commodity rows is the equity view, not this instrument's trend
+            t_dir = "UNKNOWN"
+        else:
+            t_dir = item.get("directional_implication")
         ohlc = item.get("ohlc")
         last_price = item.get("last_price")
 
@@ -607,10 +616,14 @@ def _evaluate_market_consensus(rows: list[dict], instrument: str, news: list[dic
         tech_summary = "Operating around key reference support and resistance zones."
 
     # 4. Volatility & Range Agent
-    vix_row = next((r for r in rows if r.get("instrument") in {"VIX", "INDIA_VIX", "INDIAVIX"}), None)
+    vix_row = next((r for r in rows if is_india_vix_row(r)), None)
     vix_val = float(vix_row["last_price"]) if vix_row and vix_row.get("last_price") is not None else None
-    iv = max(0.11, min(0.35, vix_val / 100.0)) if vix_val is not None else None
-    if vix_val is None:
+    # India VIX measures NIFTY option volatility; it is not a volatility estimate for crude oil
+    iv = max(0.11, min(0.35, vix_val / 100.0)) if vix_val is not None and not is_commodity_target else None
+    if is_commodity_target:
+        vix_stance = "MISSING_DATA"
+        vix_summary = "No crude-oil volatility feed; India VIX is not applicable. Move, target and stop sizing unavailable."
+    elif vix_val is None:
         vix_stance = "MISSING_DATA"
         vix_summary = "India VIX unavailable; move, target and stop sizing cannot be computed."
     elif vix_val > 18.0:
@@ -736,8 +749,28 @@ def _market(rows: list[dict], instrument: str, news: list[dict] | None = None) -
             "manual_trade_recommendation": trade_recommendation,
         }
 
-    is_commodity = instrument in {"CRUDEOILMINI", "CRUDEMINI", "CRUDE", "GOLD", "SILVER"}
+    is_commodity = instrument in COMMODITY_TARGETS
     step, _ = _instrument_params(instrument)
+    if step is None:
+        return {
+            "status": "NOT_IN_INSTRUMENT_MASTER",
+            "data_class": data_class(item),
+            "direction": None,
+            "decision": "NO_TRADE",
+            "bias": consensus["bias"],
+            "last_price": spot,
+            "observed_at": item.get("observed_at"),
+            "what_happens": {
+                "regime": "INDETERMINATE",
+                "summary": f"{instrument} has no contract specification in the instrument master; strikes and levels are not computed.",
+                "bullish_trigger": None,
+                "bearish_trigger": None,
+                "invalidation": None,
+            },
+            "options_evaluation": {"verdict": "NO_TRADE", "reason": f"{instrument} is not a tradable underlying."},
+            "risk_veto": {"vetoed": True, "reason": f"{instrument} is not in the instrument master."},
+            "manual_trade_recommendation": None,
+        }
     atm = int(round(spot / step) * step)
     iv = consensus["iv"]
     if iv is not None:
@@ -752,7 +785,8 @@ def _market(rows: list[dict], instrument: str, news: list[dict] | None = None) -
     alt_picks = _generate_option_picks(instrument, spot, "PE" if consensus["option_type"] not in {"CE", "PE"} else consensus["alt_option_type"], target_pts, sl_pts)
 
     is_neutral = consensus["bias"] == "NEUTRAL" or "STAND ASIDE" in consensus["call"] or target_pts is None
-    is_bull = "BUY" in consensus["call"] or consensus["bias"] in {"BULLISH", "MILD BULLISH"}
+    # Direction comes from the bias, never from the call text ("BUY PE" contains "BUY")
+    is_bull = consensus["bias"] in {"BULLISH", "MILD BULLISH"}
 
     target_spot = None if is_neutral else round(spot + target_pts if is_bull else spot - target_pts, 1)
     stop_loss_spot = None if is_neutral else round(spot - sl_pts if is_bull else spot + sl_pts, 1)
@@ -837,13 +871,13 @@ def _stages(rows, news, geopolitics, impact, missing) -> list[dict]:
     def stage(name: str, status: str, detail: str) -> dict:
         return {"name": name, "status": status, "detail": detail}
 
-    global_obs = [r for r in rows if r.get("category") == "GLOBAL_MARKET" and r.get("instrument") not in {"VIX", "INDIA_VIX"}]
+    global_obs = [r for r in rows if r.get("category") == "GLOBAL_MARKET" and not is_vix_row(r)]
     global_detail = f"{len(global_obs)} global factor(s) observed ({', '.join(sorted({r.get('instrument') for r in global_obs}))})." if global_obs else "No global index is filled in."
 
     macro_obs = [r for r in rows if r.get("category") == "MACRO"]
     macro_detail = f"{len(macro_obs)} commodity/macro factor(s) observed ({', '.join(sorted({r.get('instrument') for r in macro_obs}))})." if macro_obs else "Yields stay missing unless a yield observation was supplied."
 
-    vix_item = next((r for r in rows if r.get("instrument") in {"INDIA_VIX", "VIX", "INDIAVIX"}), None)
+    vix_item = next((r for r in rows if is_india_vix_row(r)), None)
     sector_items = [r for r in rows if r.get("instrument") in {"BANKNIFTY", "NIFTYIT", "NIFTYMETAL", "NIFTYAUTO", "BANKEX"}]
     has_vix = vix_item is not None
     has_sec = len(sector_items) > 0

@@ -37,9 +37,11 @@
 **India Market Master (IMM)** is an autonomous, quantitative forecasting and options trading desk engineered specifically for the Indian financial markets.
 
 ### Supported Tradable Instruments
-1. **NIFTY 50 (`NIFTY`)**: National Stock Exchange of India (NSE) benchmark equity index (50 large-cap stocks; lot size 25; strike interval 50 pts).
-2. **BSE SENSEX (`SENSEX`)**: Bombay Stock Exchange (BSE) benchmark equity index (30 blue-chip stocks; lot size 20; strike interval 100 pts).
-3. **CRUDEOIL MINI (`CRUDEOILMINI` / `CRUDEMINI`)**: Multi Commodity Exchange of India (MCX) energy commodity future/option contract (lot size 10 bbl; strike interval 50 pts).
+1. **NIFTY 50 (`NIFTY`)**: National Stock Exchange of India (NSE) benchmark equity index (50 large-cap stocks).
+2. **BSE SENSEX (`SENSEX`)**: Bombay Stock Exchange (BSE) benchmark equity index (30 blue-chip stocks).
+3. **CRUDEOIL MINI (`CRUDEOILMINI` / `CRUDEMINI`)**: Multi Commodity Exchange of India (MCX) energy commodity future/option contract.
+
+Lot size, strike step and tick size are defined once in the backend instrument master (`apps/api/app/instrument_specs.py`, reviewed date in `SPECS_REVIEWED_ON`) and served to the UI by `GET /api/forecasting/instruments` (`contract_lot_size`, `strike_step`). No page hardcodes them; where the catalog has not loaded, lot and step show `N/A` and strike matrices are not drawn. Re-check the master whenever the exchange revises lot sizes.
 
 ### Design System & Layout Rules
 - **Color Palette**: Dark theme using tailored CSS variables (`--bg: #090d16`, `--card: #0f172a`, `--card-subtle: #131c31`, `--line: rgba(255, 255, 255, 0.08)`, `--ink: #f8fafc`, `--accent: #38bdf8`).
@@ -352,6 +354,9 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   - Trading session hours, exchange tag (`NSE`, `BSE`, `MCX`), and session market state.
   - Commodity Instrument Tag: Dedicated `⚡ FUTURES` badge appears for MCX commodities (e.g. `CRUDEOILMINI`), recommending outright futures contracts (`CRUDEOILMINI FUTURES`) rather than call options.
   - Multi-Agent Bias & Signal: Stance badge (`STAND ASIDE (NO TRADE)`, `BUY_CE`, `BUY_PE`, `BUY_FUT`, or `SELL_FUT`). When the backend decision is `NO_TRADE` or active consensus vetoes exist, strictly enforces `STAND ASIDE (NO TRADE)` in red.
+    - One decision path: when gated, the backend also sets the market's `decision` to `NO_TRADE`, its options verdict to `NO_TRADE`, and clears target/stop premiums and per-lot risk on every listed strike (strike and any live entry premium remain for reference). The pre-gate signal is kept in `ungated_signal` for transparency.
+    - A market whose call disagrees with its own fused bias (`CALL_CONFLICTS_WITH_FUSED_BIAS`) or with the consensus direction (`CALL_CONFLICTS_WITH_CONSENSUS` / `NO_DIRECTIONAL_CONSENSUS`) is gated individually.
+    - For `BUY PE` calls the spot target is below the reference spot and the stop above it.
   - Target & Stop-Loss Points: Anchored to reference spot with dynamic live spot delta (`Target: ₹23,079.90 (+129.7 pts ref | +144.6 live)` and `Stop: ₹22,885.40 (-64.8 pts ref | -49.9 live)`). When gated under consensus vetoes, displays `— (Gated)` to eliminate speculative execution targets.
   - **`+ Watch & Score` Button**: Enrolls the trade into the live accuracy tracker. Disabled with `not-allowed` cursor when gated by consensus vetoes. Automatically records `data_class: "UNVERIFIED_PROVIDER_DATA"` to preserve data provenance integrity.
   - **`⚡ Fire & Auto-Add / Active Order` Button**: Submits simulated broker orders. When consensus vetoes are active or the decision is `NO_TRADE`, transforms into a disabled `🔒 Gated (<Conviction>)` button, preventing rogue orders.
@@ -415,7 +420,7 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   - `Running Prem.` / `Exit Prem`:
     - For `OPEN` suggestions: Displays live mark-to-market premium and running gain/loss percentage. Features a distinct badge: **`Groww Live LTP`** (green) when streaming live exchange quotes from Groww GET `/v1/option-chain`, or **`Model Est.`** (slate) when using spot-delta estimation with the live delta captured at entry. Without a captured live delta, no running premium is shown.
     - For `RESOLVED` suggestions (`SL hit` / `Target hit`): Displays the **Realized Exit Premium** (captured directly from the live Groww option chain at resolution time) labeled `Realized Exit`. Without a realized exit premium, shows the percentage to the stored premium target/stop, or `Spot stop hit` / `Spot target hit` when no premium levels were stored. Beneath the realized exit, a subtle label displays `Post-Exit: ₹... (+/-%)` showing ongoing live market option recovery without ambiguous signals.
-  - `Prem. Target` & `Prem. SL`: Target and Stop-Loss option premium levels derived from a live entry LTP and live delta. Blank when either was unavailable (no fixed +40% / -25% defaults).
+  - `Prem. Target` & `Prem. SL`: Target and Stop-Loss option premium levels derived from a live entry LTP and live delta. Blank when either was unavailable (no fixed +40% / -25% defaults). These are reference levels only: **outcomes (`Target hit` / `SL hit`) are decided on spot alone, with the same rule for target and stop**. A live premium never cancels a spot stop or creates a target hit. Premiums quoted before the suggestion was saved are never attached to it.
   - `Spot Entry`, `Spot Target`, `Spot SL`: Underlying spot boundary levels.
   - `Last Spot`:
     - For `OPEN` suggestions: Real-time observed spot price dynamically refreshed from streaming market feeds, with total checks count and last check timestamp.
@@ -588,11 +593,15 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   - `Side`: Toggle between `CE` (Calls) and `PE` (Puts).
   - `Structure`: Choose between `Single leg` (Outright Option), `Bull call spread`, or `Bear put spread`.
 - **Live Options Greeks Card (`<V6OptionsGreeksCard />`)**:
-  - Real-time calculations for Delta ($\Delta$), Gamma ($\Gamma$), Theta ($\Theta$), Vega ($\mathcal{V}$), Implied Volatility (IV), and Put-Call Ratio (PCR).
+  - Asset buttons: `NIFTY`, `SENSEX` (BANKNIFTY removed; it is out of scope).
+  - `Forward / Spot`: live quote only; shows `Awaiting live quote` when none exists (no default spot). Lot size and strike step come from the instrument master.
+  - `Institutional PCR` and `Max Pain Pin Strike`: show `N/A`; this panel does not load live option-chain open interest, so no PCR or max-pain value is displayed.
+  - `Calculator IV (operator input)`: the IV slider value used for the Black-76 calculator; it is an input, not a market reading.
+  - Black-76 Greeks table: Delta ($\Delta$), Gamma ($\Gamma$), Theta ($\Theta$), Vega ($\mathcal{V}$) for 7 strikes around ATM, computed from the live spot and the operator's days-to-expiry / IV / rate inputs. Empty (with a notice) until a live spot and strike step exist.
 - **Live Option Strike Matrix**:
   - Automatically identifies real-time At-The-Money (ATM) strike based on verified live Groww spot quotes.
   - Fail-closed empty state: If live spot quotes are not yet retrieved, renders an awaiting feed notification without inventing fictitious prices.
-  - Accurate exchange lot sizes: 25 for NIFTY, 20 for SENSEX, and 10 for CRUDEOIL MINI.
+  - Lot size and strike step from the instrument master (`/api/forecasting/instruments`); if the catalog is not loaded the matrix shows a notice instead of strikes.
   - Shows 5 key strike levels: ATM, ITM 1, ITM 2, OTM 1, OTM 2.
   - Displays strike, option type, moneyness tag, theoretical premium estimate, and lot size.
   - `Select Strike` button: Prefills the research order ticket.

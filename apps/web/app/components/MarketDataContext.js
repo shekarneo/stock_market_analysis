@@ -11,8 +11,7 @@ export const INSTRUMENT_CONFIGS = {
     growwSymbol: "NSE-NIFTY",
     exchange: "NSE",
     segment: "NSE_CASH",
-    lotSize: 25,
-    strikeStep: 50,
+    // Lot size and strike step come from /api/forecasting/instruments (backend instrument master)
     session: "09:15 - 15:30 IST",
     sessionType: "NSE Regular Session",
     dataSource: "Groww Trade API / Quarantined Storage",
@@ -32,8 +31,7 @@ export const INSTRUMENT_CONFIGS = {
     growwSymbol: "BSE-SENSEX",
     exchange: "BSE",
     segment: "BSE_CASH",
-    lotSize: 20,
-    strikeStep: 100,
+    // Lot size and strike step come from /api/forecasting/instruments (backend instrument master)
     session: "09:15 - 15:30 IST",
     sessionType: "BSE Regular Session",
     dataSource: "BSE Cash Feed / Groww LTP",
@@ -43,7 +41,7 @@ export const INSTRUMENT_CONFIGS = {
     validationStatus: "INDEPENDENT_PROVENANCE_REQUIRED",
     modelsValidated: [],
     optionsSupported: true,
-    optionsNote: "BSE Weekly/Monthly Option Contracts (Lot 20, Step 100) with Black-76 Greeks",
+    optionsNote: "BSE Weekly/Monthly Option Contracts with Black-76 Greeks",
     frictionBps: 2.0,
   },
   CRUDEOILMINI: {
@@ -53,8 +51,7 @@ export const INSTRUMENT_CONFIGS = {
     growwSymbol: null,
     exchange: "MCX",
     segment: "MCX_COMMODITY",
-    lotSize: 10,
-    strikeStep: 50,
+    // Lot size and strike step come from /api/forecasting/instruments (backend instrument master)
     session: "09:00 - 23:30 IST (23:55 winter)",
     sessionType: "MCX Extended Commodity Session",
     dataSource: "MCX Real-time Feed / International Benchmark Proxies",

@@ -63,6 +63,10 @@ def validate_node(state: AnalysisState) -> dict:
             data["last_price"] = row["last_price"]
         if "unit" in row and row["unit"] is not None:
             data["unit"] = row["unit"]
+        if row.get("price_direction") in {"UP", "DOWN", "FLAT"}:
+            data["price_direction"] = row["price_direction"]
+        if isinstance(row.get("name"), str):
+            data["name"] = row["name"]
         if row.get("category") == "DERIVATIVES":
             for f in (
                 "strike_count",
@@ -287,6 +291,97 @@ def fusion_node(state: AnalysisState) -> dict:
     }
 
 
+def _call_direction(call: object) -> str | None:
+    text = str(call or "").upper()
+    if not text or "STAND ASIDE" in text or "AWAIT" in text:
+        return None
+    tokens = text.replace("(", " ").replace(")", " ").split()
+    if "PE" in tokens or "BUY_PE" in tokens or "SELL_FUT" in tokens or "GO SHORT" in text:
+        return "BEARISH"
+    if "CE" in tokens or "BUY_CE" in tokens or "BUY_FUT" in tokens or "GO LONG" in text:
+        return "BULLISH"
+    return None
+
+
+def _bias_direction(bias: object) -> str | None:
+    text = str(bias or "").upper()
+    if "BULLISH" in text and "BEARISH" not in text:
+        return "BULLISH"
+    if "BEARISH" in text and "BULLISH" not in text:
+        return "BEARISH"
+    return None
+
+
+def _gate_market(m: dict, reasons: list[str]) -> None:
+    """Force one market to NO_TRADE and clear every field that implies a trade."""
+    label = reasons[0] if reasons else "SAFETY_GATED"
+    rec = m.get("manual_trade_recommendation")
+    if rec:
+        rec["ungated_signal"] = {
+            "call": rec.get("call"),
+            "bias": rec.get("bias"),
+            "total_score": rec.get("total_score"),
+        }
+        rec["is_actionable"] = False
+        rec["call"] = "STAND ASIDE (NO TRADE)"
+        rec["bias"] = f"NEUTRAL ({label})"
+        rec["conviction"] = "NO TRADE / GATED"
+        rec["target_spot"] = None
+        rec["stop_loss_spot"] = None
+        rec["expected_move_points"] = None
+        rec["stop_loss_points"] = None
+        rec["gating_vetoes"] = list(reasons)
+        rec["execution_guide"] = f"Stand aside: {', '.join(reasons) or 'NO_TRADE mandated'}."
+        for pick in list(rec.get("top_5_options") or []) + list(rec.get("alternate_options") or []):
+            # Strikes and any live entry premium stay visible for reference; trade levels do not
+            for key in ("target_premium", "stop_loss_premium", "risk_reward", "max_loss_per_lot",
+                        "profit_per_lot", "target_underlying", "sl_underlying"):
+                pick[key] = None
+    m["decision"] = "NO_TRADE"
+    m["bias"] = f"NEUTRAL ({label})"
+    m["options_evaluation"] = {
+        "verdict": "NO_TRADE",
+        "reason": f"Gated by decision path: {', '.join(reasons) or 'NO_TRADE mandated'}.",
+    }
+    m["risk_veto"] = {
+        "vetoed": True,
+        "reason": f"Deterministic consensus vetoes active: {', '.join(reasons) if reasons else 'NO_TRADE mandated'}",
+    }
+
+
+def apply_decision_gate(intel: dict, *, decision: str, vetoes: list[str], consensus_direction: str | None) -> None:
+    """Make per-market calls consistent with the report decision.
+
+    - decision NO_TRADE or any veto: every market is gated.
+    - otherwise each market's call must agree with its own bias and with the consensus
+      direction; a market whose signals disagree is gated individually.
+    """
+    markets = intel.get("markets", {}) or {}
+    if decision == "NO_TRADE" or vetoes:
+        for m in markets.values():
+            _gate_market(m, list(vetoes))
+        return
+
+    consensus_dir = consensus_direction if consensus_direction in {"BULLISH", "BEARISH"} else None
+    for m in markets.values():
+        rec = m.get("manual_trade_recommendation")
+        if not rec:
+            continue
+        call_dir = _call_direction(rec.get("call"))
+        if call_dir is None:
+            continue
+        reasons = []
+        bias_dir = _bias_direction(rec.get("bias"))
+        if bias_dir is not None and bias_dir != call_dir:
+            reasons.append("CALL_CONFLICTS_WITH_FUSED_BIAS")
+        if consensus_dir is None:
+            reasons.append("NO_DIRECTIONAL_CONSENSUS")
+        elif consensus_dir != call_dir:
+            reasons.append("CALL_CONFLICTS_WITH_CONSENSUS")
+        if reasons:
+            _gate_market(m, reasons)
+
+
 def report_node(state: AnalysisState) -> dict:
     evidence = list(state.get("evidence") or [])
     fresh_verified = [
@@ -467,23 +562,13 @@ def report_node(state: AnalysisState) -> dict:
         report["reason_codes"] = prior_report["reason_codes"]
     report["decision"] = prior_decision
 
-    # Strict Authoritative Consensus Synchronization:
-    # When backend decision is NO_TRADE or vetoes exist, synchronize all market recommendations to STAND ASIDE
-    if prior_decision == "NO_TRADE" or len(active_vetoes) > 0:
-        for inst, m in intel.get("markets", {}).items():
-            rec = m.get("manual_trade_recommendation")
-            if rec:
-                rec["is_actionable"] = False
-                rec["call"] = "STAND ASIDE (NO TRADE)"
-                rec["bias"] = f"NEUTRAL ({active_vetoes[0]})" if active_vetoes else "NEUTRAL (SAFETY GATED)"
-                rec["conviction"] = "NO TRADE / GATED"
-                rec["target_spot"] = None
-                rec["stop_loss_spot"] = None
-                rec["expected_move_points"] = None
-                rec["stop_loss_points"] = None
-                rec["gating_vetoes"] = list(active_vetoes)
-            if "risk_veto" in m:
-                m["risk_veto"]["vetoed"] = True
-                m["risk_veto"]["reason"] = f"Deterministic consensus vetoes active: {', '.join(active_vetoes) if active_vetoes else 'NO_TRADE mandated'}"
+    # Single authoritative decision path: every per-market directional field is derived
+    # from (and gated by) the report decision and consensus, never left as a parallel call.
+    apply_decision_gate(
+        intel,
+        decision=prior_decision,
+        vetoes=active_vetoes,
+        consensus_direction=prior_consensus.get("directional_recommendation"),
+    )
 
     return {"report": report, "node_status": node_status}

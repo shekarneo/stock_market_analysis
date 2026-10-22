@@ -34,7 +34,8 @@ def test_instrument_catalog_completeness():
 
     nifty = next(c for c in catalog if c["id"] == "NIFTY")
     assert nifty["exchange"] == "NSE"
-    assert nifty["contract_lot_size"] == 25
+    from app.instrument_specs import lot_size_for
+    assert nifty["contract_lot_size"] == lot_size_for("NIFTY")
     assert nifty["options_supported"] is True
     assert "15m" in nifty["forecast_horizons"][0]
 

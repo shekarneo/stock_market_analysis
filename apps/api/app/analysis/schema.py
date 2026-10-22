@@ -82,6 +82,8 @@ class EvidenceItem(BaseModel):
     last_price: float | None = None
     unit: str | None = None
     ohlc: dict | None = None
+    price_direction: Literal["UP", "DOWN", "FLAT", "UNKNOWN"] = "UNKNOWN"
+    """The instrument's own price move. directional_implication is its implication for Indian equities."""
 
 
 class InferenceNote(BaseModel):

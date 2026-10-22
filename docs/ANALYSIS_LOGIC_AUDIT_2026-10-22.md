@@ -99,6 +99,25 @@ New tests: `apps/api/tests/test_truth_in_data_fallbacks.py`.
 9. Symmetric watchlist hit/SL scoring.
 10. A single instrument master (lot, strike step, tick, expiry calendar) per underlying.
 
+**Phase 2 status (2026-10-22): implemented, not yet run against Postgres/Node.**
+- O1: PE direction now comes from the bias, not the call text.
+- A4: crude sign is applied once; snapshot rows carry a raw `price_direction`.
+- A6: only India VIX is read, it is not used for crude, and a rising VIX counts as bearish.
+- A3: the technical analyst only reads the target instrument.
+- A2: there is one decision gate (`nodes.apply_decision_gate`).
+- O3: watchlist scoring is spot-only and symmetric.
+- O5: a single instrument master (`app/instrument_specs.py`) feeds the backend and the UI.
+- Also removed the fabricated PCR, max pain and spot values from `V6OptionsGreeksCard`.
+
+Not yet done:
+- O6: expiry calendars for SENSEX and MCX.
+- Exchange-fee and MCX charge corrections.
+- The `close_paper_position` flat-exit fallback.
+- Per-instrument consensus.
+- The always-UNVERIFIED evidence veto.
+
+New tests: `apps/api/tests/test_signal_direction_logic.py` and two new cases in `apps/api/tests/test_watchlist.py`.
+
 **Phase 3 — Make the research honest**
 11. Deploy exactly what was validated (or validate what is deployed). Persist one model and run inference only.
 12. Chain out-of-sample folds into one equity curve. Compute Sharpe and max drawdown properly. Bootstrap CIs. Report a deflated Sharpe / Reality Check.
