@@ -115,22 +115,20 @@ def compute_specialist_quality_score(
     return final_score
 
 
-def compute_specialist_confidence(output: dict[str, Any]) -> float:
-    """Extract or impute calibrated confidence from specialist output."""
-    raw_conf = output.get("confidence")
-    if raw_conf is not None:
-        try:
-            val = float(raw_conf)
-            return max(0.10, min(1.0, val))
-        except (ValueError, TypeError):
-            pass
+def compute_specialist_confidence(output: dict[str, Any]) -> float | None:
+    """The specialist's reported confidence, clamped to [0.10, 1.00].
 
-    status = output.get("status", "UNKNOWN")
-    if status == "SUCCESS":
-        return 0.60  # Calibrated neutral baseline for complete analysis
-    elif status in ("PARTIAL", "FALLBACK_USED"):
-        return 0.35
-    return 0.10
+    None when no confidence was reported: an unreported confidence is not imputed,
+    and such a specialist carries no weight in the consensus.
+    """
+    raw_conf = output.get("confidence")
+    if raw_conf is None:
+        return None
+    try:
+        val = float(raw_conf)
+    except (ValueError, TypeError):
+        return None
+    return max(0.10, min(1.0, val))
 
 
 def evaluate_multi_agent_consensus(
@@ -217,11 +215,14 @@ def evaluate_multi_agent_consensus(
         is_cal = bool(out.get("is_calibrated", False))
         node_prov = bool(out.get("provenance_verified", provenance_verified))
 
-        # Effective weight: Base weight * confidence * quality
-        # Unconfigured / fallback options node receives ZERO effective weight
+        # Effective weight: Base weight * confidence * quality.
+        # Zero weight for: fallback options node, failed/skipped nodes, a bias that carries
+        # no directional information (UNKNOWN/MIXED), or no reported confidence.
         if role == AgentRole.OPTIONS.value and is_fallback:
             w_eff = 0.0
         elif st in ("FAILED", "SKIPPED"):
+            w_eff = 0.0
+        elif bias_str not in {"BULLISH", "BEARISH", "NEUTRAL"} or conf is None:
             w_eff = 0.0
         else:
             w_eff = w_base * conf * q_score
@@ -230,7 +231,7 @@ def evaluate_multi_agent_consensus(
             role=role,
             directional_bias=bias_str,
             bias_numeric=bias_num,
-            confidence=conf,
+            confidence=conf if conf is not None else 0.0,
             quality_score=q_score,
             base_weight=w_base,
             effective_weight=w_eff,
@@ -258,8 +259,10 @@ def evaluate_multi_agent_consensus(
         # Zero disagreement among active directional voters; neutral nodes do not inject artificial conflict
         disagreement_index = 0.0
     else:
-        abs_bias_sum = abs(sum(s.bias_numeric for s in directional_voters))
-        disagreement_index = 1.0 - (abs_bias_sum / directional_voter_count)
+        # Weighted: a low-weight dissenter moves the index less than a high-weight one
+        voter_weight = sum(s.effective_weight for s in directional_voters)
+        signed = abs(sum(s.effective_weight * s.bias_numeric for s in directional_voters))
+        disagreement_index = 1.0 - (signed / voter_weight) if voter_weight > 0 else 0.0
 
     if total_w > 0.0:
         avg_q = float(sum(s.effective_weight * s.quality_score for s in active_specialists) / total_w)

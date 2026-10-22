@@ -8,10 +8,12 @@ preconditions exist. This module does not read the network or a quarantine file.
 from __future__ import annotations
 
 import math
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from app.instruments import OPTION_UNDERLYINGS, underlying_list_text
+
+_IST = timezone(timedelta(hours=5, minutes=30))
 
 ORIGINS = ("UNVERIFIED_MARKET_INPUT", "SYNTHETIC_FIXTURE", "CALCULATED")
 UNDERLYINGS = OPTION_UNDERLYINGS
@@ -48,7 +50,8 @@ def validate_option_inputs(payload: dict, *, as_of: datetime | None = None, max_
     _positive(payload.get("underlying_price"), "underlying_price", "INVALID_UNDERLYING_PRICE", errors)
     expiry = _expiry(payload.get("expiry"), errors)
     quote_at = _quote_time(payload.get("quote_timestamp"), errors)
-    if expiry is not None and quote_at is not None and expiry < quote_at.date():
+    # Contracts expire on IST dates; compare in IST whatever timezone the quote carries
+    if expiry is not None and quote_at is not None and expiry < quote_at.astimezone(_IST).date():
         errors.append(_error("EXPIRED", "The expiry date is before the quote date."))
     if as_of is not None:
         if as_of.tzinfo is None or as_of.utcoffset() is None:

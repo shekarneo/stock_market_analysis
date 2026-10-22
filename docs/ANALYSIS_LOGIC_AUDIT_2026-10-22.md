@@ -194,3 +194,36 @@ Still open:
 - The m39 options-analytics defaults and theta sign.
 - Consensus veto design.
 - Live-model feature normalization.
+
+
+## Phase 5 status (2026-10-23): implemented
+
+**Options analytics (`options/m39_options_analytics.py`)**
+- Black-76 call theta is now `(-e^-rT·F·σ·φ(d1)/(2√T) + r·C)/365`. It is checked against a numerical derivative; the old sign was off by 74% in a long-dated test case.
+- The IV solver returns None when IV is undefined (at expiry, at or below intrinsic, or no fit), instead of 0.15 or 0.01.
+- Missing bid, ask, open interest and volume stay None; they are no longer turned into 0.
+- PCR is None when open interest is missing, and sentiment is then UNKNOWN. Previously both fell back to PCR 1.0.
+- Max pain needs open interest at every strike.
+- ATM IV is None instead of 0.15.
+- The 25-delta skew uses only records that have Greeks.
+
+**Expiries (`market/groww_options.py`, `options/validation.py`)**
+- Expiries are listed per underlying.
+- SENSEX and MCX return `EXPIRY_MASTER_UNAVAILABLE` instead of being checked against NIFTY dates.
+- "Upcoming" never returns an expired date.
+- All expiry comparisons use the IST date.
+
+**Consensus (`analysis/consensus_engine.py`, `analysis/agent_nodes.py`)**
+- An unreported confidence is not imputed; that specialist carries no weight.
+- UNKNOWN and MIXED biases carry no weight.
+- The disagreement index is weighted by effective weight.
+- The Market Data analyst checks provenance only, so it no longer votes.
+- The News analyst uses relevance-aware headline reading. It abstains when there is no clear signal, and no longer votes NEUTRAL at 0.60–0.65.
+- `test_options_analyst_node_integration` was failing since Phase 1 because its quotes lacked `time_years`; the test now supplies it.
+
+Still open:
+- Server-side EV for `expected_net`.
+- MCX charge rates.
+- SENSEX and MCX expiry lists, which need loading from the BSE and MCX instrument masters.
+- The always-UNVERIFIED provenance veto.
+- Live-model feature normalization, which needs a retrain.

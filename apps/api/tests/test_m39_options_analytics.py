@@ -138,6 +138,7 @@ def test_options_analyst_node_integration():
             "open_interest": 8000.0,
             "volume": 4000.0,
             "forward_price": 25000.0,
+            "time_years": 7.0 / 365.0,
             "instrument": "NIFTY",
         },
         {
@@ -150,6 +151,7 @@ def test_options_analyst_node_integration():
             "open_interest": 12000.0,
             "volume": 6000.0,
             "forward_price": 25000.0,
+            "time_years": 7.0 / 365.0,
             "instrument": "NIFTY",
         },
     ]

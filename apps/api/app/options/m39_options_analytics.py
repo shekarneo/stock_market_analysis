@@ -61,12 +61,12 @@ class Black76Greeks:
 class OptionStrikeRecord:
     strike: float
     option_type: str        # "CE" or "PE"
-    bid: float
-    ask: float
-    mid: float
-    last_price: float
-    open_interest: float
-    volume: float
+    bid: float | None
+    ask: float | None
+    mid: float | None
+    last_price: float | None
+    open_interest: float | None
+    volume: float | None
     implied_volatility: float | None = None
     greeks: Black76Greeks | None = None
 
@@ -77,19 +77,19 @@ class OptionsChainSummary:
     forward_price: float
     risk_free_rate: float
     time_to_expiry_years: float
-    total_call_oi: float
-    total_put_oi: float
-    total_call_volume: float
-    total_put_volume: float
-    pcr_oi: float                           # Total Put OI / Total Call OI
-    pcr_volume: float                       # Total Put Vol / Total Call Vol
-    max_pain_strike: float                  # Strike minimizing collective option buyer payoff
-    max_pain_total_loss: float
+    total_call_oi: float | None
+    total_put_oi: float | None
+    total_call_volume: float | None
+    total_put_volume: float | None
+    pcr_oi: float | None                    # Total Put OI / Total Call OI; None when OI is missing
+    pcr_volume: float | None                # Total Put Vol / Total Call Vol
+    max_pain_strike: float | None           # Strike minimizing collective option buyer payoff
+    max_pain_total_loss: float | None
     atm_strike: float
-    atm_iv: float
+    atm_iv: float | None
     volatility_skew_25d: float | None       # IV(25-delta Put) - IV(25-delta Call)
-    directional_sentiment: str              # "BULLISH", "BEARISH", or "NEUTRAL"
-    sentiment_confidence: float             # [0.10, 1.00]
+    directional_sentiment: str              # "BULLISH", "BEARISH", "NEUTRAL", or "UNKNOWN" (no OI)
+    sentiment_confidence: float | None
     strikes_evaluated: int
     reason_codes: list[str] = field(default_factory=list)
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -129,7 +129,8 @@ def calculate_black76_and_greeks(
     if is_call:
         price = max(0.0, disc * (forward * cdf_d1 - strike * cdf_d2))
         delta = disc * cdf_d1
-        theta = -(disc * forward * volatility * pdf_d1 / (2.0 * sqrt_t) + risk_free_rate * price) / 365.0
+        # Black-76: dC/dt = -disc*F*sigma*phi(d1)/(2*sqrt(T)) + r*C  (per year)
+        theta = (-disc * forward * volatility * pdf_d1 / (2.0 * sqrt_t) + risk_free_rate * price) / 365.0
         rho = -time_years * disc * (forward * cdf_d1 - strike * cdf_d2) / 100.0
     else:
         cdf_neg_d1 = norm_cdf(-d1)
@@ -166,16 +167,20 @@ def solve_black76_implied_volatility(
     is_call: bool = True,
     max_iter: int = 50,
     tol: float = 1e-6,
-) -> float:
-    """Numerically invert Black-76 to solve for implied volatility sigma in [0.01, 3.00]."""
+) -> float | None:
+    """Numerically invert Black-76 for implied volatility in [0.005, 3.00].
+
+    Returns None when IV is undefined (at expiry, or price at/below intrinsic value)
+    or when no volatility in range reproduces the price.
+    """
     if time_years <= 1e-6:
-        return 0.15
+        return None
 
     disc = math.exp(-risk_free_rate * time_years)
     intrinsic = max(0.0, disc * (forward - strike)) if is_call else max(0.0, disc * (strike - forward))
 
     if market_price <= intrinsic + 1e-6:
-        return 0.01  # Minimum volatility bound
+        return None
 
     # Stage 1: Newton-Raphson iteration with Corrado-Miller initial estimate
     sigma = 0.20
@@ -206,7 +211,9 @@ def solve_black76_implied_volatility(
         else:
             low = mid
 
-    return round(0.5 * (low + high), 6)
+    sigma = 0.5 * (low + high)
+    final = calculate_black76_and_greeks(forward, strike, time_years, sigma, risk_free_rate, is_call).price
+    return round(sigma, 6) if abs(final - market_price) <= max(1e-4, 1e-4 * market_price) else None
 
 
 # ==============================================================================
@@ -252,19 +259,26 @@ def analyze_options_chain(
     call_records: dict[float, OptionStrikeRecord] = {}
     put_records: dict[float, OptionStrikeRecord] = {}
 
+    def _num(value: Any) -> float | None:
+        try:
+            out = float(value)
+        except (TypeError, ValueError):
+            return None
+        return out if math.isfinite(out) else None
+
     for q in quotes:
         k = float(q["strike"])
         opt_type = str(q.get("option_type", "")).upper()
-        bid = float(q.get("bid", 0.0))
-        ask = float(q.get("ask", 0.0))
-        mid = (bid + ask) / 2.0 if (bid > 0 and ask > 0) else float(q.get("last_price", 0.0))
-        lp = float(q.get("last_price", mid))
-        oi = float(q.get("open_interest", 0.0))
-        vol = float(q.get("volume", 0.0))
+        bid = _num(q.get("bid"))
+        ask = _num(q.get("ask"))
+        lp = _num(q.get("last_price"))
+        mid = (bid + ask) / 2.0 if (bid and ask and bid > 0 and ask > 0) else lp
+        oi = _num(q.get("open_interest"))
+        vol = _num(q.get("volume"))
 
         # Invert IV if not directly provided
         iv = float(q.get("implied_volatility")) if q.get("implied_volatility") is not None else None
-        if (iv is None or iv <= 0.0) and mid > 0:
+        if (iv is None or iv <= 0.0) and mid is not None and mid > 0:
             iv = solve_black76_implied_volatility(
                 market_price=mid,
                 forward=forward_price,
@@ -312,43 +326,47 @@ def analyze_options_chain(
     aligned_c_oi = []
     aligned_p_oi = []
 
-    tot_c_oi = 0.0
-    tot_p_oi = 0.0
-    tot_c_vol = 0.0
-    tot_p_vol = 0.0
+    # Open interest and volume count only where reported; a missing value is not zero
+    oi_complete = all(
+        (k not in call_records or call_records[k].open_interest is not None)
+        and (k not in put_records or put_records[k].open_interest is not None)
+        for k in all_strikes
+    )
+
+    def _total(records: dict, attr: str) -> float | None:
+        vals = [getattr(r, attr) for r in records.values()]
+        return float(sum(vals)) if vals and all(v is not None for v in vals) else None
+
+    tot_c_oi = _total(call_records, "open_interest")
+    tot_p_oi = _total(put_records, "open_interest")
+    tot_c_vol = _total(call_records, "volume")
+    tot_p_vol = _total(put_records, "volume")
 
     for k in all_strikes:
-        c_oi = call_records[k].open_interest if k in call_records else 0.0
-        p_oi = put_records[k].open_interest if k in put_records else 0.0
-        c_v = call_records[k].volume if k in call_records else 0.0
-        p_v = put_records[k].volume if k in put_records else 0.0
-
         aligned_strikes.append(k)
-        aligned_c_oi.append(c_oi)
-        aligned_p_oi.append(p_oi)
+        aligned_c_oi.append((call_records[k].open_interest if k in call_records else 0.0) or 0.0)
+        aligned_p_oi.append((put_records[k].open_interest if k in put_records else 0.0) or 0.0)
 
-        tot_c_oi += c_oi
-        tot_p_oi += p_oi
-        tot_c_vol += c_v
-        tot_p_vol += p_v
+    # PCR metrics (None when either side's totals are missing or zero)
+    pcr_oi = tot_p_oi / tot_c_oi if (tot_p_oi is not None and tot_c_oi) else None
+    pcr_vol = tot_p_vol / tot_c_vol if (tot_p_vol is not None and tot_c_vol) else None
 
-    # PCR metrics
-    pcr_oi = tot_p_oi / tot_c_oi if tot_c_oi > 0 else 1.0
-    pcr_vol = tot_p_vol / tot_c_vol if tot_c_vol > 0 else 1.0
-
-    # Max Pain Strike
-    max_pain_k, max_pain_loss = compute_max_pain_strike(aligned_strikes, aligned_c_oi, aligned_p_oi)
+    # Max Pain needs reported OI at every strike
+    if oi_complete and (tot_c_oi or tot_p_oi):
+        max_pain_k, max_pain_loss = compute_max_pain_strike(aligned_strikes, aligned_c_oi, aligned_p_oi)
+    else:
+        max_pain_k, max_pain_loss = None, None
 
     # ATM Strike (closest strike to forward)
     atm_k = min(all_strikes, key=lambda k: abs(k - forward_price))
     atm_ce = call_records.get(atm_k)
     atm_pe = put_records.get(atm_k)
     iv_vals = [r.implied_volatility for r in (atm_ce, atm_pe) if r and r.implied_volatility]
-    atm_iv = float(sum(iv_vals) / len(iv_vals)) if iv_vals else 0.15
+    atm_iv = float(sum(iv_vals) / len(iv_vals)) if iv_vals else None
 
-    # 25-Delta Skew (closest call to delta +0.25, closest put to delta -0.25)
-    call_25d = min(call_records.values(), key=lambda r: abs((r.greeks.delta if r.greeks else 0.5) - 0.25), default=None)
-    put_25d = min(put_records.values(), key=lambda r: abs((r.greeks.delta if r.greeks else -0.5) - (-0.25)), default=None)
+    # 25-Delta Skew (closest call to delta +0.25, closest put to delta -0.25), Greeks required
+    call_25d = min((r for r in call_records.values() if r.greeks), key=lambda r: abs(r.greeks.delta - 0.25), default=None)
+    put_25d = min((r for r in put_records.values() if r.greeks), key=lambda r: abs(r.greeks.delta + 0.25), default=None)
 
     if call_25d and put_25d and call_25d.implied_volatility and put_25d.implied_volatility:
         skew_25d = round(put_25d.implied_volatility - call_25d.implied_volatility, 4)
@@ -361,7 +379,11 @@ def analyze_options_chain(
     # PCR_OI < 0.75 -> Bearish (heavy call writing resistance)
     # In between -> Neutral
     reason_codes = []
-    if pcr_oi >= 1.25:
+    if pcr_oi is None:
+        sentiment = "UNKNOWN"
+        conf = None
+        reason_codes.append("PCR_UNAVAILABLE_OI_MISSING")
+    elif pcr_oi >= 1.25:
         sentiment = "BULLISH"
         conf = min(0.85, 0.50 + (pcr_oi - 1.25) * 0.40)
         reason_codes.append("PCR_BULLISH_SUPPORT")
@@ -375,11 +397,12 @@ def analyze_options_chain(
         reason_codes.append("PCR_NEUTRAL_EQUILIBRIUM")
 
     # Modulate by forward position relative to Max Pain
-    dist_to_max_pain = (max_pain_k - forward_price) / forward_price
-    if dist_to_max_pain > 0.015:
-        reason_codes.append("FORWARD_BELOW_MAX_PAIN_MAGNET_UP")
-    elif dist_to_max_pain < -0.015:
-        reason_codes.append("FORWARD_ABOVE_MAX_PAIN_MAGNET_DOWN")
+    if max_pain_k is not None:
+        dist_to_max_pain = (max_pain_k - forward_price) / forward_price
+        if dist_to_max_pain > 0.015:
+            reason_codes.append("FORWARD_BELOW_MAX_PAIN_MAGNET_UP")
+        elif dist_to_max_pain < -0.015:
+            reason_codes.append("FORWARD_ABOVE_MAX_PAIN_MAGNET_DOWN")
 
     return OptionsChainSummary(
         underlying_symbol=symbol,
@@ -390,15 +413,15 @@ def analyze_options_chain(
         total_put_oi=tot_p_oi,
         total_call_volume=tot_c_vol,
         total_put_volume=tot_p_vol,
-        pcr_oi=round(pcr_oi, 4),
-        pcr_volume=round(pcr_vol, 4),
+        pcr_oi=round(pcr_oi, 4) if pcr_oi is not None else None,
+        pcr_volume=round(pcr_vol, 4) if pcr_vol is not None else None,
         max_pain_strike=max_pain_k,
         max_pain_total_loss=max_pain_loss,
         atm_strike=atm_k,
-        atm_iv=round(atm_iv, 4),
+        atm_iv=round(atm_iv, 4) if atm_iv is not None else None,
         volatility_skew_25d=skew_25d,
         directional_sentiment=sentiment,
-        sentiment_confidence=round(conf, 4),
+        sentiment_confidence=round(conf, 4) if conf is not None else None,
         strikes_evaluated=len(all_strikes),
         reason_codes=reason_codes,
     )

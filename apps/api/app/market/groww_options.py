@@ -48,13 +48,37 @@ CANONICAL_NIFTY_EXPIRIES: tuple[str, ...] = (
 )
 
 ACTIVE_NIFTY_EXPIRIES = CANONICAL_NIFTY_EXPIRIES
+
+# Listed expiries per underlying, taken from the exchange/broker instrument master.
+# Only NIFTY has a captured list. SENSEX (BSE) and CRUDEOILMINI (MCX) have different
+# calendars and must never be checked against NIFTY dates; until their lists are
+# loaded, validation reports EXPIRY_MASTER_UNAVAILABLE.
+LISTED_EXPIRIES: dict[str, tuple[str, ...]] = {
+    "NIFTY": CANONICAL_NIFTY_EXPIRIES,
+}
 _ISO_DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_IST_TZ = timezone(timedelta(hours=5, minutes=30))
+
+
+def ist_today(now: datetime | None = None) -> date:
+    """Today's trading date in India; contracts expire on IST dates, not UTC dates."""
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return now.astimezone(_IST_TZ).date()
+
+
+def listed_expiries_for(underlying: str | None) -> tuple[str, ...] | None:
+    from app.instruments import canonical_underlying
+
+    return LISTED_EXPIRIES.get(canonical_underlying(underlying) or "")
 
 
 def validate_contract_expiry(
     expiry_date: str,
     as_of: date | None = None,
     allowed_expiries: tuple[str, ...] | None = None,
+    underlying: str = "NIFTY",
 ) -> tuple[bool, str]:
     """Validate contract expiry against date format, currency calendar, and exchange master.
 
@@ -69,25 +93,30 @@ def validate_contract_expiry(
     except ValueError:
         return False, "INVALID_CALENDAR_DATE"
 
-    ref_date = as_of or datetime.now(timezone.utc).date()
+    ref_date = as_of or ist_today()
     if exp_d < ref_date:
         return False, "EXPIRED_CONTRACT"
 
-    allowed = allowed_expiries if allowed_expiries is not None else CANONICAL_NIFTY_EXPIRIES
-    if allowed and expiry_date not in allowed:
+    allowed = allowed_expiries if allowed_expiries is not None else listed_expiries_for(underlying)
+    if allowed is None:
+        return False, "EXPIRY_MASTER_UNAVAILABLE"
+    if expiry_date not in allowed:
         return False, "UNLISTED_CONTRACT_EXPIRY"
 
     return True, "VALID"
 
 
-def resolve_upcoming_expiry(underlying: str = "NIFTY", as_of: date | None = None) -> str:
-    """Find the nearest valid contract expiry >= as_of date from canonical master."""
-    ref_date = as_of or datetime.now(timezone.utc).date()
-    ref_iso = ref_date.isoformat()
-    for exp in CANONICAL_NIFTY_EXPIRIES:
-        if exp >= ref_iso:
-            return exp
-    return CANONICAL_NIFTY_EXPIRIES[-1]
+def resolve_upcoming_expiry(underlying: str = "NIFTY", as_of: date | None = None) -> str | None:
+    """Nearest listed expiry on or after as_of (IST) for this underlying.
+
+    None when the underlying has no expiry master or every listed expiry has passed;
+    an expired date is never returned as "upcoming".
+    """
+    listed = listed_expiries_for(underlying)
+    if not listed:
+        return None
+    ref_iso = (as_of or ist_today()).isoformat()
+    return next((exp for exp in sorted(listed) if exp >= ref_iso), None)
 
 
 def fetch_groww_option_chain(
@@ -107,7 +136,7 @@ def fetch_groww_option_chain(
         ret_dt = ret_dt.replace(tzinfo=timezone.utc)
 
     if expiry_date:
-        valid, reason = validate_contract_expiry(expiry_date, as_of=ret_dt.date())
+        valid, reason = validate_contract_expiry(expiry_date, as_of=ist_today(ret_dt), underlying=underlying)
         if not valid:
             return {
                 "ok": False,
@@ -117,7 +146,14 @@ def fetch_groww_option_chain(
             }
         resolved_expiry = expiry_date
     else:
-        resolved_expiry = resolve_upcoming_expiry(underlying, ret_dt.date())
+        resolved_expiry = resolve_upcoming_expiry(underlying, ist_today(ret_dt))
+        if resolved_expiry is None:
+            return {
+                "ok": False,
+                "code": "EXPIRY_MASTER_UNAVAILABLE",
+                "message": f"No listed expiry is known for {underlying}; pass expiry_date from the exchange instrument master.",
+                "observation": None,
+            }
 
     http_caller = caller or HttpxCaller()
 
@@ -228,7 +264,7 @@ def load_stored_option_chain_observation(
         if enforce_valid_contract and expiry_str:
             try:
                 exp_date = date.fromisoformat(expiry_str)
-                if exp_date < current_time.date():
+                if exp_date < ist_today(current_time):
                     return None  # Stored observation is from an expired contract
             except ValueError:
                 return None

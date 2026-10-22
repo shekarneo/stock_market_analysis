@@ -65,7 +65,8 @@ def test_veto_on_excessive_epistemic_uncertainty():
     }
 
     eval_result = evaluate_multi_agent_consensus(agent_outputs, uncertainty_veto_threshold=0.40)
-    assert eval_result.disagreement_index == 1.0  # 2 bullish vs 2 bearish = complete polarization
+    # Weighted disagreement: 2 bullish vs 2 bearish with near-equal weights is close to full polarization
+    assert eval_result.disagreement_index >= 0.9
     assert eval_result.epistemic_uncertainty >= 0.40
     assert "EXCESSIVE_EPISTEMIC_UNCERTAINTY" in eval_result.vetoes
     assert eval_result.directional_recommendation == "NEUTRAL"
@@ -120,9 +121,10 @@ def test_quality_and_confidence_penalization():
     assert q_fall < 0.60
     assert q_fail == 0.0
 
-    c_norm = compute_specialist_confidence(out_normal)
-    c_fall = compute_specialist_confidence(out_fallback)
-    assert c_norm > c_fall
+    # An unreported confidence is not imputed; such a specialist carries no weight
+    assert compute_specialist_confidence(out_normal) is None
+    assert compute_specialist_confidence(out_fallback) is None
+    assert compute_specialist_confidence({"confidence": 0.7}) == 0.7
 
 
 def test_end_to_end_langgraph_consensus_propagation():
@@ -231,7 +233,7 @@ def test_scenario_c_one_bullish_one_bearish_specialist_conflict():
     eval_result = evaluate_multi_agent_consensus(agent_outputs)
     assert eval_result.directional_voter_count == 2
     assert eval_result.directional_participation_rate == round(2 / 6, 4)  # 33.3% >= 33%
-    assert eval_result.disagreement_index == 1.0  # 1 Bullish vs 1 Bearish = complete opposition
+    assert eval_result.disagreement_index >= 0.9  # 1 Bullish vs 1 Bearish of similar weight: near-complete opposition
     assert "CORE_SPECIALIST_CONFLICT" in eval_result.vetoes
     assert "EXCESSIVE_EPISTEMIC_UNCERTAINTY" in eval_result.vetoes
     assert eval_result.directional_recommendation == "NEUTRAL"

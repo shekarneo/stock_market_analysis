@@ -384,8 +384,9 @@ def market_data_analyst_node(state: AnalysisState) -> dict:
         state=state,
         t0=t0,
         findings=findings,
-        directional_bias="NEUTRAL",
-        confidence=0.70,
+        # Provenance/freshness check only: it has no view on direction, so it does not vote
+        directional_bias="UNKNOWN",
+        confidence=None,
         evidence_references=[row.get("evidence_id") for row in evidence[:5] if row.get("evidence_id")],
         missing_evidence=missing_info,
         limitations=limitations,
@@ -624,25 +625,39 @@ def news_event_analyst_node(state: AnalysisState) -> dict:
     else:
         findings.append("No active geopolitical, sanctions, or central bank event categories detected in current headline set.")
 
-    bull_news = sum(1 for e in news_items if e.get("directional_implication") == "BULLISH")
-    bear_news = sum(1 for e in news_items if e.get("directional_implication") == "BEARISH")
+    from app.analysis.intelligence import NEWS_MIN_HEADLINES, _infer_headline_direction, headline_is_relevant
 
+    target_inst = (state.get("instruments") or ["NIFTY"])[0]
+    bull_news = bear_news = relevant = 0
+    for e in news_items:
+        text = str(e.get("claim") or "")
+        if not headline_is_relevant(text, target_inst):
+            continue
+        relevant += 1
+        provided = e.get("directional_implication")
+        direction = provided if provided in {"BULLISH", "BEARISH"} else _infer_headline_direction(text, target_inst)
+        if direction == "BULLISH":
+            bull_news += 1
+        elif direction == "BEARISH":
+            bear_news += 1
+
+    # No news, or no clear signal, is not a NEUTRAL vote: the analyst abstains
+    directional_bias = "UNKNOWN"
+    confidence = None
     if not news_items:
-        findings.append("No adverse geopolitical, sanctions, or central bank event alerts detected in current surveillance window.")
-        directional_bias = "NEUTRAL"
-        confidence = 0.65
-    elif bull_news > bear_news:
+        findings.append("No news items were available in this window; no news vote.")
+    elif bull_news >= NEWS_MIN_HEADLINES and bull_news >= 2 * bear_news:
         directional_bias = "BULLISH"
-        confidence = 0.65 + min(0.20, (bull_news - bear_news) * 0.05)
-        findings.append(f"Headline news flow leaning positive ({bull_news} bullish vs {bear_news} bearish items).")
-    elif bear_news > bull_news:
+        confidence = 0.55 + min(0.20, (bull_news - bear_news) * 0.05)
+        findings.append(f"Relevant headlines for {target_inst} lean positive ({bull_news} bullish vs {bear_news} bearish of {relevant}).")
+    elif bear_news >= NEWS_MIN_HEADLINES and bear_news >= 2 * bull_news:
         directional_bias = "BEARISH"
-        confidence = 0.65 + min(0.20, (bear_news - bull_news) * 0.05)
-        findings.append(f"Headline news flow leaning defensive ({bear_news} bearish vs {bull_news} bullish items).")
+        confidence = 0.55 + min(0.20, (bear_news - bull_news) * 0.05)
+        findings.append(f"Relevant headlines for {target_inst} lean negative ({bear_news} bearish vs {bull_news} bullish of {relevant}).")
     else:
-        directional_bias = "NEUTRAL"
-        confidence = 0.60
-        findings.append("News flow balanced with no dominant directional skew.")
+        findings.append(
+            f"No clear headline signal for {target_inst} ({bull_news} bullish / {bear_news} bearish of {relevant} relevant); no news vote."
+        )
 
     out = _finalize_agent_output(
         role_name=role_name,
@@ -652,7 +667,7 @@ def news_event_analyst_node(state: AnalysisState) -> dict:
         t0=t0,
         findings=findings,
         directional_bias=directional_bias,
-        confidence=round(confidence, 2),
+        confidence=round(confidence, 2) if confidence is not None else None,
         evidence_references=[e.get("evidence_id") for e in news_items if e.get("evidence_id")],
         missing_evidence=["Live news feed unconfigured"] if not news_items else [],
         limitations=["Strict point-in-time timestamp gating enforced."],
@@ -729,11 +744,14 @@ def options_analyst_node(state: AnalysisState) -> dict:
                     time_years=float(valid_quotes[0]["time_years"]),
                     symbol=str(valid_quotes[0].get("instrument", "NIFTY")),
                 )
+                def _fmt(value, spec, scale=1.0, suffix=""):
+                    return "N/A" if value is None else f"{value * scale:{spec}}{suffix}"
+
                 findings.append(
-                    f"Options PCR(OI): {chain_summary.pcr_oi:.2f}, PCR(Vol): {chain_summary.pcr_volume:.2f}, "
-                    f"Max Pain Strike: {chain_summary.max_pain_strike:.0f}, ATM IV: {chain_summary.atm_iv * 100:.1f}%."
+                    f"Options PCR(OI): {_fmt(chain_summary.pcr_oi, '.2f')}, PCR(Vol): {_fmt(chain_summary.pcr_volume, '.2f')}, "
+                    f"Max Pain Strike: {_fmt(chain_summary.max_pain_strike, '.0f')}, ATM IV: {_fmt(chain_summary.atm_iv, '.1f', 100.0, '%')}."
                 )
-                directional_bias = chain_summary.directional_sentiment
+                directional_bias = chain_summary.directional_sentiment  # UNKNOWN when OI is missing
                 confidence = chain_summary.sentiment_confidence
             except Exception as exc:
                 findings.append(f"Options chain parsing returned: {exc.__class__.__name__}.")
