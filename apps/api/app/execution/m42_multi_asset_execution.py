@@ -61,10 +61,14 @@ from app.forecasting.m40_multi_asset_research import (
     generate_deterministic_banknifty_15m_candles,
 )
 from app.risk.portfolio_risk import (
-    INDIAN_LOT_SIZES,
     calculate_volatility_parity_size,
 )
 from app.settings import REPO_ROOT
+
+# Lot sizes frozen at the values the M42 research replay was produced with, so the
+# archived artifact stays reproducible. These are NOT current contract specs (see
+# app/instrument_specs.py); BANKNIFTY here is also synthetic research data.
+M42_RESEARCH_LOT_SIZES: dict[str, int] = {"NIFTY": 25, "BANKNIFTY": 15}
 
 log = logging.getLogger("imm.execution.m42_multi_asset")
 
@@ -283,7 +287,7 @@ def run_multi_asset_paper_simulation(
 
         for sym, side_sign, row, cap_sub in executed_orders:
             side_str = "BUY" if side_sign == 1 else "SELL"
-            lot_size = INDIAN_LOT_SIZES.get(sym, 25)
+            lot_size = M42_RESEARCH_LOT_SIZES[sym]
 
             # Volatility parity sizing (1 lot minimum, max 2 lots per half-day swing)
             lots = 1

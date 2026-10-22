@@ -63,7 +63,8 @@ function calcRunningPremium(item, spots) {
   const isUp = item.direction === "UP" || item.option_type === "CE";
   const spotDelta = isUp ? (currentSpot - entrySpot) : (entrySpot - currentSpot);
   const isFut = Boolean(item.contract && item.contract.includes("FUT"));
-  const delta = isFut ? 1.0 : (p.delta != null ? Number(p.delta) : 0.5);
+  const delta = isFut ? 1.0 : (p.delta != null ? Number(p.delta) : null);
+  if (delta == null) return null; // no live delta captured: do not estimate a running premium
   const premDelta = spotDelta * delta;
   return Number(Math.max(0.05, pEntry + premDelta).toFixed(2));
 }
@@ -279,8 +280,8 @@ export default function WatchlistPage() {
                 const s = STATUS_STYLE[i.status] || STATUS_STYLE.OPEN;
                 const p = i.model_premiums || {};
                 const pEntry = p.entry != null ? Number(p.entry) : null;
-                const pTarget = p.target != null ? Number(p.target) : (pEntry != null ? Number((pEntry * 1.4).toFixed(2)) : null);
-                const pSL = p.stop_loss != null ? Number(p.stop_loss) : (pEntry != null ? Number((pEntry * 0.75).toFixed(2)) : null);
+                const pTarget = p.target != null ? Number(p.target) : null;
+                const pSL = p.stop_loss != null ? Number(p.stop_loss) : null;
                 const gainPct = pEntry && pTarget ? `+${(((pTarget - pEntry) / pEntry) * 100).toFixed(0)}%` : "";
                 const lossPct = pEntry && pSL ? `-${(((pEntry - pSL) / pEntry) * 100).toFixed(0)}%` : "";
 
@@ -370,7 +371,7 @@ export default function WatchlistPage() {
                         <>
                           <strong style={{ color: "#b91c1c" }}>{inr(p.exit_premium || pSL)}</strong>
                           <small style={{ display: "block", color: "#991b1b", fontWeight: 700 }}>
-                            {p.exit_premium ? "Realized Exit" : (lossPct || "-25% Exit")}
+                            {p.exit_premium ? "Realized Exit" : (lossPct || "Spot stop hit")}
                           </small>
                           {runningPrem != null && (
                             <small style={{ display: "block", color: "var(--muted)", fontSize: "0.68rem", marginTop: "2px" }} title="Current market option premium if held post-exit">
@@ -382,7 +383,7 @@ export default function WatchlistPage() {
                         <>
                           <strong style={{ color: "#15803d" }}>{inr(p.exit_premium || pTarget)}</strong>
                           <small style={{ display: "block", color: "#166534", fontWeight: 700 }}>
-                            {p.exit_premium ? "Realized Exit" : (gainPct || "+40% Exit")}
+                            {p.exit_premium ? "Realized Exit" : (gainPct || "Spot target hit")}
                           </small>
                           {runningPrem != null && (
                             <small style={{ display: "block", color: "var(--muted)", fontSize: "0.68rem", marginTop: "2px" }} title="Current market option premium if held post-exit">
@@ -453,7 +454,7 @@ export default function WatchlistPage() {
       ) : null}
 
       <p style={{ fontSize: "0.78rem", color: "var(--muted)", marginTop: "14px" }}>
-        * <strong>Option Premiums:</strong> Dedicated columns display the Option Entry Premium, Target Premium (+40%), and Stop-Loss Premium (-25%). Trade resolution &amp; accuracy hit-rates are verified against the underlying index/commodity spot levels reaching Target or SL. {acc?.method}
+        * <strong>Option Premiums:</strong> Dedicated columns display the option Entry, Target and Stop-Loss premiums when they came from a fresh live option-chain quote (blank otherwise). Trade resolution &amp; accuracy hit-rates are verified against the underlying index/commodity spot levels reaching Target or SL. {acc?.method}
       </p>
     </section>
   );
@@ -472,28 +473,31 @@ function Stat({ label, value, sub, color, strong }) {
 function AddSuggestionCard({ spots, onSuccess }) {
   const [instrument, setInstrument] = useState("NIFTY");
   const [optionType, setOptionType] = useState("CE");
-  const [contract, setContract] = useState("NIFTY 23200 CE");
-  const [entrySpot, setEntrySpot] = useState(spots["NIFTY"] || 23146.15);
+  const initialSpot = spots["NIFTY"] ?? null;
+  const [contract, setContract] = useState(initialSpot != null ? `NIFTY ${Math.round(initialSpot / 50) * 50} CE` : "");
+  const [entrySpot, setEntrySpot] = useState(initialSpot ?? "");
   const [targetPoints, setTargetPoints] = useState(50);
   const [stopLossPoints, setStopLossPoints] = useState(25);
-  const [entryPremium, setEntryPremium] = useState(120);
+  const [entryPremium, setEntryPremium] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
 
   const handleInstrumentChange = (inst) => {
     setInstrument(inst);
-    const sp = spots[inst] || (inst === "NIFTY" ? 23146.15 : inst === "SENSEX" ? 74729.27 : 9388.0);
-    setEntrySpot(sp);
+    // Live spot only; if it is missing the operator must enter it (no placeholder prices).
+    const sp = spots[inst] ?? null;
+    setEntrySpot(sp ?? "");
+    const strikeFor = (step) => (sp != null ? `${Math.round(sp / step) * step} ` : "");
     if (inst === "NIFTY") {
-      setContract(`NIFTY ${Math.round(sp / 50) * 50} ${optionType}`);
+      setContract(`NIFTY ${strikeFor(50)}${optionType}`);
       setTargetPoints(50);
       setStopLossPoints(25);
     } else if (inst === "SENSEX") {
-      setContract(`SENSEX ${Math.round(sp / 100) * 100} ${optionType}`);
+      setContract(`SENSEX ${strikeFor(100)}${optionType}`);
       setTargetPoints(150);
       setStopLossPoints(75);
     } else {
-      setContract(`CRUDEMINI ${Math.round(sp / 50) * 50} ${optionType}`);
+      setContract(`CRUDEMINI ${strikeFor(50)}${optionType}`);
       setTargetPoints(40);
       setStopLossPoints(20);
     }
@@ -501,9 +505,9 @@ function AddSuggestionCard({ spots, onSuccess }) {
 
   const handleOptionTypeChange = (ot) => {
     setOptionType(ot);
-    const sp = Number(entrySpot) || 23000;
+    const sp = entrySpot === "" ? null : Number(entrySpot);
     const base = instrument === "NIFTY" ? 50 : (instrument === "SENSEX" ? 100 : 50);
-    setContract(`${instrument} ${Math.round(sp / base) * base} ${ot}`);
+    setContract(sp != null && !isNaN(sp) ? `${instrument} ${Math.round(sp / base) * base} ${ot}` : `${instrument} ${ot}`);
   };
 
   const handleSubmit = async (e) => {
@@ -525,7 +529,7 @@ function AddSuggestionCard({ spots, onSuccess }) {
           entry_spot: Number(entrySpot),
           target_points: Number(targetPoints),
           stop_loss_points: Number(stopLossPoints),
-          model_premiums: { entry: Number(entryPremium) || 100.0 },
+          model_premiums: entryPremium === "" ? {} : { entry: Number(entryPremium) },
           data_class: "UNVERIFIED_PROVIDER_DATA",
         }),
       });
@@ -624,7 +628,7 @@ function AddSuggestionCard({ spots, onSuccess }) {
         </label>
 
         <label style={{ fontSize: "0.8rem", color: "var(--muted)", display: "flex", flexDirection: "column", gap: "4px" }}>
-          Est. Prem. (₹)
+          Entry Prem. (₹, optional)
           <input
             type="number"
             step="any"

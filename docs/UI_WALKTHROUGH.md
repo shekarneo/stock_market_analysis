@@ -37,9 +37,11 @@
 **India Market Master (IMM)** is an autonomous, quantitative forecasting and options trading desk engineered specifically for the Indian financial markets.
 
 ### Supported Tradable Instruments
-1. **NIFTY 50 (`NIFTY`)**: National Stock Exchange of India (NSE) benchmark equity index (50 large-cap stocks; lot size 25; strike interval 50 pts).
-2. **BSE SENSEX (`SENSEX`)**: Bombay Stock Exchange (BSE) benchmark equity index (30 blue-chip stocks; lot size 20; strike interval 100 pts).
-3. **CRUDEOIL MINI (`CRUDEOILMINI` / `CRUDEMINI`)**: Multi Commodity Exchange of India (MCX) energy commodity future/option contract (lot size 10 bbl; strike interval 50 pts).
+1. **NIFTY 50 (`NIFTY`)**: National Stock Exchange of India (NSE) benchmark equity index (50 large-cap stocks).
+2. **BSE SENSEX (`SENSEX`)**: Bombay Stock Exchange (BSE) benchmark equity index (30 blue-chip stocks).
+3. **CRUDEOIL MINI (`CRUDEOILMINI` / `CRUDEMINI`)**: Multi Commodity Exchange of India (MCX) energy commodity future/option contract.
+
+Lot size, strike step and tick size are defined once in the backend instrument master (`apps/api/app/instrument_specs.py`, reviewed date in `SPECS_REVIEWED_ON`) and served to the UI by `GET /api/forecasting/instruments` (`contract_lot_size`, `strike_step`). No page hardcodes them; where the catalog has not loaded, lot and step show `N/A` and strike matrices are not drawn. Re-check the master whenever the exchange revises lot sizes.
 
 ### Design System & Layout Rules
 - **Color Palette**: Dark theme using tailored CSS variables (`--bg: #090d16`, `--card: #0f172a`, `--card-subtle: #131c31`, `--line: rgba(255, 255, 255, 0.08)`, `--ink: #f8fafc`, `--accent: #38bdf8`).
@@ -154,6 +156,7 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   3. **Live Candlestick & Forward Projected Trend Chart (`<PredictedTrendChart />`)**:
      - Embedded directly on the overview desk to provide visual price context.
      - Renders verified historical candlesticks (selectable 20, 35, or 50 bars), live streaming spot quotes, vertical cyan `NOW (Live Spot)` boundary line, forward projected 4-step trajectory path, expanding $\pm 1\sigma$ volatility confidence corridor, and target/stop badges.
+     - The projection, target, stop and `P(Up)` appear **only** when the live forecast is `ACTIVE`. Otherwise the chart shows candles only, `P(Up): N/A`, and a `No projection: <status>` label (hover for the reason, e.g. `STALE_FEATURES`, `NO_FITTED_MODEL`, `MODEL_NOT_DEPLOYED`). No default direction or probability is ever drawn.
   4. **Visual Multi-Agent Decision & Execution Cockpit (`<VisualAgentDecisionCard />`)**:
      - **Purpose**: Translates complex mathematical, macro, order flow, and regime assessments across 8 implemented LangGraph specialist agents and 4 research reference desks into high-impact visual indicators, meters, and cards instead of dense text paragraphs.
      - **Execution & Context Toolbar**:
@@ -235,6 +238,7 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   - Macro & Market Regime Pills: Displays volatility regime (`🛡️ Normal Volatility`) and risk limits clearance (`✓ Risk Limits Clear`).
 - **Command Toolbar & Analysis Launcher**:
   - Quick Presets: `🇮🇳 All Indices (3)`, `🛢️ MCX Commodities (8)`, `🌐 All Markets (15)`, and `Clear`.
+  - Section counters (`⚡ MCX Commodities (n)`, `🌐 Global Benchmarks (n)`, `News Wire (n)`) show the number of rows actually loaded, including `0`; no placeholder counts are shown.
   - Granular Instrument Selector Chips: Select individual indices (NIFTY, SENSEX), MCX commodities (Crude Mini, Gold Mini, Silver Mini, NG Mini), and global benchmarks.
   - Execution Options:
     - `⚡ Combine ML Forecast with Agent Consensus (Quant Fusion)` toggle: Combines statistical model probabilities with the 12-agent consensus. When checked, automatically activates the forward forecast chart.
@@ -350,9 +354,16 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   - Trading session hours, exchange tag (`NSE`, `BSE`, `MCX`), and session market state.
   - Commodity Instrument Tag: Dedicated `⚡ FUTURES` badge appears for MCX commodities (e.g. `CRUDEOILMINI`), recommending outright futures contracts (`CRUDEOILMINI FUTURES`) rather than call options.
   - Multi-Agent Bias & Signal: Stance badge (`STAND ASIDE (NO TRADE)`, `BUY_CE`, `BUY_PE`, `BUY_FUT`, or `SELL_FUT`). When the backend decision is `NO_TRADE` or active consensus vetoes exist, strictly enforces `STAND ASIDE (NO TRADE)` in red.
+    - One decision path: when gated, the backend also sets the market's `decision` to `NO_TRADE`, its options verdict to `NO_TRADE`, and clears target/stop premiums and per-lot risk on every listed strike (strike and any live entry premium remain for reference). The pre-gate signal is kept in `ungated_signal` for transparency.
+    - A market whose call disagrees with its own fused bias (`CALL_CONFLICTS_WITH_FUSED_BIAS`) or with the consensus direction (`CALL_CONFLICTS_WITH_CONSENSUS` / `NO_DIRECTIONAL_CONSENSUS`) is gated individually.
+    - For `BUY PE` calls the spot target is below the reference spot and the stop above it.
   - Target & Stop-Loss Points: Anchored to reference spot with dynamic live spot delta (`Target: ₹23,079.90 (+129.7 pts ref | +144.6 live)` and `Stop: ₹22,885.40 (-64.8 pts ref | -49.9 live)`). When gated under consensus vetoes, displays `— (Gated)` to eliminate speculative execution targets.
   - **`+ Watch & Score` Button**: Enrolls the trade into the live accuracy tracker. Disabled with `not-allowed` cursor when gated by consensus vetoes. Automatically records `data_class: "UNVERIFIED_PROVIDER_DATA"` to preserve data provenance integrity.
   - **`⚡ Fire & Auto-Add / Active Order` Button**: Submits simulated broker orders. When consensus vetoes are active or the decision is `NO_TRADE`, transforms into a disabled `🔒 Gated (<Conviction>)` button, preventing rogue orders.
+    - Requires a fresh live option-chain premium for the ATM pick, a backend-supplied lot size, and a live spot. If any is missing the order is refused with `Cannot simulate …` instead of using placeholder prices. Entry, target and stop come from the live pick; quantity comes from the pick's `lot_size`.
+    - Running P&L is marked to market with the delta captured from the live quote at entry. If no live delta was available, the order's P&L is not estimated.
+  - **Est. premium**: Shown only from a live option-chain quote (`is_live_quote`); never estimated from spot.
+  - **`+ Watch & Score` and auto-add**: Refused when the live spot or the analysis target/stop point distances are missing. Premium fields are sent only when the pick came from a live chain quote; otherwise the suggestion is tracked against spot levels only.
   - **Autonomous Bot Safety Gate**: The background auto-trading routine (`triggerAutoTradingScan`) strictly aborts without placing orders or polluting the watchlist whenever `analysisData.decision === "NO_TRADE"` or `rec.is_actionable === false`.
 
 #### 4. Live Watchlist & Active Order Book
@@ -366,7 +377,7 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   - `Realized P&L (₹)`: Total closed profit/loss.
   - `Running P&L (₹)`: Mark-to-market unrealized profit/loss calculated from live spot prices.
 - **Orders Table**:
-  - Columns: Underlying, Contract, Entry Spot, Target Spot, Stop Loss Spot, Current Spot, Model Premiums (Entry, Running LTP, Target, Stop Loss), P&L (%), Status Badge, and Actions (`Exit` / `Cancel`).
+  - Columns: Underlying, Contract, Entry Spot, Target Spot, Stop Loss Spot, Current Spot, Model Premiums (Entry, Running LTP, Target, Stop Loss), P&L (%), Status Badge, and Actions (`Exit` / `Cancel`). Missing premiums are shown as `—`; target/stop premiums are never derived as fixed percentages of entry.
   - **Orders Persistence**: Active and squared-off simulated broker orders are persisted in `localStorage` under `imm_live_simulated_orders`, allowing order logs, entry prices, and running P&L to survive page reloads until explicitly cleared via `Clear Orders`.
 
 ---
@@ -387,10 +398,10 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   - `Instrument` dropdown: Select from `NIFTY 50`, `SENSEX`, or `CRUDEOIL MINI`. Automatically updates default strike and step sizes.
   - `Option Type` dropdown: Select `CE (Call - Up)` or `PE (Put - Down)`.
   - `Contract Symbol` text input: Editable contract descriptor (e.g., `NIFTY 23200 CE`).
-  - `Entry Spot (₹)` numeric input: Pre-filled with live underlying spot price.
+  - `Entry Spot (₹)` numeric input (required): Pre-filled with the live underlying spot when available; left blank (operator must enter it) when no live spot exists. The contract strike is pre-filled only from a live spot.
   - `Target Points (pts)` numeric input: Default 50 pts (NIFTY), 150 pts (SENSEX), or 40 pts (CRUDEOILMINI).
   - `Stop Loss (pts)` numeric input: Default 25 pts (NIFTY), 75 pts (SENSEX), or 20 pts (CRUDEOILMINI).
-  - `Est. Prem. (₹)` numeric input: Theoretical entry option premium (default ₹120.00).
+  - `Entry Prem. (₹, optional)` numeric input: Operator-entered entry premium. Blank by default; when left blank no premium is stored. A fresh live option-chain quote, if available, replaces it on save.
   - `Save to Watchlist` button: Submits `POST /api/watchlist` and refreshes the table upon success.
 - **Accuracy Metric Cards**:
   - `Hit rate`: Percentage of decided trades where target was reached prior to stop-loss (`Targets / (Targets + SL)`).
@@ -405,11 +416,11 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
 - **Interactive Suggestions Table**:
   - `Contract`: Clickable link navigating directly to `/dashboard?instrument=...` with sub-link to `/analysis`. Displays contract name, dedicated **Expiry Date** badge (e.g. `Exp: 19 Oct 2026` in cyan), official exchange trading symbol (e.g. `NIFTY26O1923050PE`), option direction tag, and data class.
   - `Status`: Color-coded pill (`Open`, `Target hit`, `SL hit`, `Expired`, `Cancelled`).
-  - `Prem. Entry`: Entry option premium and lot size. Marked with a green `Groww Entry LTP` badge when populated directly from the verified Groww live Option Chain, or model estimate if offline.
+  - `Prem. Entry`: Entry option premium and lot size. Marked with a green `Groww Entry LTP` badge when populated directly from a fresh Groww live Option Chain quote (same underlying, unexpired, under 15 minutes old). Blank when no live or operator-entered premium exists.
   - `Running Prem.` / `Exit Prem`:
-    - For `OPEN` suggestions: Displays live mark-to-market premium and running gain/loss percentage. Features a distinct badge: **`Groww Live LTP`** (green) when streaming live exchange quotes from Groww GET `/v1/option-chain`, or **`Model Est.`** (slate) when using spot-delta estimation.
-    - For `RESOLVED` suggestions (`SL hit` / `Target hit`): Displays the **Realized Exit Premium** (captured directly from the live Groww option chain at resolution time) labeled `Realized Exit`. If resolved by formula, displays theoretical exit (`-25% Exit` or `+40% Exit`). Beneath the realized exit, a subtle label displays `Post-Exit: ₹... (+/-%)` showing ongoing live market option recovery without ambiguous signals.
-  - `Prem. Target` & `Prem. SL`: Target and Stop-Loss option premium levels calculated from entry LTP.
+    - For `OPEN` suggestions: Displays live mark-to-market premium and running gain/loss percentage. Features a distinct badge: **`Groww Live LTP`** (green) when streaming live exchange quotes from Groww GET `/v1/option-chain`, or **`Model Est.`** (slate) when using spot-delta estimation with the live delta captured at entry. Without a captured live delta, no running premium is shown.
+    - For `RESOLVED` suggestions (`SL hit` / `Target hit`): Displays the **Realized Exit Premium** (captured directly from the live Groww option chain at resolution time) labeled `Realized Exit`. Without a realized exit premium, shows the percentage to the stored premium target/stop, or `Spot stop hit` / `Spot target hit` when no premium levels were stored. Beneath the realized exit, a subtle label displays `Post-Exit: ₹... (+/-%)` showing ongoing live market option recovery without ambiguous signals.
+  - `Prem. Target` & `Prem. SL`: Target and Stop-Loss option premium levels derived from a live entry LTP and live delta. Blank when either was unavailable (no fixed +40% / -25% defaults). These are reference levels only: **outcomes (`Target hit` / `SL hit`) are decided on spot alone, with the same rule for target and stop**. A live premium never cancels a spot stop or creates a target hit. Premiums quoted before the suggestion was saved are never attached to it.
   - `Spot Entry`, `Spot Target`, `Spot SL`: Underlying spot boundary levels.
   - `Last Spot`:
     - For `OPEN` suggestions: Real-time observed spot price dynamically refreshed from streaming market feeds, with total checks count and last check timestamp.
@@ -428,7 +439,8 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
     - **Header Controls & State**:
       - `Instrument Selector Pills`: One-click buttons for `NIFTY 50`, `BANK NIFTY`, `BSE SENSEX`, and `CRUDEOIL MINI`. Automatically synchronizes with global `MarketDataContext`.
       - `Model Architecture Selector Dropdown`: Select which quantitative model drives the forward projected trend line, target, stop loss, and confidence corridor:
-        - `🏆 Model: Champion (Ranked #1 Auto)`: Automatically adopts the #1 ranked model from walk-forward benchmarking.
+        - `🏆 Model: Champion (Ranked #1 Auto)`: Uses the deployed live forecast (`/api/forecasting/instrument-forecast`). Projection is drawn only when that forecast is `ACTIVE`.
+        - Any other model choice: research benchmarks have no deployed live artifact, so the chart returns `forecast_status: MODEL_NOT_DEPLOYED` and draws no projection. Their walk-forward results are available from Model Studio.
         - `⚡ LightGBM (GBDT SOTA)`: Gradient-boosted decision trees with leaf-wise expansion.
         - `🚀 XGBoost (Boosting SOTA)`: Regularized gradient boosting with histogram tree method.
         - `🐱 CatBoost (Symmetric Trees)`: Oblivious decision trees with categorical handling.
@@ -456,7 +468,11 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
       - `Interactive Crosshair & Hover Tooltip`: Moving across historical candles reveals exact Bar Open, High, Low, Close, and Volume; hovering future projection points displays Projected Spot, Upper Confidence Bound, Lower Confidence Bound, and Delta from current spot.
       - `Chart Legend`: Color keys for Bullish Bar, Bearish Bar, Live Spot, Forward Projection, and Confidence Corridor.
   - `<InstrumentSelector />`: Select primary underlying to inspect.
-  - `<InstrumentForecastCard />`: Displays forecast cards for 1-hour, 4-hour, 1-day, and 5-day horizons with calibrated probabilities and expected return.
+  - `<InstrumentForecastCard />`: Displays the live forecast for the selected instrument.
+    - `Model Probability P(Up)`: Raw model output, labelled `Uncalibrated model output`, followed by the forecast status when it is not `ACTIVE`. Shows `N/A` when there is no forecast; no default probability or direction is substituted.
+    - `Raw Confidence`: `|P(Up) − 0.5| × 2`, or `N/A` when there is no forecast.
+    - `Spot / Move / Target / Stop`: `N/A` when the live quote, VIX-based sizing, or a directional decision is unavailable.
+    - Forecasts are issued only from features of the latest completed bars (≤ 30 minutes old). Older or historical-dataset features return `STALE_FEATURES`.
   - **Forecast Accuracy & Out-of-Sample Calibration Hub (`<ForecastAccuracyHub />`)**:
 
     - `Evaluate Pending Outcomes` action button: Triggers `POST /api/analysis/forecast-accuracy/evaluate` to score pending forecasts whose horizon has elapsed against incoming quotes without look-ahead bias.
@@ -577,11 +593,15 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   - `Side`: Toggle between `CE` (Calls) and `PE` (Puts).
   - `Structure`: Choose between `Single leg` (Outright Option), `Bull call spread`, or `Bear put spread`.
 - **Live Options Greeks Card (`<V6OptionsGreeksCard />`)**:
-  - Real-time calculations for Delta ($\Delta$), Gamma ($\Gamma$), Theta ($\Theta$), Vega ($\mathcal{V}$), Implied Volatility (IV), and Put-Call Ratio (PCR).
+  - Asset buttons: `NIFTY`, `SENSEX` (BANKNIFTY removed; it is out of scope).
+  - `Forward / Spot`: live quote only; shows `Awaiting live quote` when none exists (no default spot). Lot size and strike step come from the instrument master.
+  - `Institutional PCR` and `Max Pain Pin Strike`: show `N/A`; this panel does not load live option-chain open interest, so no PCR or max-pain value is displayed.
+  - `Calculator IV (operator input)`: the IV slider value used for the Black-76 calculator; it is an input, not a market reading.
+  - Black-76 Greeks table: Delta ($\Delta$), Gamma ($\Gamma$), Theta ($\Theta$), Vega ($\mathcal{V}$) for 7 strikes around ATM, computed from the live spot and the operator's days-to-expiry / IV / rate inputs. Empty (with a notice) until a live spot and strike step exist.
 - **Live Option Strike Matrix**:
   - Automatically identifies real-time At-The-Money (ATM) strike based on verified live Groww spot quotes.
   - Fail-closed empty state: If live spot quotes are not yet retrieved, renders an awaiting feed notification without inventing fictitious prices.
-  - Accurate exchange lot sizes: 25 for NIFTY, 20 for SENSEX, and 10 for CRUDEOIL MINI.
+  - Lot size and strike step from the instrument master (`/api/forecasting/instruments`); if the catalog is not loaded the matrix shows a notice instead of strikes.
   - Shows 5 key strike levels: ATM, ITM 1, ITM 2, OTM 1, OTM 2.
   - Displays strike, option type, moneyness tag, theoretical premium estimate, and lot size.
   - `Select Strike` button: Prefills the research order ticket.
@@ -614,6 +634,7 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   - Reports API server status (`HEALTHY`), SQLite database connectivity (`CONNECTED`), Operating Mode, Live Orders lock status (`LOCKED`), and Kill Switch state (`NORMAL (ARMED)`).
 - **Instrument Data Health Card (`<InstrumentDataHealthCard />`)**:
   - Verifies data provenance for the selected instrument.
+  - `Last price` shows `N/A` when no live quote exists; `Stored candles` is the actual persisted count (NIFTY is `DATA_GAP` when none are stored).
   - Checks candle boundary alignment, holiday calendars, clock drift, and quarantine logs.
 - **V6 8-Gate Paper Readiness Certification Card (`<V6ReadinessAuditCard />`)**:
   - Displays the 8 mandatory gates required for algorithmic trading:
@@ -679,9 +700,15 @@ Accessible via the collapsible `Tools Show (7) ▾` toggle in the left navigatio
   - `Provider`: Choose between `Synthetic Quiet-Day Fixture` (compliance testing) or `Historical Ingested Dataset` (real market validation).
   - `Run walk-forward evaluation` button: Executes out-of-sample backtest.
 - **Walk-Forward Performance Metrics Card (`<InstrumentBacktestCard />`)**:
-  - Net Sharpe Ratio, Max Drawdown %, Win Rate %, Profit Factor, Annualized Return.
-  - Transaction Costs Breakdown: STT (Securities Transaction Tax), Exchange Turnover Fees, GST, and Stamp Duty.
+  - Reads only the computed M40 artifact (`var/datasets/m40_multi_asset_benchmark.json`). If it is missing or unreadable, status is `UNEVALUATED` and no figures are shown.
+  - Header pills: `STATUS: RESEARCH_WALK_FORWARD` (or `UNEVALUATED`) and `FRICTION: <bps> BPS ON INDEX (NOT OPTIONS)`.
+  - **Caveats banner** (shown first): development-fold return when negative, live-model mismatch, constant-prior strategy, small holdout, holdout selection bias, and index-only costs.
+  - Metric tiles: `Holdout Net Return` (with Full Period and Dev Folds), `Mean Per-Fold Max Drawdown` (not a chained-curve drawdown), `Holdout Skill & Calibration` (Brier Skill Score and accuracy), and `Turnover` (holdout and full period, holdout fold count). Signs come from the data; missing values show `N/A`.
+  - `How these figures are aggregated` note: fold returns are summed; drawdown is the mean of per-fold maxima.
+  - `All Evaluated Strategies` table: Model, Mode, Dev / Holdout / Full net return, and mean fold max drawdown for every strategy in the artifact. No "optimal candidate" label is assigned.
+  - Execution assumptions list and provenance footer (`Dataset`, `Artifact`, `Computed` timestamp).
 - **Factor Attribution Card (`<V6MultiAssetCard />`)**:
+  - Header pill `BANK NIFTY DATA: SYNTHETIC` (rose) and a disclosure banner using the API's `data_quarantine.note`: BANK NIFTY candles are generated from NIFTY returns plus noise, so BANK NIFTY, cross-asset and dual-index results are not evidence of real performance. The synthetic dataset is never used for live forecasts.
   - Decomposes strategy returns into Market Beta, Momentum, Volatility Regime, and Mean Reversion factors.
 
 ---
@@ -722,7 +749,9 @@ Accessible via the collapsible `Tools Show (7) ▾` toggle in the left navigatio
     - Displayed when live fills exist. Columns: `ID`, `Symbol`, `Side` (`BUY`/`SELL`), `Price`, `Charges`, and `Net P&L`.
 - **Section 2: Historical Simulation Benchmark (M42 Historical Replay)**:
   - `HISTORICAL BENCHMARK` amber badge: Distinctly identifies this section as archival research performance across historical swing bars, **not** the current paper account's P&L.
-  - `Inspect Benchmark Trades (67) / Collapse Benchmark` button: Collapsible drawer toggling the detailed historical replay records.
+  - `Inspect Benchmark Trades (<count>) / Collapse Benchmark` button: Collapsible drawer toggling the detailed historical replay records; the count is the number of trades in the loaded simulation.
+  - **Synthetic data warning** (rose banner): Shown when the API returns `data_quarantine`. States that the BANK NIFTY leg of the M42 replay uses synthetic candles, so the benchmark is not evidence of real performance.
+  - `Net Replay P&L` is coloured and signed by its actual value (green/`+` when positive, red when negative).
   - **Benchmark Portfolio Cards**:
     - `Ending Virtual Capital`: Final simulated capital (₹10,44,626.76) vs initial seed capital (₹10,00,000.00).
     - `Net Realized P&L`: Total net strategy profit (+₹44,626.76) and Net ROI percentage (+4.46%).

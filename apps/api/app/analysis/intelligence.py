@@ -9,7 +9,9 @@ from __future__ import annotations
 import math
 import re
 
-from app.instruments import TRADABLE_UNDERLYINGS
+from app.instruments import CRUDE_FAMILY, TRADABLE_UNDERLYINGS, canonical_underlying, is_india_vix_row, is_vix_row
+
+COMMODITY_TARGETS = frozenset({"CRUDEOILMINI", "CRUDEMINI", "CRUDE", "GOLD", "SILVER"})
 
 _GEOPOLITICAL = {
     "OIL_SUPPLY": {
@@ -91,12 +93,12 @@ def build_intelligence(
         "global_context": _named(rows, "GLOBAL_MARKET"),
         "markets": markets,
         "breadth_flows": {
-            "status": "PRESENT" if (any(r.get("instrument") in {"INDIA_VIX", "VIX", "INDIAVIX"} for r in rows) or any(r.get("instrument") in {"BANKNIFTY", "NIFTYIT", "NIFTYMETAL", "NIFTYAUTO", "BANKEX"} for r in rows)) else "MISSING_DATA",
-            "vix": next((r for r in rows if r.get("instrument") in {"INDIA_VIX", "VIX", "INDIAVIX"}), None),
+            "status": "PRESENT" if (any(is_india_vix_row(r) for r in rows) or any(r.get("instrument") in {"BANKNIFTY", "NIFTYIT", "NIFTYMETAL", "NIFTYAUTO", "BANKEX"} for r in rows)) else "MISSING_DATA",
+            "vix": next((r for r in rows if is_india_vix_row(r)), None),
             "sectors": [r.get("instrument") for r in rows if r.get("instrument") in {"BANKNIFTY", "NIFTYIT", "NIFTYMETAL", "NIFTYAUTO", "BANKEX"}],
             "breadth": None,
             "flows": next((r for r in rows if r.get("instrument") in {"FII_DII", "FII_DII_FLOWS"}), None),
-            "reason": "Observed VIX and sectoral indices. Advance/decline breadth series pending." if (any(r.get("instrument") in {"INDIA_VIX", "VIX", "INDIAVIX"} for r in rows)) else "No breadth or FII/DII flow series was supplied.",
+            "reason": "Observed VIX and sectoral indices. Advance/decline breadth series pending." if (any(is_india_vix_row(r) for r in rows)) else "No breadth or FII/DII flow series was supplied.",
         },
         "scenarios": {
             "bullish": {
@@ -324,52 +326,28 @@ def _challenges(news: list[dict], rows: list[dict], conflicts: list[dict]) -> li
     return notes
 
 
-def _instrument_params(instrument: str) -> tuple[int, int]:
-    inst = instrument.upper()
-    if inst == "NIFTY":
-        return 50, 75
-    if inst == "SENSEX":
-        return 100, 20
-    if inst == "FINNIFTY":
-        return 50, 25
-    if inst == "MIDCPNIFTY":
-        return 25, 75
-    if inst == "BANKEX":
-        return 100, 15
-    if inst == "NIFTYIT":
-        return 100, 25
-    if inst in {"CRUDE", "CRUDEOIL"}:
-        return 50, 100
-    if inst in {"CRUDEMINI", "CRUDEOILMINI", "CRUDEOILM"}:
-        return 50, 10
-    if inst == "GOLD":
-        return 100, 1
-    if inst == "GOLDMINI":
-        return 100, 1
-    if inst == "SILVER":
-        return 500, 30
-    if inst == "SILVERMINI":
-        return 500, 5
-    if inst == "NATURALGAS":
-        return 5, 1250
-    if inst == "NATURALGASMINI":
-        return 5, 250
-    if inst == "COPPER":
-        return 5, 2500
-    if inst == "ZINC":
-        return 5, 5000
-    return 100, 10
+def _instrument_params(instrument: str) -> tuple[int | None, int | None]:
+    """(strike_step, lot_size) from the instrument master; (None, None) for untracked symbols."""
+    from app.instrument_specs import get_spec
+
+    spec = get_spec(instrument)
+    if spec is None:
+        return None, None
+    return spec.strike_step, spec.lot_size
 
 
 def _generate_option_picks(
     instrument: str,
     spot: float,
     opt_type: str,
-    target_pts: float,
-    sl_pts: float,
-    iv: float = 0.14,
-    t_years: float = 3.0 / 365.0,
+    target_pts: float | None,
+    sl_pts: float | None,
 ) -> list[dict]:
+    """List strikes around ATM; premiums come only from a fresh, matching live chain quote.
+
+    Without a live quote the premium, delta and per-lot figures are None. Model-estimated
+    premiums are never produced (Truth in Data).
+    """
     step, lot_size = _instrument_params(instrument)
     atm = int(round(spot / step) * step)
     offsets = [-2, -1, 0, 1, 2] if opt_type == "CE" else [2, 1, 0, -1, -2]
@@ -381,20 +359,10 @@ def _generate_option_picks(
         "Momentum OTM (Breakout Speculative)",
     ]
     picks = []
-    base_time_val = 0.40 * spot * iv * math.sqrt(t_years)
-    scale = max(0.001, spot * iv * math.sqrt(t_years))
-
-    min_entry = max(0.2, min(15.0, round(spot * 0.002, 1)))
-    min_sl = max(0.1, min(5.0, round(min_entry * 0.3, 1)))
-
     for idx, offset in enumerate(offsets):
         strike = int(atm + (offset * step))
         dist = (spot - strike) if opt_type == "CE" else (strike - spot)
-        intrinsic = max(0.0, dist)
-        raw_delta = 0.50 + (dist / (scale * 2.5))
-        delta = max(0.20, min(0.80, raw_delta))
 
-        # Check for verified live market option quote from Groww Option Chain
         live_quote = None
         try:
             from app.market.groww_options import get_live_option_quote
@@ -402,33 +370,34 @@ def _generate_option_picks(
         except Exception:
             live_quote = None
 
+        entry = target = sl = delta = None
+        trading_symbol = open_interest = volume = expiry_date = None
+        is_live_quote = False
+        quote_source = "UNAVAILABLE"
         if live_quote and live_quote.get("ltp") is not None and float(live_quote["ltp"]) > 0:
             entry = round(float(live_quote["ltp"]), 1)
             if live_quote.get("delta") is not None and float(live_quote["delta"]) > 0:
                 delta = max(0.05, min(0.99, round(float(live_quote["delta"]), 2)))
-            target = round(entry + (delta * target_pts), 1)
-            sl = round(max(0.05, entry - (delta * sl_pts)), 1)
+            if delta is not None and target_pts is not None and sl_pts is not None:
+                target = round(entry + (delta * target_pts), 1)
+                sl = round(max(0.05, entry - (delta * sl_pts)), 1)
             trading_symbol = live_quote.get("trading_symbol")
             open_interest = live_quote.get("open_interest")
             volume = live_quote.get("volume")
             expiry_date = live_quote.get("expiry_date")
             is_live_quote = True
             quote_source = "GROWW_OPTION_CHAIN"
-        else:
-            extrinsic = base_time_val * math.exp(-0.5 * ((dist / scale) ** 2))
-            entry = round(max(min_entry, intrinsic + extrinsic), 1)
-            target = round(entry + (delta * target_pts), 1)
-            sl = round(max(min_sl, entry - (delta * sl_pts)), 1)
-            trading_symbol = None
-            open_interest = None
-            volume = None
-            expiry_date = None
-            is_live_quote = False
-            quote_source = "MODEL_ESTIMATE"
 
-        risk = max(0.1, entry - sl)
-        reward = max(0.1, target - entry)
-        rr = round(reward / risk, 1)
+        if entry is not None and target is not None and sl is not None:
+            risk = max(0.1, entry - sl)
+            reward = max(0.1, target - entry)
+            risk_reward = f"1 : {round(reward / risk, 1)}"
+            max_loss_per_lot = round(risk * lot_size, 0)
+            profit_per_lot = round(reward * lot_size, 0)
+        else:
+            risk_reward = None
+            max_loss_per_lot = None
+            profit_per_lot = None
         moneyness = "ATM" if offset == 0 else ("ITM" if dist > 0 else "OTM")
         picks.append({
             "rank": idx + 1,
@@ -439,23 +408,45 @@ def _generate_option_picks(
             "expiry_date": expiry_date,
             "role": roles[idx],
             "moneyness": moneyness,
-            "delta": round(delta, 2),
+            "delta": delta,
             "entry_premium": entry,
             "target_premium": target,
             "stop_loss_premium": sl,
-            "risk_reward": f"1 : {rr}",
+            "risk_reward": risk_reward,
             "lot_size": lot_size,
-            "capital_per_lot": round(entry * lot_size, 0),
-            "max_loss_per_lot": round(risk * lot_size, 0),
-            "profit_per_lot": round(reward * lot_size, 0),
-            "target_underlying": round(spot + target_pts if opt_type == "CE" else spot - target_pts, 1),
-            "sl_underlying": round(spot - sl_pts if opt_type == "CE" else spot + sl_pts, 1),
+            "capital_per_lot": round(entry * lot_size, 0) if entry is not None else None,
+            "max_loss_per_lot": max_loss_per_lot,
+            "profit_per_lot": profit_per_lot,
+            "target_underlying": (
+                round(spot + target_pts if opt_type == "CE" else spot - target_pts, 1) if target_pts is not None else None
+            ),
+            "sl_underlying": (
+                round(spot - sl_pts if opt_type == "CE" else spot + sl_pts, 1) if sl_pts is not None else None
+            ),
             "open_interest": open_interest,
             "volume": volume,
             "is_live_quote": is_live_quote,
             "quote_source": quote_source,
         })
     return picks
+
+
+def _row_price_direction(row: dict | None) -> str:
+    """The row's own price move: UP / DOWN / FLAT / UNKNOWN.
+
+    Uses the explicit price_direction field, then a percentage in the claim text. It never
+    reads directional_implication, which describes the implication for Indian equities.
+    """
+    if not row:
+        return "UNKNOWN"
+    pd = row.get("price_direction")
+    if pd in {"UP", "DOWN", "FLAT"}:
+        return pd
+    m = re.search(r"\(?\s*([+-]?\d+(?:\.\d+)?)\s*%", str(row.get("claim") or ""))
+    if m:
+        val = float(m.group(1))
+        return "UP" if val > 0.2 else ("DOWN" if val < -0.2 else "FLAT")
+    return "UNKNOWN"
 
 
 def _evaluate_market_consensus(rows: list[dict], instrument: str, news: list[dict] | None = None) -> dict:
@@ -477,9 +468,16 @@ def _evaluate_market_consensus(rows: list[dict], instrument: str, news: list[dic
         news_score = 0
 
     # 2. Macro & Cross-Asset Agent
-    crude = next((r for r in rows if r.get("instrument") in {"CRUDE", "BRENT", "WTI", "CRUDEOILMINI", "CRUDEMINI", "CRUDEOIL"}), None)
+    is_commodity_target = instrument in COMMODITY_TARGETS
+    crude_rows = [r for r in rows if str(r.get("instrument") or "").upper() in CRUDE_FAMILY]
+    if is_commodity_target:
+        # The target's own row is not a macro cue for itself; use other crude benchmarks only
+        crude_rows = [r for r in crude_rows if canonical_underlying(r.get("instrument")) != canonical_underlying(instrument)]
+    crude = crude_rows[0] if crude_rows else None
     usdinr = next((r for r in rows if r.get("instrument") in {"USDINR", "USD/INR", "USD_INR"}), None)
-    global_rows = [r for r in rows if r.get("category") == "GLOBAL_MARKET" and r.get("instrument") not in {"VIX", "INDIA_VIX"}]
+    global_rows = [] if is_commodity_target else [
+        r for r in rows if r.get("category") == "GLOBAL_MARKET" and not is_vix_row(r)
+    ]
 
     macro_score = 0
     macro_reasons = []
@@ -496,30 +494,32 @@ def _evaluate_market_consensus(rows: list[dict], instrument: str, news: list[dic
         lead_global = ", ".join(g.get("instrument") for g in global_rows if g.get("directional_implication") == "BEARISH")[:30]
         macro_reasons.append(f"Global headwind ({g_bear} global red: {lead_global})")
 
-    # Crude oil transmission
+    # Crude oil transmission, applied exactly once from the raw crude price move
     if crude:
-        c_dir = crude.get("directional_implication")
-        if c_dir == "UNKNOWN" and crude.get("claim"):
-            m = re.search(r"(-?\d+(?:\.\d+)?)\s*%", crude.get("claim", ""))
-            if m:
-                val = float(m.group(1))
-                c_dir = "BULLISH" if val > 0.2 else ("BEARISH" if val < -0.2 else "NEUTRAL")
-        if c_dir == "BULLISH":
+        c_move = _row_price_direction(crude)
+        if is_commodity_target:
+            if c_move == "UP":
+                macro_score += 1
+                macro_reasons.append(f"Crude benchmark {crude.get('instrument')} rising")
+            elif c_move == "DOWN":
+                macro_score -= 1
+                macro_reasons.append(f"Crude benchmark {crude.get('instrument')} falling")
+        elif c_move == "UP":
             macro_score -= 1
             macro_reasons.append("Crude rising (inflationary pressure on INR)")
-        elif c_dir == "BEARISH":
+        elif c_move == "DOWN":
             macro_score += 1
             macro_reasons.append("Crude softening (positive for margins)")
 
-    # Currency transmission
-    if usdinr:
-        u_dir = usdinr.get("directional_implication")
-        if u_dir == "BULLISH":
+    # Currency transmission (USD/INR rising = rupee weakening), equities only
+    if usdinr and not is_commodity_target:
+        u_move = _row_price_direction(usdinr)
+        if u_move == "UP":
             macro_score -= 1
-            macro_reasons.append("USD/INR depreciating (capital outflow risk)")
-        elif u_dir == "BEARISH":
+            macro_reasons.append("USD/INR rising, rupee weakening (capital outflow risk)")
+        elif u_move == "DOWN":
             macro_score += 1
-            macro_reasons.append("USD/INR strengthening (macro stability)")
+            macro_reasons.append("USD/INR falling, rupee strengthening (macro stability)")
 
     if macro_score > 0:
         macro_stance = "BULLISH"
@@ -548,7 +548,14 @@ def _evaluate_market_consensus(rows: list[dict], instrument: str, news: list[dic
     tech_summary = f"{instrument} trading inside session boundaries."
 
     if item:
-        t_dir = item.get("directional_implication")
+        own_move = _row_price_direction(item)
+        if own_move in {"UP", "DOWN"}:
+            t_dir = "BULLISH" if own_move == "UP" else "BEARISH"
+        elif item.get("category") in {"MACRO", "COMMODITY"}:
+            # directional_implication on macro/commodity rows is the equity view, not this instrument's trend
+            t_dir = "UNKNOWN"
+        else:
+            t_dir = item.get("directional_implication")
         ohlc = item.get("ohlc")
         last_price = item.get("last_price")
 
@@ -609,10 +616,17 @@ def _evaluate_market_consensus(rows: list[dict], instrument: str, news: list[dic
         tech_summary = "Operating around key reference support and resistance zones."
 
     # 4. Volatility & Range Agent
-    vix_row = next((r for r in rows if r.get("instrument") in {"VIX", "INDIA_VIX", "INDIAVIX"}), None)
-    vix_val = float(vix_row.get("last_price", 14.0)) if vix_row and vix_row.get("last_price") is not None else 14.0
-    iv = max(0.11, min(0.35, vix_val / 100.0))
-    if vix_val > 18.0:
+    vix_row = next((r for r in rows if is_india_vix_row(r)), None)
+    vix_val = float(vix_row["last_price"]) if vix_row and vix_row.get("last_price") is not None else None
+    # India VIX measures NIFTY option volatility; it is not a volatility estimate for crude oil
+    iv = max(0.11, min(0.35, vix_val / 100.0)) if vix_val is not None and not is_commodity_target else None
+    if is_commodity_target:
+        vix_stance = "MISSING_DATA"
+        vix_summary = "No crude-oil volatility feed; India VIX is not applicable. Move, target and stop sizing unavailable."
+    elif vix_val is None:
+        vix_stance = "MISSING_DATA"
+        vix_summary = "India VIX unavailable; move, target and stop sizing cannot be computed."
+    elif vix_val > 18.0:
         vix_stance = "ELEVATED_VOLATILITY"
         vix_summary = f"India VIX at {vix_val:.1f} (wide intraday swings, strict stop losses required)."
     elif vix_val < 13.5:
@@ -735,20 +749,44 @@ def _market(rows: list[dict], instrument: str, news: list[dict] | None = None) -
             "manual_trade_recommendation": trade_recommendation,
         }
 
-    is_commodity = instrument in {"CRUDEOILMINI", "CRUDEMINI", "CRUDE", "GOLD", "SILVER"}
+    is_commodity = instrument in COMMODITY_TARGETS
     step, _ = _instrument_params(instrument)
+    if step is None:
+        return {
+            "status": "NOT_IN_INSTRUMENT_MASTER",
+            "data_class": data_class(item),
+            "direction": None,
+            "decision": "NO_TRADE",
+            "bias": consensus["bias"],
+            "last_price": spot,
+            "observed_at": item.get("observed_at"),
+            "what_happens": {
+                "regime": "INDETERMINATE",
+                "summary": f"{instrument} has no contract specification in the instrument master; strikes and levels are not computed.",
+                "bullish_trigger": None,
+                "bearish_trigger": None,
+                "invalidation": None,
+            },
+            "options_evaluation": {"verdict": "NO_TRADE", "reason": f"{instrument} is not a tradable underlying."},
+            "risk_veto": {"vetoed": True, "reason": f"{instrument} is not in the instrument master."},
+            "manual_trade_recommendation": None,
+        }
     atm = int(round(spot / step) * step)
     iv = consensus["iv"]
-    daily_move = spot * (iv / math.sqrt(252))
-    target_pts = max(float(step) * 0.8, daily_move * 0.60)
-    sl_pts = max(float(step) * 0.4, daily_move * 0.30)
+    if iv is not None:
+        daily_move = spot * (iv / math.sqrt(252))
+        target_pts = max(float(step) * 0.8, daily_move * 0.60)
+        sl_pts = max(float(step) * 0.4, daily_move * 0.30)
+    else:
+        target_pts = sl_pts = None
 
     # Generate options: research catalog for commodities or when not explicitly directional
-    primary_picks = _generate_option_picks(instrument, spot, "CE" if consensus["option_type"] not in {"CE", "PE"} else consensus["option_type"], target_pts, sl_pts, iv=iv)
-    alt_picks = _generate_option_picks(instrument, spot, "PE" if consensus["option_type"] not in {"CE", "PE"} else consensus["alt_option_type"], target_pts, sl_pts, iv=iv)
+    primary_picks = _generate_option_picks(instrument, spot, "CE" if consensus["option_type"] not in {"CE", "PE"} else consensus["option_type"], target_pts, sl_pts)
+    alt_picks = _generate_option_picks(instrument, spot, "PE" if consensus["option_type"] not in {"CE", "PE"} else consensus["alt_option_type"], target_pts, sl_pts)
 
-    is_neutral = consensus["bias"] == "NEUTRAL" or "STAND ASIDE" in consensus["call"]
-    is_bull = "BUY" in consensus["call"] or consensus["bias"] in {"BULLISH", "MILD BULLISH"}
+    is_neutral = consensus["bias"] == "NEUTRAL" or "STAND ASIDE" in consensus["call"] or target_pts is None
+    # Direction comes from the bias, never from the call text ("BUY PE" contains "BUY")
+    is_bull = consensus["bias"] in {"BULLISH", "MILD BULLISH"}
 
     target_spot = None if is_neutral else round(spot + target_pts if is_bull else spot - target_pts, 1)
     stop_loss_spot = None if is_neutral else round(spot - sl_pts if is_bull else spot + sl_pts, 1)
@@ -777,9 +815,11 @@ def _market(rows: list[dict], instrument: str, news: list[dict] | None = None) -
             f"Commodity Futures recommendation: {consensus['call']} for {instrument} at reference spot ₹{spot:.2f}. Option chain is catalog reference only."
             if is_commodity else
             (
+                "Market consensus is neutral, or volatility is unavailable. Stand aside."
+                if is_neutral else
                 f"Top pick: {primary_picks[2]['contract']} (ATM) entry around ₹{primary_picks[2]['entry_premium']} with Target ₹{primary_picks[2]['target_premium']} and SL ₹{primary_picks[2]['stop_loss_premium']} (R:R {primary_picks[2]['risk_reward']})."
-                if not is_neutral else
-                "Market consensus is neutral with no statistical edge. Stand aside."
+                if primary_picks[2]["target_premium"] is not None else
+                f"No fresh live option-chain quote for {primary_picks[2]['contract']}; premiums, targets and stops are unavailable."
             )
         ),
     }
@@ -803,7 +843,10 @@ def _market(rows: list[dict], instrument: str, news: list[dict] | None = None) -
         },
         "options_evaluation": {
             "verdict": "ACTIVE" if not is_neutral else "STAND_ASIDE",
-            "reason": f"Active strikes and Black-Scholes Greeks computed from spot ₹{spot:,.2f}." if not is_neutral else "Market is neutral; options execution gated.",
+            "reason": (
+                f"Strikes listed around ATM from spot ₹{spot:,.2f}; premiums shown only where a fresh live chain quote exists."
+                if not is_neutral else "Market is neutral or volatility is unavailable; options execution gated."
+            ),
         },
         "risk_veto": {
             "vetoed": False,
@@ -828,13 +871,13 @@ def _stages(rows, news, geopolitics, impact, missing) -> list[dict]:
     def stage(name: str, status: str, detail: str) -> dict:
         return {"name": name, "status": status, "detail": detail}
 
-    global_obs = [r for r in rows if r.get("category") == "GLOBAL_MARKET" and r.get("instrument") not in {"VIX", "INDIA_VIX"}]
+    global_obs = [r for r in rows if r.get("category") == "GLOBAL_MARKET" and not is_vix_row(r)]
     global_detail = f"{len(global_obs)} global factor(s) observed ({', '.join(sorted({r.get('instrument') for r in global_obs}))})." if global_obs else "No global index is filled in."
 
     macro_obs = [r for r in rows if r.get("category") == "MACRO"]
     macro_detail = f"{len(macro_obs)} commodity/macro factor(s) observed ({', '.join(sorted({r.get('instrument') for r in macro_obs}))})." if macro_obs else "Yields stay missing unless a yield observation was supplied."
 
-    vix_item = next((r for r in rows if r.get("instrument") in {"INDIA_VIX", "VIX", "INDIAVIX"}), None)
+    vix_item = next((r for r in rows if is_india_vix_row(r)), None)
     sector_items = [r for r in rows if r.get("instrument") in {"BANKNIFTY", "NIFTYIT", "NIFTYMETAL", "NIFTYAUTO", "BANKEX"}]
     has_vix = vix_item is not None
     has_sec = len(sector_items) > 0

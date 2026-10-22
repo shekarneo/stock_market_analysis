@@ -450,12 +450,14 @@ def test_leak_free_registry_and_historical_feature_provenance(db):
     assert lr_outcomes["test"]["observations"] == 474
     assert 0.45 <= lr_outcomes["test"]["accuracy"]["value"] <= 0.70
 
-    # 1. Verify trailing feature resolution preserves actual historical candle bar_end when no newer DB candles exist
+    # 1. Historical dataset features are never used for a live forecast: they are rejected as stale
     f_nifty = compute_live_forecast_for_instrument("NIFTY", {"instrument": "NIFTY", "last_price": 23146.15})
-    assert f_nifty["status"] == "ACTIVE"
+    assert f_nifty["status"] == "STALE_FEATURES"
     assert f_nifty["feature_source"] == "HISTORICAL_CANDLE_DATASET"
     assert f_nifty["is_live_feature_vector"] is False
     assert f_nifty["feature_bar_end"] == "2026-10-14T15:30:00+05:30"
+    assert f_nifty["probability_up"] is None
+    assert f_nifty["direction"] == "UNKNOWN"
 
     # 2. Verify live 15m candles in MarketCandle take precedence and set is_live_feature_vector=True
     session = get_session_factory()()
@@ -480,11 +482,21 @@ def test_leak_free_registry_and_historical_feature_provenance(db):
             )
         session.commit()
 
-        f_live = compute_live_forecast_for_instrument("NIFTY", {"instrument": "NIFTY", "last_price": 23165.0})
+        last_bar_end = base_dt + timedelta(minutes=15 * 12)
+        f_live = compute_live_forecast_for_instrument(
+            "NIFTY", {"instrument": "NIFTY", "last_price": 23165.0}, current_time=last_bar_end + timedelta(minutes=5)
+        )
         assert f_live["status"] == "ACTIVE"
         assert f_live["feature_source"] == "LIVE_DB_MARKET_CANDLES"
         assert f_live["is_live_feature_vector"] is True
         assert "2026-10-16" in f_live["feature_bar_end"]
+
+        # The same live candles an hour later are stale
+        f_stale = compute_live_forecast_for_instrument(
+            "NIFTY", {"instrument": "NIFTY", "last_price": 23165.0}, current_time=last_bar_end + timedelta(minutes=60)
+        )
+        assert f_stale["status"] == "STALE_FEATURES"
+        assert f_stale["probability_up"] is None
     finally:
         session.close()
 

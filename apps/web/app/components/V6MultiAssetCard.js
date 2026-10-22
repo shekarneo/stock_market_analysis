@@ -25,7 +25,7 @@ export default function V6MultiAssetCard() {
             <span className="v6-pill cyan">M40 MULTI-ASSET BENCHMARK</span>
             <span className="v6-pill indigo">M41 FACTOR ATTRIBUTION</span>
             <span className="v6-pill emerald">M42 STATUTORY PAPER SIMULATION</span>
-            <span className="v6-pill amber">GENUINE DATA: NOT VERIFIED</span>
+            <span className="v6-pill rose">BANK NIFTY DATA: SYNTHETIC</span>
           </div>
           <h3 className="v6-panel-title">Multi-Asset Cross-Validation & Statutory Paper Simulation</h3>
           <p className="v6-panel-sub">
@@ -40,7 +40,9 @@ export default function V6MultiAssetCard() {
         <div>
           <strong>Scientific Provenance Disclosure & Generalization Boundary:</strong>
           <p>
-            The BANK NIFTY benchmark was deterministically synthesized from NIFTY 50 reference data at β = 1.28 (6,227 candles). While software routines and multi-asset pipelines are verified, strategy performance on genuine BANK NIFTY market data remains <strong>NOT VERIFIED</strong>. The reported 0.04% portfolio drawdown is strictly a local holdout window artifact (75 bars); across the full chronological equity curve (all 19 folds), maximum drawdown was <strong>9.62%</strong>.
+            {data?.data_quarantine?.note ||
+              "BANK NIFTY candles in M40-M42 are generated from NIFTY returns plus random noise. BANK NIFTY, cross-asset and dual-index portfolio results are not evidence of real performance."}{" "}
+            The synthetic dataset is quarantined: it is never used for live forecasts or served as market data.
           </p>
         </div>
       </div>

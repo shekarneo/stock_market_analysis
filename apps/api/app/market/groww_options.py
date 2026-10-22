@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -273,11 +273,24 @@ def load_stored_option_chain_data(path: Path | None = None) -> dict | None:
     return None
 
 
-def get_live_option_quote(contract_str: str, path: Path | None = None) -> dict | None:
+# Premiums older than this are not treated as live quotes for entries, targets or hit scoring.
+MAX_OPTION_QUOTE_AGE_SECONDS = 900
+
+_IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def get_live_option_quote(
+    contract_str: str,
+    path: Path | None = None,
+    *,
+    current_time: datetime | None = None,
+    max_age_seconds: int = MAX_OPTION_QUOTE_AGE_SECONDS,
+) -> dict | None:
     """Lookup actual live Groww LTP, Greeks, and contract symbol for an option contract.
 
     Returns dict with ltp, delta, iv, trading_symbol, open_interest, volume, expiry_date, underlying_ltp
-    or None if quote is not found in the live chain.
+    or None if the quote is not found, belongs to another underlying, is for an expired
+    contract, or is older than max_age_seconds.
     """
     m = re.search(r"(\d+(?:\.\d+)?)\s*(CE|PE)", str(contract_str), re.IGNORECASE)
     if not m:
@@ -287,6 +300,32 @@ def get_live_option_quote(contract_str: str, path: Path | None = None) -> dict |
     data = load_stored_option_chain_data(path)
     if not data:
         return None
+
+    # The stored chain is a single snapshot for one underlying; never serve it for another.
+    requested = re.match(r"\s*([A-Za-z]+)", str(contract_str))
+    chain_underlying = str(data.get("underlying") or "").upper()
+    if requested and chain_underlying and requested.group(1).upper() != chain_underlying:
+        return None
+
+    now = current_time or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    expiry_str = data.get("expiry_date")
+    if expiry_str:
+        try:
+            if date.fromisoformat(expiry_str) < now.astimezone(_IST).date():
+                return None
+        except ValueError:
+            return None
+    try:
+        retrieved = datetime.fromisoformat(str(data.get("retrieved_at")))
+    except (TypeError, ValueError):
+        return None
+    if retrieved.tzinfo is None:
+        retrieved = retrieved.replace(tzinfo=timezone.utc)
+    if (now - retrieved).total_seconds() > max_age_seconds:
+        return None
+
     strikes = data.get("strikes", {})
     strike_data = (
         strikes.get(str(strike_val))

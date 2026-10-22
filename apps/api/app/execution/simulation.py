@@ -301,6 +301,18 @@ def calculate_indian_regulatory_charges(*, side: str, price: Decimal, quantity: 
     }
 
 
+def _resolve_lot_size(explicit: object, underlying: object) -> Decimal:
+    """Lot size from the request/entry, else the instrument master; never a hardcoded default."""
+    from app.instrument_specs import lot_size_for
+
+    if explicit not in (None, ""):
+        return Decimal(str(explicit))
+    master = lot_size_for(underlying if isinstance(underlying, str) else None)
+    if master is None:
+        raise ValueError(f"LOT_SIZE_UNAVAILABLE: no lot size supplied or known for underlying {underlying!r}.")
+    return Decimal(master)
+
+
 def _execute_simulated_paper_trade(
     session: Session,
     actor: str,
@@ -323,7 +335,7 @@ def _execute_simulated_paper_trade(
     haircut = "half_spread"
     priced = simulated_execution_price(side=side, bid=bid, ask=ask, haircut=haircut, extra_tick_penalty=False)
     fill_price = Decimal(str(priced["price"])) if priced.get("price") is not None else (Decimal(str(ask)) if side == "BUY" else Decimal(str(bid)))
-    lot_size = Decimal(str(intent.get("lot_size") or "65"))
+    lot_size = _resolve_lot_size(intent.get("lot_size"), intent.get("underlying"))
     quantity = lot_size
 
     charges_info = calculate_indian_regulatory_charges(
@@ -936,11 +948,12 @@ def close_paper_position(
 
     entry_payload = entry_event.payload or {}
     entry_price = Decimal(str(entry_payload.get("price") or entry_event.price or "0.0"))
-    quantity = Decimal(str(entry_payload.get("quantity") or entry_event.quantity or "65"))
     entry_charges = Decimal(str(entry_payload.get("charges_inr") or entry_event.charges_inr or "0.0"))
     entry_side = entry_payload.get("side", "BUY")
-    underlying = entry_payload.get("underlying", "NIFTY")
-    lot_size = Decimal(str(entry_payload.get("charges_breakdown", {}).get("lot_size") or "65"))
+    underlying = entry_payload.get("underlying")
+    lot_size = _resolve_lot_size(entry_payload.get("charges_breakdown", {}).get("lot_size"), underlying)
+    recorded_qty = entry_payload.get("quantity") or entry_event.quantity
+    quantity = Decimal(str(recorded_qty)) if recorded_qty else lot_size
 
     # Determine exit side: if bought, exit is SELL; if sold, exit is BUY
     exit_side = "SELL" if entry_side == "BUY" else "BUY"

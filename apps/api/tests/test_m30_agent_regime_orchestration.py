@@ -22,9 +22,9 @@ def test_technical_analyst_detects_sideways_regime():
     """Verify Technical Analyst node classifies range-bound action as SIDEWAYS_CONSOLIDATION."""
     # Flat observations: 25000.0 to 25002.0 (< 0.1% change)
     flat_evidence = [
-        {"category": "TECHNICAL", "last_price": 25000.0, "evidence_id": "ev1"},
-        {"category": "TECHNICAL", "last_price": 25001.0, "evidence_id": "ev2"},
-        {"category": "TECHNICAL", "last_price": 25000.5, "evidence_id": "ev3"},
+        {"category": "TECHNICAL", "instrument": "NIFTY", "last_price": 25000.0, "evidence_id": "ev1"},
+        {"category": "TECHNICAL", "instrument": "NIFTY", "last_price": 25001.0, "evidence_id": "ev2"},
+        {"category": "TECHNICAL", "instrument": "NIFTY", "last_price": 25000.5, "evidence_id": "ev3"},
     ]
     state: AnalysisState = {"evidence": flat_evidence, "agent_outputs": {}}
 
@@ -39,8 +39,8 @@ def test_technical_analyst_detects_trending_bull_and_bear():
     """Verify Technical Analyst node identifies directional momentum."""
     # Bullish observations (+0.5% return)
     bull_evidence = [
-        {"category": "TECHNICAL", "last_price": 25000.0, "evidence_id": "ev1"},
-        {"category": "TECHNICAL", "last_price": 25125.0, "evidence_id": "ev2"},
+        {"category": "TECHNICAL", "instrument": "NIFTY", "last_price": 25000.0, "evidence_id": "ev1"},
+        {"category": "TECHNICAL", "instrument": "NIFTY", "last_price": 25125.0, "evidence_id": "ev2"},
     ]
     state_bull: AnalysisState = {"evidence": bull_evidence, "agent_outputs": {}}
     res_bull = technical_analyst_node(state_bull)
@@ -51,8 +51,8 @@ def test_technical_analyst_detects_trending_bull_and_bear():
 
     # Bearish observations (-0.5% return)
     bear_evidence = [
-        {"category": "TECHNICAL", "last_price": 25000.0, "evidence_id": "ev1"},
-        {"category": "TECHNICAL", "last_price": 24875.0, "evidence_id": "ev2"},
+        {"category": "TECHNICAL", "instrument": "NIFTY", "last_price": 25000.0, "evidence_id": "ev1"},
+        {"category": "TECHNICAL", "instrument": "NIFTY", "last_price": 24875.0, "evidence_id": "ev2"},
     ]
     state_bear: AnalysisState = {"evidence": bear_evidence, "agent_outputs": {}}
     res_bear = technical_analyst_node(state_bear)
@@ -133,8 +133,8 @@ def test_full_langgraph_pipeline_with_regime_awareness():
         "created_at": datetime.now(timezone.utc).isoformat(),
         "instruments": ["NIFTY"],
         "evidence": [
-            {"category": "TECHNICAL", "last_price": 25000.0, "evidence_id": "ev1"},
-            {"category": "TECHNICAL", "last_price": 25001.0, "evidence_id": "ev2"},
+            {"category": "TECHNICAL", "instrument": "NIFTY", "last_price": 25000.0, "evidence_id": "ev1"},
+            {"category": "TECHNICAL", "instrument": "NIFTY", "last_price": 25001.0, "evidence_id": "ev2"},
         ],
         "agent_outputs": {},
         "missing": [],

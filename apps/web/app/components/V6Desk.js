@@ -427,7 +427,7 @@ export default function V6Desk({ defaultTab = "trades", hideTickers = false } = 
                     }}
                     onClick={() => { setFeedCategoryFilter("COMMODITIES"); setFeedIndexFilter("ALL"); }}
                   >
-                    ⚡ MCX Commodities ({commoditiesList.length || 4})
+                    ⚡ MCX Commodities ({commoditiesList.length})
                   </button>
                   <button
                     type="button"
@@ -443,7 +443,7 @@ export default function V6Desk({ defaultTab = "trades", hideTickers = false } = 
                     }}
                     onClick={() => { setFeedCategoryFilter("GLOBAL"); setFeedIndexFilter("ALL"); }}
                   >
-                    🌐 Global Benchmarks ({globalIndicesList.length || 5})
+                    🌐 Global Benchmarks ({globalIndicesList.length})
                   </button>
                 </div>
 
@@ -750,7 +750,7 @@ export default function V6Desk({ defaultTab = "trades", hideTickers = false } = 
               Deterministic Consensus
             </span>
             <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
-              News Wire ({news.body?.items?.length || 39}) · Macro (8) · Tech
+              News Wire ({news.body?.items?.length ?? 0}) · Macro · Tech
             </span>
           </div>
 
@@ -2038,103 +2038,86 @@ const INSTRUMENT_METADATA = {
   NIFTY: {
     name: "NIFTY 50",
     exchange: "NSE",
-    lotSize: 75,
     description: "Benchmark Indian Equity Index representing top 50 large-cap stocks.",
   },
   SENSEX: {
     name: "BSE SENSEX",
     exchange: "BSE",
-    lotSize: 20,
     description: "Benchmark 30-stock index of Bombay Stock Exchange.",
   },
   FINNIFTY: {
     name: "FIN NIFTY",
     exchange: "NSE",
-    lotSize: 25,
     description: "Nifty Financial Services index tracking financial companies.",
   },
   MIDCPNIFTY: {
     name: "MIDCAP NIFTY",
     exchange: "NSE",
-    lotSize: 75,
     description: "Nifty Midcap Select index tracking top midcap performers.",
   },
   BANKEX: {
     name: "BSE BANKEX",
     exchange: "BSE",
-    lotSize: 15,
     description: "BSE Bankex tracking major banking stocks.",
   },
   NIFTYIT: {
     name: "NIFTY IT",
     exchange: "NSE",
-    lotSize: 25,
     description: "Nifty IT index tracking Indian information technology firms.",
   },
   CRUDEOILMINI: {
     name: "MCX Crude Oil Mini",
     exchange: "MCX",
-    lotSize: 10,
     description: "MCX Crude Oil Mini (10 bbl contract, retail friendly).",
   },
   CRUDEMINI: {
     name: "MCX Crude Oil Mini",
     exchange: "MCX",
-    lotSize: 10,
     description: "MCX Crude Oil Mini (10 bbl contract, retail friendly).",
   },
   CRUDE: {
     name: "MCX Crude Oil",
     exchange: "MCX",
-    lotSize: 100,
     description: "MCX Crude Oil Futures (100 bbl standard contract).",
   },
   GOLDMINI: {
     name: "MCX Gold Mini",
     exchange: "MCX",
-    lotSize: 1,
     description: "MCX Gold Mini contract (100g / 10g denomination).",
   },
   GOLD: {
     name: "MCX Gold",
     exchange: "MCX",
-    lotSize: 1,
     description: "MCX Gold standard contract (1 kg / 100g deliverable).",
   },
   SILVERMINI: {
     name: "MCX Silver Mini",
     exchange: "MCX",
-    lotSize: 5,
     description: "MCX Silver Mini contract (5 kg denomination).",
   },
   SILVER: {
     name: "MCX Silver",
     exchange: "MCX",
-    lotSize: 30,
     description: "MCX Silver standard contract (30 kg denomination).",
   },
   NATURALGASMINI: {
     name: "MCX Natural Gas Mini",
     exchange: "MCX",
-    lotSize: 250,
     description: "MCX Natural Gas Mini contract (250 mmBtu).",
   },
   NATURALGAS: {
     name: "MCX Natural Gas",
     exchange: "MCX",
-    lotSize: 1250,
     description: "MCX Natural Gas standard contract (1250 mmBtu).",
   },
   GIFTNIFTY: {
     name: "GIFT Nifty (NSE IX)",
     exchange: "NSE IX",
-    lotSize: 50,
     description: "International dollar-denominated Nifty derivative trading in GIFT City.",
   },
   DJI: {
     name: "Dow Jones (DJI)",
     exchange: "US",
-    lotSize: 1,
     description: "Dow Jones Industrial Average 30 US blue-chip benchmark.",
   },
 };

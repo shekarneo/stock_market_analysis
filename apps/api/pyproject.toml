@@ -5,15 +5,20 @@ description = "India Market Master M0 API: config, modes, health, and audit."
 requires-python = ">=3.10"
 dependencies = [
   "alembic==1.14.0",
+  "beautifulsoup4==4.12.3",
   "cryptography==43.0.3",
   "fastapi==0.115.6",
   "httpx==0.28.1",
   "itsdangerous==2.2.0",
   "langgraph==1.2.15",
+  "lightgbm==4.6.0",
+  "numpy==2.2.6",
   "psycopg[binary]==3.2.3",
   "pydantic==2.10.4",
   "pydantic-settings==2.7.1",
   "pyyaml==6.0.2",
+  "scikit-learn==1.6.1",
+  "scipy==1.15.3",
   "sqlalchemy==2.0.36",
   "uvicorn==0.34.0",
 ]

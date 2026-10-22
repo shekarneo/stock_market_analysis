@@ -106,7 +106,7 @@ export default function InstrumentDataHealthCard() {
                         </span>
                       </td>
                       <td>
-                        <strong>₹{Number(item.last_price).toLocaleString("en-IN", { minimumFractionDigits: 1, maximumFractionDigits: 2 })}</strong>
+                        <strong>{item.last_price != null ? `₹${Number(item.last_price).toLocaleString("en-IN", { minimumFractionDigits: 1, maximumFractionDigits: 2 })}` : "N/A"}</strong>
                       </td>
                       <td>
                         {item.stored_candles > 0 ? (

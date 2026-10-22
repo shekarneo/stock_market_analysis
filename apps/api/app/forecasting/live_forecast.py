@@ -18,6 +18,10 @@ from app.settings import REPO_ROOT
 
 REGISTRY_PATH = REPO_ROOT / "var" / "registry" / "registry.json"
 
+# A next-15m forecast is only meaningful on features from the latest completed bars.
+# Feature vectors whose last bar ended longer ago than this are rejected as STALE_FEATURES.
+MAX_FEATURE_AGE_MINUTES = 30
+
 
 def load_registered_model(
     instrument: str,
@@ -185,7 +189,7 @@ def _resolve_trailing_features_and_meta(instrument: str) -> tuple[dict[str, floa
 
     inst = instrument.upper()
 
-    # 1. Check live persisted MarketCandle rows in PostgreSQL (if newer than static dataset cutoff 2026-10-14T15:30+05:30)
+    # 1. Check live persisted MarketCandle rows (freshness is enforced by the caller)
     try:
         from sqlalchemy import select
         from app.db import get_session_factory
@@ -210,8 +214,7 @@ def _resolve_trailing_features_and_meta(instrument: str) -> tuple[dict[str, floa
             if len(db_rows) >= 10:
                 db_rows.reverse()
                 latest_ts = db_rows[-1].timestamp
-                static_cutoff = datetime.fromisoformat("2026-10-14T15:30:00+05:30")
-                if latest_ts is not None and latest_ts > static_cutoff:
+                if latest_ts is not None:
                     c_dicts = []
                     for r in db_rows:
                         b_start = r.timestamp
@@ -296,16 +299,14 @@ def _resolve_trailing_features_and_meta(instrument: str) -> tuple[dict[str, floa
         except Exception:
             pass
 
-    # 3. Fallback to verified local historical candle dataset
-    if inst in {"NIFTY", "BANKNIFTY"}:
-        if inst == "NIFTY":
-            dataset_path = REPO_ROOT / "var" / "datasets" / "derived_nifty_15m_regular_ac9484b605d484c2.json"
-            if not dataset_path.is_file():
-                candidates = list((REPO_ROOT / "var" / "datasets").glob("derived_nifty_15m_regular_*.json"))
-                if candidates:
-                    dataset_path = candidates[0]
-        else:
-            dataset_path = REPO_ROOT / "var" / "datasets" / "derived_banknifty_15m_m40.json"
+    # 3. Fallback to a local historical candle dataset (rejected later as STALE_FEATURES for live use)
+    # The BANKNIFTY dataset is synthetic and quarantined, so only NIFTY has a historical fallback.
+    if inst == "NIFTY":
+        dataset_path = REPO_ROOT / "var" / "datasets" / "derived_nifty_15m_regular_ac9484b605d484c2.json"
+        if not dataset_path.is_file():
+            candidates = list((REPO_ROOT / "var" / "datasets").glob("derived_nifty_15m_regular_*.json"))
+            if candidates:
+                dataset_path = candidates[0]
 
         if dataset_path.is_file():
             try:
@@ -363,12 +364,48 @@ def resolve_trailing_features_for_instrument(instrument: str) -> dict[str, float
     return feats
 
 
+def _stale_feature_reason(
+    quote_data: dict,
+    feature_source: str,
+    is_live_feature_vector: bool,
+    current_time: datetime | None,
+) -> str | None:
+    """Return a reason string when the feature vector cannot support a next-bar forecast."""
+    if feature_source == "LIVE_QUOTE_FEATURES":
+        # Caller supplied the feature vector explicitly; it owns freshness.
+        return None
+    if not is_live_feature_vector:
+        return (
+            f"Features come from {feature_source}, not from the latest live bars. "
+            "A next-15m forecast cannot be issued from historical dataset features."
+        )
+    bar_end = quote_data.get("bar_end")
+    if not bar_end:
+        return "Feature vector has no bar_end timestamp; freshness cannot be verified."
+    try:
+        end_dt = datetime.fromisoformat(str(bar_end).replace("Z", "+00:00"))
+    except ValueError:
+        return f"Feature bar_end {bar_end!r} is not a valid timestamp; freshness cannot be verified."
+    if end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=timezone.utc)
+    ref_dt = current_time or datetime.now(timezone.utc)
+    if ref_dt.tzinfo is None:
+        ref_dt = ref_dt.replace(tzinfo=timezone.utc)
+    age_minutes = (ref_dt - end_dt).total_seconds() / 60.0
+    if age_minutes > MAX_FEATURE_AGE_MINUTES:
+        return (
+            f"Latest feature bar ended {age_minutes:.0f} minutes ago ({bar_end}); "
+            f"forecasts require bars newer than {MAX_FEATURE_AGE_MINUTES} minutes."
+        )
+    return None
+
+
 def compute_live_forecast_for_instrument(
     instrument: str,
     quote_data: dict | None,
     *,
     model_artifact: dict | None = None,
-    iv: float = 0.14,
+    iv: float | None = None,
     current_time: datetime | None = None,
     registry_path: Path | None = None,
 ) -> dict:
@@ -382,7 +419,7 @@ def compute_live_forecast_for_instrument(
             "direction": "UNKNOWN",
             "probability_up": None,
             "probability_down": None,
-            "confidence": 0.0,
+            "confidence": None,
             "expected_move_points": None,
             "spot_price": None,
             "target_spot": None,
@@ -395,8 +432,10 @@ def compute_live_forecast_for_instrument(
 
     # If features are not yet attached on quote_data, resolve from trailing completed candles
     features = quote_data.get("features")
-    feature_source = "LIVE_QUOTE_FEATURES"
-    is_live_feature_vector = True
+    # Features written back by an earlier call keep their original source, so a reused quote
+    # dict cannot launder historical features into "caller supplied" ones.
+    feature_source = quote_data.get("feature_source") or "LIVE_QUOTE_FEATURES"
+    is_live_feature_vector = bool(quote_data.get("is_live_feature_vector", True))
     if not isinstance(features, dict) or not features:
         trailing, trailing_bar_end, _, resolved_src, resolved_is_live = _resolve_trailing_features_and_meta(inst)
         if trailing and len(trailing) == len(MODEL_FEATURES):
@@ -420,13 +459,36 @@ def compute_live_forecast_for_instrument(
             "direction": "UNKNOWN",
             "probability_up": None,
             "probability_down": None,
-            "confidence": 0.0,
+            "confidence": None,
             "expected_move_points": None,
             "spot_price": last_price,
             "target_spot": None,
             "stop_loss_spot": None,
             "features": {},
             "summary": f"Latest candle for {inst} is not complete. Forecast requires completed candle boundaries.",
+        }
+
+    # Reject feature vectors that do not describe the latest completed bars
+    stale_reason = _stale_feature_reason(quote_data, feature_source, is_live_feature_vector, current_time)
+    if stale_reason:
+        return {
+            "instrument": inst,
+            "status": "STALE_FEATURES",
+            "model_name": None,
+            "model_version": None,
+            "direction": "UNKNOWN",
+            "probability_up": None,
+            "probability_down": None,
+            "confidence": None,
+            "expected_move_points": None,
+            "spot_price": last_price,
+            "target_spot": None,
+            "stop_loss_spot": None,
+            "features": {},
+            "feature_bar_end": quote_data.get("bar_end"),
+            "feature_source": feature_source,
+            "is_live_feature_vector": is_live_feature_vector,
+            "summary": stale_reason,
         }
 
     # Load model artifact if not injected
@@ -440,7 +502,7 @@ def compute_live_forecast_for_instrument(
             "direction": "UNKNOWN",
             "probability_up": None,
             "probability_down": None,
-            "confidence": 0.0,
+            "confidence": None,
             "expected_move_points": None,
             "spot_price": last_price,
             "target_spot": None,
@@ -463,7 +525,7 @@ def compute_live_forecast_for_instrument(
             "direction": "UNKNOWN",
             "probability_up": None,
             "probability_down": None,
-            "confidence": 0.0,
+            "confidence": None,
             "expected_move_points": None,
             "spot_price": last_price,
             "target_spot": None,
@@ -486,7 +548,7 @@ def compute_live_forecast_for_instrument(
                 "direction": "UNKNOWN",
                 "probability_up": None,
                 "probability_down": None,
-                "confidence": 0.0,
+                "confidence": None,
                 "expected_move_points": None,
                 "spot_price": last_price,
                 "target_spot": None,
@@ -508,7 +570,7 @@ def compute_live_forecast_for_instrument(
                 "direction": "UNKNOWN",
                 "probability_up": None,
                 "probability_down": None,
-                "confidence": 0.0,
+                "confidence": None,
                 "expected_move_points": None,
                 "spot_price": last_price,
                 "target_spot": None,
@@ -532,7 +594,7 @@ def compute_live_forecast_for_instrument(
             "direction": "UNKNOWN",
             "probability_up": None,
             "probability_down": None,
-            "confidence": 0.0,
+            "confidence": None,
             "expected_move_points": None,
             "spot_price": last_price,
             "target_spot": None,
@@ -545,12 +607,15 @@ def compute_live_forecast_for_instrument(
     direction = "BULLISH" if p_up >= 0.50 else "BEARISH"
     confidence = round(abs(p_up - 0.50) * 2.0, 3)
 
-    daily_sigma = last_price * (iv / math.sqrt(252))
-    exp_pts = round(max(20.0, daily_sigma * 0.55), 1)
-    sl_pts = round(exp_pts * 0.5, 1)
-
-    target_spot = round(last_price + exp_pts if direction == "BULLISH" else last_price - exp_pts, 1)
-    stop_loss_spot = round(last_price - sl_pts if direction == "BULLISH" else last_price + sl_pts, 1)
+    # Without a volatility reading, target/stop levels cannot be sized; report the probability only.
+    if iv is not None:
+        daily_sigma = last_price * (iv / math.sqrt(252))
+        exp_pts = round(max(20.0, daily_sigma * 0.55), 1)
+        sl_pts = round(exp_pts * 0.5, 1)
+        target_spot = round(last_price + exp_pts if direction == "BULLISH" else last_price - exp_pts, 1)
+        stop_loss_spot = round(last_price - sl_pts if direction == "BULLISH" else last_price + sl_pts, 1)
+    else:
+        exp_pts = sl_pts = target_spot = stop_loss_spot = None
 
     return {
         "instrument": inst,
@@ -619,8 +684,8 @@ def generate_all_live_forecasts() -> dict:
         (r for r in read.get("sectoral_indices", []) + read.get("global_indices", []) if r.get("instrument") in {"VIX", "INDIA_VIX"}),
         None,
     )
-    vix_val = float(vix_row.get("last_price", 14.0)) if vix_row and vix_row.get("last_price") is not None else 14.0
-    iv = max(0.11, min(0.35, vix_val / 100.0))
+    vix_val = float(vix_row["last_price"]) if vix_row and vix_row.get("last_price") is not None else None
+    iv = max(0.11, min(0.35, vix_val / 100.0)) if vix_val is not None else None
 
     nifty_quote = quotes.get("NIFTY")
     sensex_quote = quotes.get("SENSEX")
@@ -629,7 +694,7 @@ def generate_all_live_forecasts() -> dict:
     forecasts = [
         compute_live_forecast_for_instrument("NIFTY", nifty_quote, iv=iv),
         compute_live_forecast_for_instrument("SENSEX", sensex_quote, iv=iv),
-        compute_live_forecast_for_instrument("CRUDEOILMINI", crude_quote, iv=iv * 1.2),
+        compute_live_forecast_for_instrument("CRUDEOILMINI", crude_quote, iv=iv * 1.2 if iv is not None else None),
     ]
 
     has_active = any(f.get("status") == "ACTIVE" for f in forecasts)

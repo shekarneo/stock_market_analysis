@@ -1,9 +1,9 @@
 """Watchlist outcome tracking.
 
 A saved suggestion is judged only against the underlying spot that Groww reports
-(target_spot / stop_loss_spot). The option premiums shown on the desk are model
-estimates, not exchange quotes, so they are stored for reference and never used
-to decide whether a target or a stop was hit.
+(target_spot / stop_loss_spot), with the same rule for target and stop. Option
+premiums (live chain quotes when available) are stored for reference as
+running/exit premiums and never used to decide whether a target or a stop was hit.
 
 Limitations that are surfaced to the operator:
 - Prices are polled snapshots, not ticks. A level touched briefly between two
@@ -96,17 +96,28 @@ def create_suggestion(
     if entry_spot <= 0 or target_points <= 0 or stop_loss_points <= 0:
         raise ValueError("Spot and point distances must be positive.")
     up = opt == "CE"
+    model_premiums = dict(model_premiums or {})
+    if model_premiums.pop("estimated", False):
+        # Client-side placeholder premiums are not market data; never store or score them.
+        for key in ("entry", "target", "stop_loss", "delta"):
+            model_premiums.pop(key, None)
+        model_premiums["data_source"] = "UNAVAILABLE"
     # Check for live Groww option quote to lock in genuine market entry premium
     try:
         from app.market.groww_options import get_live_option_quote
         live_q = get_live_option_quote(contract)
         if live_q and live_q.get("ltp") is not None and float(live_q["ltp"]) > 0:
-            model_premiums = dict(model_premiums or {})
             model_premiums["entry"] = round(float(live_q["ltp"]), 1)
-            delta = float(live_q.get("delta") or 0.5)
-            model_premiums["delta"] = round(delta, 2)
-            model_premiums["target"] = round(model_premiums["entry"] + (delta * target_points), 1)
-            model_premiums["stop_loss"] = round(max(0.05, model_premiums["entry"] - (delta * stop_loss_points)), 1)
+            delta = live_q.get("delta")
+            if delta is not None and float(delta) > 0:
+                delta = float(delta)
+                model_premiums["delta"] = round(delta, 2)
+                model_premiums["target"] = round(model_premiums["entry"] + (delta * target_points), 1)
+                model_premiums["stop_loss"] = round(max(0.05, model_premiums["entry"] - (delta * stop_loss_points)), 1)
+            else:
+                # No live delta: premium targets cannot be derived; scoring falls back to spot levels.
+                for key in ("delta", "target", "stop_loss"):
+                    model_premiums.pop(key, None)
             model_premiums["trading_symbol"] = live_q.get("trading_symbol")
             model_premiums["expiry_date"] = live_q.get("expiry_date")
             model_premiums["data_source"] = "GROWW_OPTION_CHAIN"
@@ -153,8 +164,13 @@ def evaluate_open(session: Session, observations: list[dict], now: datetime | No
         current_prem = None
         try:
             from app.market.groww_options import get_live_option_quote
-            live_q = get_live_option_quote(row.contract)
-            if live_q and live_q.get("ltp") is not None and float(live_q["ltp"]) > 0:
+            live_q = get_live_option_quote(row.contract, current_time=now)
+            quoted_at = _parse_ts(live_q.get("retrieved_at")) if live_q else None
+            # A premium quoted before the suggestion was saved is never attached to it
+            if (
+                live_q and live_q.get("ltp") is not None and float(live_q["ltp"]) > 0
+                and quoted_at is not None and quoted_at > created
+            ):
                 current_prem = float(live_q["ltp"])
                 p = dict(row.model_premiums or {})
                 p["running_premium"] = current_prem
@@ -178,25 +194,10 @@ def evaluate_open(session: Session, observations: list[dict], now: datetime | No
                 row.max_favorable_spot = max(row.max_favorable_spot, spot) if up else min(row.max_favorable_spot, spot)
                 row.max_adverse_spot = min(row.max_adverse_spot, spot) if up else max(row.max_adverse_spot, spot)
 
-            # Spot-based boundary check
+            # Outcome is judged on spot only, with the same rule for target and stop.
+            # (Overriding only one side with premiums biased the hit rate toward targets.)
             hit_target = spot >= row.target_spot if up else spot <= row.target_spot
             hit_sl = spot <= row.stop_loss_spot if up else spot >= row.stop_loss_spot
-
-            # If live market option quotes exist, evaluate against actual option premium
-            p = row.model_premiums or {}
-            p_target = p.get("target")
-            p_sl = p.get("stop_loss")
-            if current_prem is not None:
-                if p_target and current_prem >= float(p_target):
-                    hit_target = True
-                    hit_sl = False
-                elif p_sl and current_prem <= float(p_sl):
-                    hit_sl = True
-                    hit_target = False
-                elif hit_sl and p_sl and current_prem > float(p_sl):
-                    # Underlying spot briefly spiked into SL zone, but actual option premium
-                    # in Groww never breached the stop loss level. Maintain open position.
-                    hit_sl = False
 
             if hit_target or hit_sl:
                 row.status = "TARGET_HIT" if hit_target else "SL_HIT"
@@ -312,5 +313,5 @@ def accuracy(rows: list[WatchlistSuggestion]) -> dict:
         "by_instrument": by_instrument,
         "by_direction": by_direction,
         "sample_warning": overall["decided"] < 30,
-        "method": "Judged on observed underlying spot vs target/stop spot. Option premiums are model estimates and are not scored.",
+        "method": "Judged on observed underlying spot vs target/stop spot, same rule for both sides. Option premiums are recorded for reference and are not scored.",
     }

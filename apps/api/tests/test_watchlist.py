@@ -99,3 +99,28 @@ def test_routes_require_auth_and_csrf(client, monkeypatch):
     assert cleared.status_code == 200
     assert len(client.get("/api/watchlist").json()["items"]) == 0
 
+
+
+def test_stop_is_not_cancelled_by_premium(session, monkeypatch):
+    """A spot stop hit resolves as SL_HIT even if a live premium sits above the premium stop."""
+    import app.market.groww_options as go
+
+    ce = _add(session, "CE")
+    ce.model_premiums = {"entry": 47.2, "target": 70.0, "stop_loss": 30.0}
+    quoted = (T0 + timedelta(minutes=4)).isoformat()
+    monkeypatch.setattr(go, "get_live_option_quote", lambda *a, **k: {"ltp": 45.0, "retrieved_at": quoted})
+    evaluate_open(session, [_obs("CRUDEMINI", 9270, T0 + timedelta(minutes=5))], now=T0 + timedelta(minutes=5))
+    assert ce.status == "SL_HIT"
+    assert ce.model_premiums["exit_premium"] == 45.0
+
+
+def test_premium_alone_never_resolves_target(session, monkeypatch):
+    """A premium above its target does not mark TARGET_HIT while spot is inside the band."""
+    import app.market.groww_options as go
+
+    ce = _add(session, "CE")
+    ce.model_premiums = {"entry": 47.2, "target": 70.0, "stop_loss": 30.0}
+    quoted = (T0 + timedelta(minutes=4)).isoformat()
+    monkeypatch.setattr(go, "get_live_option_quote", lambda *a, **k: {"ltp": 90.0, "retrieved_at": quoted})
+    evaluate_open(session, [_obs("CRUDEMINI", 9310, T0 + timedelta(minutes=5))], now=T0 + timedelta(minutes=5))
+    assert ce.status == "OPEN"

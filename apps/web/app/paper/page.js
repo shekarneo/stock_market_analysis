@@ -259,9 +259,15 @@ export default function PaperPage() {
                   color: "#fff"
                 }}
               >
-                {showBenchmark ? "▲ Collapse Benchmark" : "▼ Inspect Benchmark Trades (67)"}
+                {showBenchmark ? "▲ Collapse Benchmark" : `▼ Inspect Benchmark Trades (${benchmarkTrades.length})`}
               </button>
             </div>
+
+            {simData?.data_quarantine && (
+              <div style={{ background: "rgba(244, 63, 94, 0.12)", border: "1px solid rgba(244, 63, 94, 0.4)", color: "#fda4af", padding: "10px 12px", borderRadius: "8px", marginBottom: "12px", fontSize: "0.82rem" }}>
+                <strong>BANK NIFTY data is {simData.data_quarantine.banknifty_data_origin}:</strong> {simData.data_quarantine.note}
+              </div>
+            )}
 
             {simData && (
               <>
@@ -279,8 +285,8 @@ export default function PaperPage() {
 
                   <div style={{ background: "rgba(255,255,255,0.03)", padding: "12px", borderRadius: "8px" }}>
                     <span style={{ fontSize: "0.75rem", color: "var(--muted)", textTransform: "uppercase" }}>Net Replay P&amp;L</span>
-                    <div style={{ fontSize: "1.15rem", fontWeight: "bold", marginTop: "2px", color: "#10b981" }}>
-                      +{inr(simData.net_pnl_inr)}
+                    <div style={{ fontSize: "1.15rem", fontWeight: "bold", marginTop: "2px", color: (simData.net_pnl_inr ?? 0) >= 0 ? "#10b981" : "#f87171" }}>
+                      {simData.net_pnl_inr != null && simData.net_pnl_inr >= 0 ? "+" : ""}{inr(simData.net_pnl_inr)}
                     </div>
                     <small style={{ color: "#10b981" }}>Net ROI: {pct(simData.net_roi_pct)}</small>
                   </div>

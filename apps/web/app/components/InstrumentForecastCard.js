@@ -86,18 +86,18 @@ export default function InstrumentForecastCard() {
                 {decision}
               </div>
               <span className={`v6-pill ${decisionBadgeClass}`}>Direction: {fc.predicted_direction || "UNKNOWN"}</span>
-              <span className="v6-metric-sub">Friction Allowance: {fc.transaction_cost_assumptions?.turnover_friction_bps || 2.0} bps</span>
+              <span className="v6-metric-sub">Friction Allowance: {fc.transaction_cost_assumptions?.turnover_friction_bps ?? "N/A"} bps</span>
             </div>
 
             <div className="v6-metric-card">
-              <span className="v6-metric-label">Calibrated Probability P(Up)</span>
+              <span className="v6-metric-label">Model Probability P(Up)</span>
               <div className="v6-metric-val cyan-text">
                 {fc.calibrated_probability != null ? `${(fc.calibrated_probability * 100).toFixed(1)}%` : "N/A"}
               </div>
               <span className="v6-pill cyan">
-                Raw Confidence: {fc.raw_confidence != null ? `${(fc.raw_confidence * 100).toFixed(0)}%` : "0%"}
+                Raw Confidence: {fc.raw_confidence != null ? `${(fc.raw_confidence * 100).toFixed(0)}%` : "N/A"}
               </span>
-              <span className="v6-metric-sub">Platt / Laplace Scaled over Holdout</span>
+              <span className="v6-metric-sub">Uncalibrated model output{fc.forecast_status && fc.forecast_status !== "ACTIVE" ? ` · ${fc.forecast_status}` : ""}</span>
             </div>
 
             <div className="v6-metric-card">

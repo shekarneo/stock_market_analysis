@@ -37,9 +37,14 @@ def test_volatility_parity_weights_calculation():
 
 
 def test_discrete_lot_sizes_and_constants():
-    """Verify major Indian index lot sizes."""
-    assert INDIAN_LOT_SIZES["NIFTY"] == 25
-    assert INDIAN_LOT_SIZES["BANKNIFTY"] == 15
+    """Live lot sizes come from the instrument master; M42 keeps its frozen research values."""
+    from app.execution.m42_multi_asset_execution import M42_RESEARCH_LOT_SIZES
+    from app.instrument_specs import lot_size_for
+
+    assert INDIAN_LOT_SIZES["NIFTY"] == lot_size_for("NIFTY")
+    assert INDIAN_LOT_SIZES["SENSEX"] == lot_size_for("SENSEX")
+    assert "BANKNIFTY" not in INDIAN_LOT_SIZES
+    assert M42_RESEARCH_LOT_SIZES == {"NIFTY": 25, "BANKNIFTY": 15}
 
 
 def test_multi_asset_paper_simulation_execution():

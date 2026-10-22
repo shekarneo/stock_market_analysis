@@ -34,7 +34,8 @@ def test_instrument_catalog_completeness():
 
     nifty = next(c for c in catalog if c["id"] == "NIFTY")
     assert nifty["exchange"] == "NSE"
-    assert nifty["contract_lot_size"] == 25
+    from app.instrument_specs import lot_size_for
+    assert nifty["contract_lot_size"] == lot_size_for("NIFTY")
     assert nifty["options_supported"] is True
     assert "15m" in nifty["forecast_horizons"][0]
 
@@ -84,12 +85,15 @@ def test_independent_backtest_reporting():
     bt_sensex = get_instrument_backtest("SENSEX")
     bt_crude = get_instrument_backtest("CRUDEOILMINI")
 
-    # NIFTY has verified walk-forward
-    assert bt_nifty["evaluation_status"] == "VERIFIED_WALK_FORWARD"
-    assert bt_nifty["folds_summary"]["total_folds"] == 19
-    assert bt_nifty["performance_after_costs"]["full_period_max_drawdown"] == 9.62
-    assert bt_nifty["performance_after_costs"]["local_holdout_window_drawdown"] == 0.04
-    assert bt_nifty["performance_after_costs"]["statutory_friction_bps"] == 2.0
+    # NIFTY reports only computed artifact values, or UNEVALUATED when the artifact is missing
+    assert bt_nifty["evaluation_status"] in {"RESEARCH_WALK_FORWARD", "UNEVALUATED"}
+    if bt_nifty["evaluation_status"] == "RESEARCH_WALK_FORWARD":
+        assert bt_nifty["performance_after_costs"]["statutory_friction_bps"] == 2.0
+        assert "full_period_max_drawdown" not in bt_nifty["performance_after_costs"]
+        assert bt_nifty["caveats"]
+        assert not any("Zero overnight gap" in a for a in bt_nifty["execution_assumptions"])
+    else:
+        assert "performance_after_costs" not in bt_nifty
 
     # SENSEX: Unevaluated, requires independent dataset
     assert bt_sensex["evaluation_status"] == "UNEVALUATED"
@@ -105,7 +109,11 @@ def test_data_health_and_session_calendars():
     assert health["total_instruments_configured"] == 3
     items = {item["instrument"]: item for item in health["primary_instruments"]}
 
-    assert items["NIFTY"]["health_status"] == "HEALTHY_VERIFIED"
+    nifty_health = items["NIFTY"]
+    if nifty_health["stored_candles"] > 0 and nifty_health["last_price"] is not None:
+        assert nifty_health["health_status"] == "HEALTHY_VERIFIED"
+    else:
+        assert nifty_health["health_status"] == "DATA_GAP"
     assert items["SENSEX"]["health_status"] == "PARTIAL_LTP_ONLY"
     assert items["CRUDEOILMINI"]["health_status"] == "DATA_FEED_GAP"
 
@@ -336,11 +344,17 @@ def test_live_trend_chart_endpoint(client: TestClient):
     assert len(body["candles"]) > 0
     assert "current_spot" in body
     assert "projected_path" in body
-    assert len(body["projected_path"]) > 0
     assert "target_spot" in body
     assert "stop_loss_spot" in body
-    assert "upper_bound" in body["projected_path"][0]
-    assert "lower_bound" in body["projected_path"][0]
+    if body["forecast_status"] == "ACTIVE" and body["target_spot"] is not None:
+        assert len(body["projected_path"]) == 4
+        assert "upper_bound" in body["projected_path"][0]
+        assert "lower_bound" in body["projected_path"][0]
+    else:
+        # No live forecast: no invented direction, probability or projection
+        assert body["projected_path"] == []
+        assert body["predicted_direction"] == "UNKNOWN"
+        assert body["calibrated_probability"] is None
 
     # Test explicit model selection on live trend chart
     res_model = client.get("/api/forecasting/live-trend-chart?instrument=NIFTY&bars=25&model=xgboost&strategy_mode=regime_gated")
@@ -349,7 +363,11 @@ def test_live_trend_chart_endpoint(client: TestClient):
     assert body_model["ok"] is True
     assert body_model["model_name"] == "xgboost"
     assert body_model["strategy_mode"] == "regime_gated"
-    assert len(body_model["projected_path"]) == 4
+    # Research models have no deployed live artifact, so no projection is fabricated for them
+    assert body_model["forecast_status"] == "MODEL_NOT_DEPLOYED"
+    assert body_model["projected_path"] == []
+    assert body_model["calibrated_probability"] is None
+    assert body_model["predicted_direction"] == "UNKNOWN"
 
 
 

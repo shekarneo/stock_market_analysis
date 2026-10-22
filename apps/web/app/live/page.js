@@ -113,7 +113,8 @@ function calcRunningPremium(w, spots) {
   const isUp = w.direction === "UP" || w.option_type === "CE";
   const spotDelta = isUp ? (currentSpot - entrySpot) : (entrySpot - currentSpot);
   const isFut = Boolean(w.contract && w.contract.includes("FUT"));
-  const delta = isFut ? 1.0 : (p.delta != null ? Number(p.delta) : 0.5);
+  const delta = isFut ? 1.0 : (p.delta != null ? Number(p.delta) : null);
+  if (delta == null) return null; // no live delta captured: do not estimate a running premium
   const premDelta = spotDelta * delta;
   return Number(Math.max(0.05, pEntry + premDelta).toFixed(2));
 }
@@ -433,26 +434,36 @@ export default function LiveTradingPage() {
         setTimeout(() => setActionNotice(""), 3500);
         return false;
       }
-      const liveSpotPrice = getSpot(inst) || rec?.spot_price;
+      const liveSpotPrice = getSpot(inst) ?? rec?.spot_price ?? null;
+      const targetPoints = rec?.expected_move_points ?? null;
+      const stopLossPoints = rec?.stop_loss_points ?? null;
+      if (liveSpotPrice == null || targetPoints == null || stopLossPoints == null) {
+        setActionNotice(`⚠️ ${plannedContract} not tracked: live spot or analysis target/stop distances are unavailable.`);
+        setTimeout(() => setActionNotice(""), 3500);
+        return false;
+      }
+      // Only live option-chain values are sent; missing premiums stay missing (Truth in Data).
+      const modelPremiums = {
+        strike: pick?.strike ?? rec?.atm_strike ?? null,
+        moneyness: pick?.moneyness ?? null,
+        lot_size: pick?.lot_size ?? null,
+      };
+      if (pick?.is_live_quote) {
+        modelPremiums.entry = pick.entry_premium ?? null;
+        modelPremiums.target = pick.target_premium ?? null;
+        modelPremiums.stop_loss = pick.stop_loss_premium ?? null;
+        modelPremiums.delta = pick.delta ?? null;
+      }
       const payload = {
         instrument: inst,
         contract: plannedContract,
         option_type: pick?.option_type || rec?.option_type || "CE",
         call: rec?.call || (pick?.option_type === "PE" ? "BUY_PE" : "BUY_CE"),
         entry_spot: liveSpotPrice,
-        target_points: rec?.expected_move_points || (inst === "NIFTY" ? 80 : inst === "SENSEX" ? 250 : 50),
-        stop_loss_points: rec?.stop_loss_points || (inst === "NIFTY" ? 40 : inst === "SENSEX" ? 120 : 25),
+        target_points: targetPoints,
+        stop_loss_points: stopLossPoints,
         data_class: rec?.data_class || "UNVERIFIED_PROVIDER_DATA",
-        model_premiums: {
-          strike: pick?.strike || rec?.atm_strike,
-          moneyness: pick?.moneyness || "ATM",
-          delta: pick?.delta || 0.5,
-          entry: pick?.entry_premium || 120,
-          target: pick?.target_premium || 180,
-          stop_loss: pick?.stop_loss_premium || 80,
-          lot_size: pick?.lot_size || (inst === "NIFTY" ? 25 : 10),
-          estimated: true,
-        },
+        model_premiums: modelPremiums,
       };
 
       const res = await fetch("/api/watchlist", {
@@ -590,6 +601,12 @@ export default function LiveTradingPage() {
     }
 
     const spotVal = getSpot(inst);
+    const livePick = rec?.top_5_options?.[2];
+    if (price == null || spotVal == null || !livePick?.is_live_quote || livePick?.lot_size == null) {
+      setActionNotice(`⚠️ Cannot simulate ${plannedContract}: a fresh live option-chain premium, lot size and live spot are required.`);
+      setTimeout(() => setActionNotice(""), 4500);
+      return;
+    }
     const newOrd = {
       id: `ORD-${Math.floor(10000 + Math.random() * 90000)}`,
       time: new Date().toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" }),
@@ -597,12 +614,13 @@ export default function LiveTradingPage() {
       contract: plannedContract,
       side: side || "BUY_CE",
       lots: maxLots,
-      qty: inst === "NIFTY" ? 25 : inst === "SENSEX" ? 10 : 10,
-      entry: price || 120.0,
-      target: (price || 120.0) * 1.4,
-      sl: (price || 120.0) * 0.75,
-      ltp: price || 120.0,
-      entrySpot: spotVal != null ? spotVal : (price || 120.0),
+      qty: livePick.lot_size,
+      entry: price,
+      target: livePick.target_premium ?? null,
+      sl: livePick.stop_loss_premium ?? null,
+      delta: livePick.delta ?? null,
+      ltp: price,
+      entrySpot: spotVal,
       status: "OPEN",
       pnl: 0.0,
       mode: executionMode,
@@ -612,16 +630,7 @@ export default function LiveTradingPage() {
     setOrders([newOrd, ...orders]);
 
     // Automatically add to Watchlist for outcome scoring & accuracy calculation
-    const pick = rec?.top_5_options?.[2] || {
-      contract: newOrd.contract,
-      strike: rec?.atm_strike,
-      entry_premium: newOrd.entry,
-      target_premium: newOrd.target,
-      stop_loss_premium: newOrd.sl,
-      lot_size: newOrd.qty,
-      option_type: side.includes("PE") ? "PE" : "CE",
-    };
-    await addTradeToWatchlist(inst, pick, rec);
+    await addTradeToWatchlist(inst, livePick, rec);
 
     setActionNotice(`⚡ Order Placed & Added to Watchlist: ${newOrd.contract} (${newOrd.side}) [${executionMode}] @ ₹${newOrd.entry}`);
     setTimeout(() => setActionNotice(""), 4500);
@@ -636,10 +645,11 @@ export default function LiveTradingPage() {
         if (ord.status !== "OPEN") return ord;
         const currentSpot = spots[ord.instrument] != null ? Number(spots[ord.instrument]) : null;
         if (currentSpot == null || isNaN(currentSpot)) return ord;
-        const entrySpot = ord.entrySpot || currentSpot;
+        const entrySpot = ord.entrySpot;
+        const delta = ord.contract?.includes("FUT") ? 1.0 : ord.delta;
+        if (entrySpot == null || delta == null || ord.entry == null || ord.qty == null) return ord;
         const isCe = ord.side ? ord.side.includes("CE") : true;
         const spotDelta = isCe ? (currentSpot - entrySpot) : (entrySpot - currentSpot);
-        const delta = ord.contract?.includes("FUT") ? 1.0 : 0.5;
         const currentLtp = Number(Math.max(0.05, ord.entry + spotDelta * delta).toFixed(2));
         const currentPnl = Number(((currentLtp - ord.entry) * ord.qty * ord.lots).toFixed(2));
         if (currentLtp !== ord.ltp || currentPnl !== ord.pnl) {
@@ -662,7 +672,6 @@ export default function LiveTradingPage() {
       name: "NIFTY 50",
       exchange: "NSE",
       step: 50,
-      lotSize: 25,
       spot: getSpot("NIFTY"),
       session: getSessionStatus("NIFTY", crossMarketSnapshot),
       analysis: getMarketAnalysis("NIFTY"),
@@ -673,7 +682,6 @@ export default function LiveTradingPage() {
       name: "BSE SENSEX",
       exchange: "BSE",
       step: 100,
-      lotSize: 10,
       spot: getSpot("SENSEX"),
       session: getSessionStatus("SENSEX", crossMarketSnapshot),
       analysis: getMarketAnalysis("SENSEX"),
@@ -684,7 +692,6 @@ export default function LiveTradingPage() {
       name: "CRUDE OIL MINI",
       exchange: "MCX",
       step: 50,
-      lotSize: 10,
       spot: getSpot("CRUDEOILMINI"),
       session: getSessionStatus("CRUDEOILMINI", crossMarketSnapshot),
       analysis: getMarketAnalysis("CRUDEOILMINI"),
@@ -1177,7 +1184,7 @@ export default function LiveTradingPage() {
               const stopLossSpot = rec?.stop_loss_spot;
               const expPts = rec?.expected_move_points;
               const slPts = rec?.stop_loss_points;
-              const estPrice = topPick?.entry_premium || (u.spot ? Math.round(u.spot * 0.005 * 10) / 10 : null);
+              const estPrice = topPick?.is_live_quote ? topPick.entry_premium ?? null : null;
 
               return (
                 <div
@@ -1345,11 +1352,7 @@ export default function LiveTradingPage() {
                             }
                             const pick = rec?.top_5_options?.[2] || {
                               contract: plannedPick,
-                              strike: rec?.atm_strike,
-                              entry_premium: estPrice,
-                              target_premium: estPrice * 1.4,
-                              stop_loss_premium: estPrice * 0.75,
-                              lot_size: u.lotSize,
+                              strike: rec?.atm_strike ?? null,
                               option_type: side.includes("PE") ? "PE" : "CE",
                             };
                             const ok = await addTradeToWatchlist(u.symbol, pick, rec);
@@ -1530,8 +1533,8 @@ export default function LiveTradingPage() {
                       const s = STATUS_STYLE[w.status] || STATUS_STYLE.OPEN;
                       const p = w.model_premiums || {};
                       const pEntry = p.entry != null ? Number(p.entry) : null;
-                      const pTarget = p.target != null ? Number(p.target) : (pEntry != null ? Number((pEntry * 1.4).toFixed(2)) : null);
-                      const pSL = p.stop_loss != null ? Number(p.stop_loss) : (pEntry != null ? Number((pEntry * 0.75).toFixed(2)) : null);
+                      const pTarget = p.target != null ? Number(p.target) : null;
+                      const pSL = p.stop_loss != null ? Number(p.stop_loss) : null;
                       const gainPct = pEntry && pTarget ? `+${(((pTarget - pEntry) / pEntry) * 100).toFixed(0)}%` : "";
                       const lossPct = pEntry && pSL ? `-${(((pEntry - pSL) / pEntry) * 100).toFixed(0)}%` : "";
 
@@ -1756,9 +1759,9 @@ export default function LiveTradingPage() {
                             {o.mode}
                           </span>
                         </td>
-                        <td style={{ padding: "10px 10px", color: "var(--ink, #f8fafc)" }}><strong>₹{o.entry.toFixed(2)}</strong></td>
-                        <td style={{ padding: "10px 10px", color: "#34d399", fontWeight: 600 }}>₹{o.target.toFixed(2)}</td>
-                        <td style={{ padding: "10px 10px", color: "#f87171", fontWeight: 600 }}>₹{o.sl.toFixed(2)}</td>
+                        <td style={{ padding: "10px 10px", color: "var(--ink, #f8fafc)" }}><strong>{o.entry != null ? `₹${o.entry.toFixed(2)}` : "—"}</strong></td>
+                        <td style={{ padding: "10px 10px", color: "#34d399", fontWeight: 600 }}>{o.target != null ? `₹${o.target.toFixed(2)}` : "—"}</td>
+                        <td style={{ padding: "10px 10px", color: "#f87171", fontWeight: 600 }}>{o.sl != null ? `₹${o.sl.toFixed(2)}` : "—"}</td>
                         <td style={{ padding: "10px 10px" }}>
                           <span style={{
                             background: o.status === "OPEN" ? "rgba(56, 189, 248, 0.15)" : "rgba(255, 255, 255, 0.08)",

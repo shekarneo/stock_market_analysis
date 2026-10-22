@@ -59,16 +59,20 @@ The platform bridges real-time market data ingestion with higher-timeframe swing
 
 ## Core Trading Desks & Unified Hubs
 
-1. **Dashboard (`/dashboard`)**: Unified executive summary, real-time macro context, trade ticket, and live market tape.
-2. **Analysis Desk (`/analysis`)**: 12-agent consensus orchestration (`V6Desk`) and institutional intelligence hub (`V6IntelligenceHub`).
-3. **Statistical Forecast Desk (`/forecast`)**: Real-time calibrated probabilities, Brier score tracking, and out-of-sample backtest metrics.
+### Trade
+1. **Overview (`/dashboard`)**: Unified cockpit with executive summary, macro context, trade ticket, and live market tape. Includes the multi-agent consensus desk (`V6Desk`) with Compact and Detailed views (`/dashboard?view=detailed`). The legacy `/analysis` route redirects here.
+2. **Live & Auto Trading (`/live`)**: Automated execution monitoring, auto-run intervals, and real-time outcome tracking.
+3. **Watchlist & Accuracy (`/watchlist`)**: Tracked suggestions, contract expiry badges, realized exit premiums, and prediction accuracy.
 4. **Options & Greeks Desk (`/options`)**: Live strike matrix, ATM detection, Black-Scholes Greeks ($\Delta, \Gamma, \Theta, \mathcal{V}$), and expected value ($EV$).
-5. **Live & Auto Trading (`/live`)**: Automated execution monitoring, auto-run intervals, and real-time outcome tracking.
-6. **Unified Tools Hubs**:
-   - **Data & History (`/history`)**: Candle ingestion, data hygiene, and Bhavcopy reconciliation.
-   - **Backtest & Paper (`/backtest` ↔ `/paper`)**: Walk-forward backtesting and paper portfolio simulation.
-   - **Model Studio & Registry (`/studio` ↔ `/registry`)**: Machine learning model training, lineage, and artifact registry.
-   - **Settings & Integrations (`/settings` ↔ `/settings/integrations`)**: Operator security, API integrations, and agent model configurations.
+5. **Positions & Capital (`/risk`)**: Risk limits, risk capital allocation, accounting, and research proposal gates.
+6. **System (`/system`)**: Health, data provenance, paper-readiness audit, and diagnostics.
+
+### Tools
+- **Forecast & Accuracy (`/forecast`)**: Calibrated probabilities, Brier score tracking, and out-of-sample backtest metrics.
+- **Market Data & History (`/history`)**: Candle ingestion, data hygiene, and Bhavcopy reconciliation.
+- **Backtest & Walk-Forward (`/backtest` ↔ `/paper`)**: Walk-forward backtesting and paper portfolio simulation.
+- **Model Studio & Registry (`/studio` ↔ `/registry`)**: Machine learning model training, lineage, and artifact registry.
+- **Settings & API Keys (`/settings` ↔ `/settings/integrations`)**: Operator security, API integrations, and agent model configurations.
 
 ---
 

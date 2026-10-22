@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useMarketData } from "./MarketDataContext";
 
 // Standard normal cumulative distribution approximation
 function normalCdf(x) {
@@ -91,42 +92,19 @@ export default function V6OptionsGreeksCard({ liveQuotes = [] }) {
   const [customVolPct, setCustomVolPct] = useState(13.5);
   const [interestRatePct, setInterestRatePct] = useState(6.75); // RBI Repo Rate ~6.5-6.75%
 
+  // Names only: contract specs come from the backend instrument master, prices from live quotes.
+  // No default spot, PCR, max pain or IV is shown (Truth in Data).
   const assetConfigs = {
-    NIFTY: {
-      name: "NIFTY 50",
-      defaultSpot: 25260.0,
-      strikeStep: 50,
-      lotSize: 25,
-      pcrOi: 1.18,
-      pcrVol: 0.94,
-      maxPainStrike: 25250,
-      atmIv: 13.5,
-    },
-    BANKNIFTY: {
-      name: "NIFTY BANK",
-      defaultSpot: 52000.0,
-      strikeStep: 100,
-      lotSize: 15,
-      pcrOi: 0.88,
-      pcrVol: 0.82,
-      maxPainStrike: 51800,
-      atmIv: 16.8,
-    },
-    SENSEX: {
-      name: "BSE SENSEX",
-      defaultSpot: 82500.0,
-      strikeStep: 100,
-      lotSize: 20,
-      pcrOi: 1.05,
-      pcrVol: 1.02,
-      maxPainStrike: 82400,
-      atmIv: 13.0,
-    },
+    NIFTY: { name: "NIFTY 50" },
+    SENSEX: { name: "BSE SENSEX" },
   };
+  const { supportedInstruments } = useMarketData();
 
   const cfg = assetConfigs[selectedAsset] || assetConfigs.NIFTY;
+  const spec = (supportedInstruments || []).find((c) => c.id === selectedAsset) || {};
+  const strikeStep = spec.strike_step ?? null;
   const liveMatch = liveQuotes.find((q) => q.instrument === selectedAsset);
-  const currentSpot = liveMatch?.last_price ? Number(liveMatch.last_price) : cfg.defaultSpot;
+  const currentSpot = liveMatch?.last_price != null ? Number(liveMatch.last_price) : null;
 
   const T = customDaysToExpiry / 365;
   const r = interestRatePct / 100;
@@ -134,23 +112,21 @@ export default function V6OptionsGreeksCard({ liveQuotes = [] }) {
 
   // Generate 7 strikes centered around ATM
   const strikes = useMemo(() => {
-    const atm = Math.round(currentSpot / cfg.strikeStep) * cfg.strikeStep;
+    if (currentSpot == null || strikeStep == null) return [];
+    const atm = Math.round(currentSpot / strikeStep) * strikeStep;
     const list = [];
     for (let i = -3; i <= 3; i++) {
-      const strike = atm + i * cfg.strikeStep;
+      const strike = atm + i * strikeStep;
       const metrics = calculateBlack76(currentSpot, strike, T, r, sigma);
       list.push({
         strike,
         isAtm: i === 0,
-        isMaxPain: strike === cfg.maxPainStrike,
+        isMaxPain: false,
         ...metrics,
       });
     }
     return list;
-  }, [currentSpot, cfg.strikeStep, cfg.maxPainStrike, T, r, sigma]);
-
-  const pcrSentiment = cfg.pcrOi > 1.1 ? "Bullish (Put Writing Heavy)" : cfg.pcrOi < 0.9 ? "Bearish (Call Writing Heavy)" : "Neutral Range";
-  const pcrClass = cfg.pcrOi > 1.1 ? "emerald" : cfg.pcrOi < 0.9 ? "rose" : "neutral";
+  }, [currentSpot, strikeStep, T, r, sigma]);
 
   return (
     <div className="v6-options-panel">
@@ -188,29 +164,27 @@ export default function V6OptionsGreeksCard({ liveQuotes = [] }) {
         <div className="v6-metric-card">
           <span className="v6-metric-label">{cfg.name} Forward / Spot</span>
           <div className="v6-metric-val cyan-text">
-            ₹{currentSpot.toLocaleString("en-IN", { minimumFractionDigits: 1, maximumFractionDigits: 2 })}
+            {currentSpot != null
+              ? `₹${currentSpot.toLocaleString("en-IN", { minimumFractionDigits: 1, maximumFractionDigits: 2 })}`
+              : "Awaiting live quote"}
           </div>
-          <span className="v6-metric-sub">Lot Size: {cfg.lotSize} | Step: ₹{cfg.strikeStep}</span>
+          <span className="v6-metric-sub">Lot Size: {spec.contract_lot_size ?? "N/A"} | Step: {strikeStep != null ? `₹${strikeStep}` : "N/A"}</span>
         </div>
 
         <div className="v6-metric-card">
           <span className="v6-metric-label">Institutional PCR (Open Interest)</span>
-          <div className="v6-metric-val">{cfg.pcrOi.toFixed(2)}</div>
-          <span className={`v6-pill ${pcrClass}`}>{pcrSentiment}</span>
-          <span className="v6-metric-sub">Volume PCR: {cfg.pcrVol.toFixed(2)}</span>
+          <div className="v6-metric-val">N/A</div>
+          <span className="v6-metric-sub">Live option-chain OI is not loaded in this panel</span>
         </div>
 
         <div className="v6-metric-card">
           <span className="v6-metric-label">Max Pain Pin Strike</span>
-          <div className="v6-metric-val amber-text">₹{cfg.maxPainStrike.toLocaleString("en-IN")}</div>
-          <span className="v6-pill neutral">
-            {currentSpot > cfg.maxPainStrike ? `+₹${Math.round(currentSpot - cfg.maxPainStrike)} Above Pin` : `-₹${Math.round(cfg.maxPainStrike - currentSpot)} Below Pin`}
-          </span>
-          <span className="v6-metric-sub">Optimal Writer Retention Strike</span>
+          <div className="v6-metric-val amber-text">N/A</div>
+          <span className="v6-metric-sub">Requires live option-chain OI</span>
         </div>
 
         <div className="v6-metric-card">
-          <span className="v6-metric-label">ATM Implied Volatility (IV)</span>
+          <span className="v6-metric-label">Calculator IV (operator input)</span>
           <div className="v6-metric-val indigo-text">{customVolPct.toFixed(1)}%</div>
           <span className="v6-metric-sub">Expiry: {customDaysToExpiry} Days | Rate: {interestRatePct}%</span>
         </div>
@@ -275,6 +249,13 @@ export default function V6OptionsGreeksCard({ liveQuotes = [] }) {
             </tr>
           </thead>
           <tbody>
+            {strikes.length === 0 && (
+              <tr>
+                <td colSpan="11" style={{ textAlign: "center", color: "var(--muted)" }}>
+                  Strike chain needs a live spot and the instrument master's strike step.
+                </td>
+              </tr>
+            )}
             {strikes.map((s) => (
               <tr key={s.strike} className={s.isAtm ? "atm-row" : ""}>
                 {/* Calls */}

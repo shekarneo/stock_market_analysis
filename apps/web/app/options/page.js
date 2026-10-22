@@ -58,29 +58,34 @@ function Workstation() {
 }
 
 function LiveStrikeMatrix({ underlying, side, liveData, onSelectContract }) {
+  const { supportedInstruments } = useMarketData();
   const quotes = liveData?.quotes || [];
   const secIndices = liveData?.sectoral_indices || [];
   const commodities = liveData?.commodities || [];
 
-  let spot = null;
-  let lotSize = 75;
-  let strikeStep = 50;
+  // Contract specs come only from the backend instrument master (/api/forecasting/instruments)
+  const specId = underlying === "CRUDEMINI" ? "CRUDEOILMINI" : underlying;
+  const spec = (supportedInstruments || []).find((c) => c.id === specId) || {};
+  const lotSize = spec.contract_lot_size ?? null;
+  const strikeStep = spec.strike_step ?? null;
 
-  if (underlying === "NIFTY") {
-    const q = quotes.find((row) => row.instrument === "NIFTY");
+  let spot = null;
+  if (underlying === "NIFTY" || underlying === "SENSEX") {
+    const q = quotes.find((row) => row.instrument === underlying);
     spot = q?.last_price ?? null;
-    lotSize = 25;
-    strikeStep = 50;
-  } else if (underlying === "SENSEX") {
-    const q = quotes.find((row) => row.instrument === "SENSEX");
-    spot = q?.last_price ?? null;
-    lotSize = 20;
-    strikeStep = 100;
   } else if (underlying === "CRUDEOILMINI" || underlying === "CRUDEMINI") {
     const q = commodities.find((row) => row.instrument === "CRUDEOILMINI" || row.instrument === "CRUDEMINI" || row.instrument === "CRUDE");
     spot = q?.last_price ?? null;
-    lotSize = 10;
-    strikeStep = 50;
+  }
+
+  if (strikeStep == null) {
+    return (
+      <div className="empty-state" style={{ padding: "16px", marginBottom: "20px", border: "1px dashed var(--border, #334155)", borderRadius: "8px" }}>
+        <p style={{ margin: 0, color: "var(--sub, #94a3b8)", fontSize: "0.9rem" }}>
+          Contract specification for {underlying} is not loaded from the instrument master; strike matrix unavailable.
+        </p>
+      </div>
+    );
   }
 
   if (spot == null) {
@@ -103,7 +108,7 @@ function LiveStrikeMatrix({ underlying, side, liveData, onSelectContract }) {
         <div>
           <h3 style={{ margin: 0, fontSize: "1.1rem" }}>⚡ Live Option Strike Matrix ({underlying} {side})</h3>
           <p style={{ margin: "4px 0 0", color: "var(--sub, #94a3b8)", fontSize: "0.88rem" }}>
-            Real spot quote: <strong>₹{Number(spot).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong> · ATM Strike: <strong>{atmStrike}</strong> · Lot size: <strong>{lotSize}</strong>
+            Real spot quote: <strong>₹{Number(spot).toLocaleString("en-IN", { minimumFractionDigits: 2 })}</strong> · ATM Strike: <strong>{atmStrike}</strong> · Lot size: <strong>{lotSize ?? "N/A"}</strong>
           </p>
         </div>
         <span className="pill ok"><i />LIVE QUOTE DRIVEN</span>
@@ -139,7 +144,7 @@ function LiveStrikeMatrix({ underlying, side, liveData, onSelectContract }) {
                     </span>
                   </td>
                   <td>~₹{approxEst}</td>
-                  <td>{lotSize}</td>
+                  <td>{lotSize ?? "N/A"}</td>
                   <td>
                     <button
                       type="button"

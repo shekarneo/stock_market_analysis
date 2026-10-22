@@ -608,8 +608,13 @@ export default function PredictedTrendChart() {
             DECISION: {chartData?.decision || "NO TRADE"}
           </span>
           <span style={{ color: "var(--muted)", fontSize: "0.75rem" }}>
-            P(Up): {chartData?.calibrated_probability != null ? `${(chartData.calibrated_probability * 100).toFixed(1)}%` : "50.0%"}
+            P(Up): {chartData?.calibrated_probability != null ? `${(chartData.calibrated_probability * 100).toFixed(1)}%` : "N/A"}
           </span>
+          {chartData?.forecast_status && chartData.forecast_status !== "ACTIVE" && (
+            <span style={{ color: "var(--muted)", fontSize: "0.72rem" }} title={chartData.forecast_note || ""}>
+              No projection: {chartData.forecast_status}
+            </span>
+          )}
         </div>
       </div>
     </section>

@@ -31,6 +31,9 @@ log = logging.getLogger("imm.agents")
 VALID_BIASES = {"BULLISH", "BEARISH", "NEUTRAL", "MIXED", "UNKNOWN"}
 
 
+from app.instruments import COMMODITY_UNDERLYINGS, CRUDE_FAMILY, canonical_underlying, is_india_vix_row
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -411,61 +414,58 @@ def technical_analyst_node(state: AnalysisState) -> dict:
         return {"agent_outputs": agent_outputs}
 
     evidence = list(state.get("evidence") or [])
-    tech_evidence = [e for e in evidence if e.get("category") in {"TECHNICAL", "INDIAN_MARKET"}]
-
-    # Deterministic price parsing
-    prices: list[float] = []
-    for item in tech_evidence:
-        lp = _safe_float(item.get("last_price"))
-        if lp is not None:
-            prices.append(lp)
-        elif isinstance(item.get("ohlc"), dict):
-            c = _safe_float(item["ohlc"].get("close"))
-            if c is not None:
-                prices.append(c)
-
-    # If only 1 spot price exists, fallback to verified historical candles for multi-bar trend
-    if len(prices) < 2:
-        try:
-            target_inst = (state.get("instruments") or ["NIFTY"])[0]
-            from app.market.dataset_resolver import resolve_dataset_file
-            ds_file = resolve_dataset_file(target_inst)
-            if ds_file and ds_file.exists():
-                import json
-                raw_data = json.loads(ds_file.read_text(encoding="utf-8"))
-                candles = raw_data.get("candles") or []
-                if candles:
-                    recent = candles[-20:]
-                    hist_prices = [float(c[4]) for c in recent if len(c) > 4 and _safe_float(c[4]) is not None]
-                    if len(hist_prices) >= 2:
-                        prices = hist_prices
-        except Exception:
-            pass
+    price_evidence = [e for e in evidence if e.get("category") in {"TECHNICAL", "INDIAN_MARKET", "MACRO", "COMMODITY"}]
+    target_inst = canonical_underlying((state.get("instruments") or [None])[0])
+    if target_inst is None:
+        # No explicit target: usable only when the price evidence names exactly one instrument
+        named = {canonical_underlying(e.get("instrument")) for e in price_evidence if e.get("instrument")}
+        if len(named) == 1:
+            target_inst = next(iter(named))
+    # Only the target instrument's own observations, in time order. Mixing prices of
+    # different instruments (e.g. NIFTY ~25k and SENSEX ~82k) produces meaningless "returns".
+    tech_evidence = [
+        e for e in price_evidence
+        if target_inst is not None and canonical_underlying(e.get("instrument")) == target_inst
+    ]
+    tech_evidence.sort(key=lambda e: str(e.get("observed_at") or e.get("retrieved_at") or ""))
 
     findings: list[str] = []
-    directional_bias = "NEUTRAL"
-    confidence = 0.60
+    directional_bias = "UNKNOWN"  # until a measurement exists; NEUTRAL would be a claim of no trend
+    confidence = None
+    missing: list[str] = []
 
-    if len(prices) >= 2:
+    prices = [p for p in (_safe_float(e.get("last_price")) for e in tech_evidence) if p is not None]
+    ret = None
+    if target_inst is None:
+        findings.append("No single target instrument in the price evidence; technical analysis skipped.")
+        missing.append("target_instrument")
+    elif len(prices) >= 2 and prices[0] > 0:
         ret = (prices[-1] - prices[0]) / prices[0]
-        findings.append(f"Technical window return: {ret * 100:.2f}% across {len(prices)} bars.")
+        findings.append(f"{target_inst} window return: {ret * 100:+.2f}% across {len(prices)} time-ordered observations.")
+    else:
+        latest = tech_evidence[-1] if tech_evidence else None
+        last_price = prices[-1] if prices else None
+        ref_close = _safe_float(latest["ohlc"].get("close")) if latest and isinstance(latest.get("ohlc"), dict) else None
+        if last_price is not None and ref_close is not None and ref_close > 0:
+            ret = (last_price - ref_close) / ref_close
+            findings.append(f"{target_inst} intraday change vs reference close {ref_close:,.2f}: {ret * 100:+.2f}%.")
+        else:
+            findings.append(f"{target_inst}: fewer than two observations and no reference close; trend cannot be measured.")
+            missing.append(f"{target_inst}_price_series")
 
-        # Evaluate trend strength and regime
+    if ret is not None:
         if abs(ret) < 0.001:
             directional_bias = "NEUTRAL"
-            confidence = 0.60
-            findings.append("Market regime: SIDEWAYS_CONSOLIDATION. Price action is range-bound without clear trend.")
-        elif ret >= 0.001:
+            confidence = 0.55
+            findings.append("Market regime: SIDEWAYS_CONSOLIDATION. Price action is range-bound (move within ±0.10%).")
+        elif ret > 0:
             directional_bias = "BULLISH"
-            confidence = min(0.85, 0.65 + abs(ret) * 10)
+            confidence = min(0.80, 0.60 + abs(ret) * 10)
             findings.append("Market regime: TRENDING_BULL. Short-term momentum indicates upward price continuation.")
         else:
             directional_bias = "BEARISH"
-            confidence = min(0.85, 0.65 + abs(ret) * 10)
+            confidence = min(0.80, 0.60 + abs(ret) * 10)
             findings.append("Market regime: TRENDING_BEAR. Short-term momentum indicates downward price continuation.")
-    else:
-        findings.append("Baseline consolidation regime; insufficient consecutive bars for dynamic momentum.")
-        confidence = 0.50
 
     out = _finalize_agent_output(
         role_name=role_name,
@@ -475,10 +475,10 @@ def technical_analyst_node(state: AnalysisState) -> dict:
         t0=t0,
         findings=findings,
         directional_bias=directional_bias,
-        confidence=round(confidence, 2),
+        confidence=round(confidence, 2) if confidence is not None else None,
         evidence_references=[e.get("evidence_id") for e in tech_evidence if e.get("evidence_id")],
-        missing_evidence=[],
-        limitations=["Calculated on available historical/quarantined bars only."],
+        missing_evidence=missing,
+        limitations=["Simple return over the target's own observations; no multi-bar indicators (RSI/ADX) are computed here."],
         semantic_type="HEURISTIC_SIGNAL_STRENGTH",
         is_probability=False,
         is_calibrated=False,
@@ -510,8 +510,10 @@ def global_macro_analyst_node(state: AnalysisState) -> dict:
     macro_evidence = [e for e in evidence if e.get("category") in {"GLOBAL_MARKET", "MACRO"}]
 
     instruments_observed = {e.get("instrument") for e in macro_evidence if e.get("instrument")}
-    target_instruments = {"GIFTNIFTY", "SPX", "NASDAQ", "CRUDE", "USDINR", "VIX"}
+    target_instruments = {"GIFTNIFTY", "SPX", "NASDAQ", "CRUDE", "USDINR"}
     missing_instruments = sorted(list(target_instruments - instruments_observed))
+    if not any(is_india_vix_row(e) for e in macro_evidence):
+        missing_instruments.append("INDIA_VIX")
 
     findings = []
     if instruments_observed:
@@ -522,10 +524,22 @@ def global_macro_analyst_node(state: AnalysisState) -> dict:
     if missing_instruments:
         findings.append(f"Missing macro/global data feeds: {', '.join(missing_instruments)}.")
 
-    # Evaluate multi-asset directional bias and confidence from macro signals
-    bull_count = sum(1 for e in macro_evidence if e.get("directional_implication") == "BULLISH")
-    bear_count = sum(1 for e in macro_evidence if e.get("directional_implication") == "BEARISH")
-    vix_item = next((e for e in macro_evidence if e.get("instrument") in {"VIX", "INDIA_VIX"}), None)
+    # Evaluate multi-asset directional bias and confidence from macro signals.
+    # directional_implication on macro rows is the implication for Indian equities.
+    # For a commodity target, crude benchmarks' own price moves are used instead.
+    target_inst = canonical_underlying((state.get("instruments") or [None])[0])
+    if target_inst in COMMODITY_UNDERLYINGS:
+        crude_moves = [
+            e.get("price_direction") for e in macro_evidence
+            if str(e.get("instrument") or "").upper() in CRUDE_FAMILY
+            and canonical_underlying(e.get("instrument")) != target_inst
+        ]
+        bull_count = sum(1 for m in crude_moves if m == "UP")
+        bear_count = sum(1 for m in crude_moves if m == "DOWN")
+    else:
+        bull_count = sum(1 for e in macro_evidence if e.get("directional_implication") == "BULLISH")
+        bear_count = sum(1 for e in macro_evidence if e.get("directional_implication") == "BEARISH")
+    vix_item = next((e for e in macro_evidence if is_india_vix_row(e)), None)
     vix_val = _safe_float(vix_item.get("last_price")) if vix_item else None
 
     if bull_count > bear_count:
@@ -696,13 +710,19 @@ def options_analyst_node(state: AnalysisState) -> dict:
 
         # Check for structured option quotes (M39)
         valid_quotes = [e for e in opt_evidence if "strike" in e and "option_type" in e]
+        if valid_quotes and (
+            _safe_float(valid_quotes[0].get("forward_price")) is None
+            or _safe_float(valid_quotes[0].get("time_years")) is None
+        ):
+            findings.append("Option quotes lack forward price or time to expiry; chain analytics skipped.")
+            valid_quotes = []
         if valid_quotes:
             try:
                 from app.options.m39_options_analytics import analyze_options_chain
                 chain_summary = analyze_options_chain(
                     quotes=valid_quotes,
-                    forward_price=float(valid_quotes[0].get("forward_price", 25000.0)),
-                    time_years=float(valid_quotes[0].get("time_years", 7.0 / 365.0)),
+                    forward_price=float(valid_quotes[0]["forward_price"]),
+                    time_years=float(valid_quotes[0]["time_years"]),
                     symbol=str(valid_quotes[0].get("instrument", "NIFTY")),
                 )
                 findings.append(

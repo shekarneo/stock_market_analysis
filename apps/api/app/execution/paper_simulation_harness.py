@@ -49,7 +49,6 @@ from app.forecasting.m28_regime_research import (
     compute_causal_adx_and_regimes,
 )
 from app.risk.portfolio_risk import (
-    INDIAN_LOT_SIZES,
     SquareOffAssessment,
     assess_intraday_square_off,
     calculate_volatility_parity_size,
