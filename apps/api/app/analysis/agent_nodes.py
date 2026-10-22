@@ -696,13 +696,19 @@ def options_analyst_node(state: AnalysisState) -> dict:
 
         # Check for structured option quotes (M39)
         valid_quotes = [e for e in opt_evidence if "strike" in e and "option_type" in e]
+        if valid_quotes and (
+            _safe_float(valid_quotes[0].get("forward_price")) is None
+            or _safe_float(valid_quotes[0].get("time_years")) is None
+        ):
+            findings.append("Option quotes lack forward price or time to expiry; chain analytics skipped.")
+            valid_quotes = []
         if valid_quotes:
             try:
                 from app.options.m39_options_analytics import analyze_options_chain
                 chain_summary = analyze_options_chain(
                     quotes=valid_quotes,
-                    forward_price=float(valid_quotes[0].get("forward_price", 25000.0)),
-                    time_years=float(valid_quotes[0].get("time_years", 7.0 / 365.0)),
+                    forward_price=float(valid_quotes[0]["forward_price"]),
+                    time_years=float(valid_quotes[0]["time_years"]),
                     symbol=str(valid_quotes[0].get("instrument", "NIFTY")),
                 )
                 findings.append(

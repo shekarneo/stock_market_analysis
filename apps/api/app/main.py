@@ -700,6 +700,15 @@ def read_paper_readiness(
     return report.model_dump()
 
 
+SYNTHETIC_BANKNIFTY_NOTICE = {
+    "banknifty_data_origin": "SYNTHETIC",
+    "note": (
+        "BANK NIFTY candles in M40-M42 are generated from NIFTY returns plus random noise. "
+        "BANK NIFTY, cross-asset and dual-index portfolio results are not evidence of real performance."
+    ),
+}
+
+
 @app.get("/api/forecasting/multi-asset/benchmark")
 def read_multi_asset_benchmark(
     request: Request,
@@ -716,6 +725,7 @@ def read_multi_asset_benchmark(
     return {
         "benchmark": benchmark_data,
         "attribution": attribution_data,
+        "data_quarantine": SYNTHETIC_BANKNIFTY_NOTICE,
     }
 
 
@@ -730,7 +740,7 @@ def read_multi_asset_simulation(
     from app.settings import REPO_ROOT
     sim_file = REPO_ROOT / "var/datasets/m42_multi_asset_simulation_results.json"
     sim_data = json.loads(sim_file.read_text(encoding="utf-8")) if sim_file.exists() else {}
-    return sim_data
+    return {**sim_data, "data_quarantine": SYNTHETIC_BANKNIFTY_NOTICE}
 
 
 @app.get("/api/forecasting/instruments")
@@ -808,7 +818,7 @@ def get_live_trend_chart(
                 "high": round(float(c[2]), 2),
                 "low": round(float(c[3]), 2),
                 "close": round(float(c[4]), 2),
-                "volume": float(c[5]) if len(c) > 5 else 0.0,
+                "volume": float(c[5]) if len(c) > 5 and c[5] is not None else None,
             })
 
         read = load_read() or {}
@@ -819,89 +829,56 @@ def get_live_trend_chart(
         q = quotes.get(inst) or commodities.get(inst) or obs.get(inst)
         if q and q.get("last_price") is not None:
             current_spot = round(float(q["last_price"]), 2)
-            is_live = bool(q.get("is_live_quote", True))
+            is_live = bool(q.get("is_live_quote", False))
+            spot_source = q.get("quote_source") or "MARKET_SNAPSHOT"
         else:
             current_spot = formatted_candles[-1]["close"]
             is_live = False
+            spot_source = "LAST_HISTORICAL_CANDLE_CLOSE"
 
         chosen_model = model.lower().strip()
-        if chosen_model not in {"champion", "auto", "default", ""}:
-            model_key = normalize_model_key(chosen_model)
-            from app.forecasting.m37_lightgbm_htf_research import run_m37_lightgbm_benchmark, M37StrategyMode
-            mode_val = M37StrategyMode.REGIME_GATED
-            if "dead" in strategy_mode.lower():
-                mode_val = M37StrategyMode.DEADBAND
-            elif "raw" in strategy_mode.lower():
-                mode_val = M37StrategyMode.RAW
-
-            report = run_m37_lightgbm_benchmark(
-                candles_15m=all_candles,
-                dataset_id=raw_data.get("dataset_id", inst),
-                models_to_evaluate=[model_key],
-                strategy_modes=[mode_val],
-            )
-            strat = report.strategies[0] if report.strategies else None
-            if strat:
-                calibrated_p = round(strat.holdout_accuracy, 4) if strat.holdout_accuracy else 0.52
-                direction = "BULLISH" if strat.holdout_net_return_2bps >= 0 else "BEARISH"
-                decision = "BUY" if direction == "BULLISH" and calibrated_p > 0.52 else ("SELL" if direction == "BEARISH" and calibrated_p < 0.48 else "NO TRADE")
-                expected_move = round(current_spot * 0.0035, 1)
-                target = round(current_spot + expected_move, 1) if direction == "BULLISH" else round(current_spot - expected_move, 1)
-                stop = round(current_spot - expected_move * 0.7, 1) if direction == "BULLISH" else round(current_spot + expected_move * 0.7, 1)
-            else:
-                fc = get_instrument_forecast(inst)
-                direction = fc.get("predicted_direction") or "BULLISH"
-                decision = fc.get("decision") or "NO TRADE"
-                calibrated_p = fc.get("calibrated_probability") or 0.53
-                expected_move = fc.get("expected_return_points") or round(current_spot * 0.0035, 1)
-                target = fc.get("target_spot")
-                stop = fc.get("stop_loss_spot")
-        else:
+        if chosen_model in {"champion", "auto", "default", ""}:
             model_key = "champion"
             fc = get_instrument_forecast(inst)
-            direction = fc.get("predicted_direction") or "BULLISH"
+            direction = fc.get("predicted_direction") or "UNKNOWN"
             decision = fc.get("decision") or "NO TRADE"
-            calibrated_p = fc.get("calibrated_probability") or 0.53
-            expected_move = fc.get("expected_return_points") or round(current_spot * 0.0035, 1)
+            calibrated_p = fc.get("calibrated_probability")
+            expected_move = fc.get("expected_return_points")
             target = fc.get("target_spot")
             stop = fc.get("stop_loss_spot")
+            forecast_status = fc.get("forecast_status") or ("ACTIVE" if calibrated_p is not None else "NO_FORECAST")
+            forecast_note = "; ".join(fc.get("reasons_for_no_trade") or [])
+        else:
+            # Research models are walk-forward benchmarks only; no fitted artifact is deployed for inference.
+            model_key = normalize_model_key(chosen_model)
+            direction = "UNKNOWN"
+            decision = "NO TRADE"
+            calibrated_p = None
+            expected_move = target = stop = None
+            forecast_status = "MODEL_NOT_DEPLOYED"
+            forecast_note = (
+                f"{model_key} is a research benchmark without a deployed live artifact. "
+                "Use /api/forecasting/train-benchmark for its walk-forward results."
+            )
 
-        if target is None:
-            if direction == "BULLISH" or decision == "BUY":
-                target = round(current_spot + expected_move, 1)
-            elif direction == "BEARISH" or decision == "SELL":
-                target = round(current_spot - expected_move, 1)
-            else:
-                target = round(current_spot + expected_move * 0.2, 1)
-
-        if stop is None:
-            if direction == "BULLISH" or decision == "BUY":
-                stop = round(current_spot - expected_move * 0.7, 1)
-            elif direction == "BEARISH" or decision == "SELL":
-                stop = round(current_spot + expected_move * 0.7, 1)
-            else:
-                stop = round(current_spot - expected_move * 0.7, 1)
-
-        target_delta = target - current_spot
         projected_path = []
-        bar_steps = [
-            ("+15m", 0.35, 0.50),
-            ("+30m", 0.65, 0.75),
-            ("+45m", 0.85, 0.90),
-            ("+60m", 1.00, 1.00),
-        ]
-        for step_label, weight_target, weight_cone in bar_steps:
-            pt_target = round(current_spot + (target_delta * weight_target), 2)
-            cone_w = expected_move * weight_cone
-            pt_upper = round(current_spot + cone_w, 2)
-            pt_lower = round(current_spot - cone_w, 2)
-            projected_path.append({
-                "time": step_label,
-                "projected_price": pt_target,
-                "upper_bound": pt_upper,
-                "lower_bound": pt_lower,
-                "is_projection": True,
-            })
+        if target is not None and expected_move is not None:
+            target_delta = target - current_spot
+            bar_steps = [
+                ("+15m", 0.35, 0.50),
+                ("+30m", 0.65, 0.75),
+                ("+45m", 0.85, 0.90),
+                ("+60m", 1.00, 1.00),
+            ]
+            for step_label, weight_target, weight_cone in bar_steps:
+                cone_w = expected_move * weight_cone
+                projected_path.append({
+                    "time": step_label,
+                    "projected_price": round(current_spot + (target_delta * weight_target), 2),
+                    "upper_bound": round(current_spot + cone_w, 2),
+                    "lower_bound": round(current_spot - cone_w, 2),
+                    "is_projection": True,
+                })
 
         return {
             "ok": True,
@@ -910,6 +887,9 @@ def get_live_trend_chart(
             "strategy_mode": strategy_mode,
             "current_spot": current_spot,
             "is_live": is_live,
+            "spot_source": spot_source,
+            "forecast_status": forecast_status,
+            "forecast_note": forecast_note,
             "decision": decision,
             "predicted_direction": direction,
             "calibrated_probability": calibrated_p,
@@ -1057,13 +1037,13 @@ def train_and_benchmark_model(
             "num_folds": report.num_folds,
             "dev_fold_count": report.dev_fold_count,
             "holdout_fold_count": report.holdout_fold_count,
-            "holdout_accuracy": round(matching.holdout_accuracy, 4) if matching else 0.5,
-            "holdout_brier_skill_score": round(matching.holdout_brier_skill_score, 4) if matching else 0.0,
-            "holdout_net_return_2bps": round(matching.holdout_net_return_2bps, 2) if matching else 0.0,
-            "holdout_max_drawdown": round(matching.holdout_max_drawdown_2bps, 2) if matching else 0.0,
-            "holdout_win_rate": round(matching.holdout_win_rate, 4) if matching else 0.5,
-            "full_net_return_2bps": round(matching.full_net_return_2bps, 2) if matching else 0.0,
-            "full_max_drawdown": round(matching.full_max_drawdown_2bps, 2) if matching else 0.0,
+            "holdout_accuracy": round(matching.holdout_accuracy, 4) if matching else None,
+            "holdout_brier_skill_score": round(matching.holdout_brier_skill_score, 4) if matching else None,
+            "holdout_net_return_2bps": round(matching.holdout_net_return_2bps, 2) if matching else None,
+            "holdout_max_drawdown": round(matching.holdout_max_drawdown_2bps, 2) if matching else None,
+            "holdout_win_rate": round(matching.holdout_win_rate, 4) if matching else None,
+            "full_net_return_2bps": round(matching.full_net_return_2bps, 2) if matching else None,
+            "full_max_drawdown": round(matching.full_max_drawdown_2bps, 2) if matching else None,
             "all_strategies": all_summaries,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }

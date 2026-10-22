@@ -182,7 +182,7 @@ def get_instrument_forecast(instrument: str) -> dict[str, Any]:
         (r for r in read.get("sectoral_indices", []) + read.get("global_indices", []) if r.get("instrument") in {"VIX", "INDIA_VIX"}),
         None,
     )
-    vix_val = float(vix_row.get("last_price", 14.0)) if vix_row and vix_row.get("last_price") is not None else 14.0
+    vix_val = float(vix_row["last_price"]) if vix_row and vix_row.get("last_price") is not None else None
 
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -191,29 +191,44 @@ def get_instrument_forecast(instrument: str) -> dict[str, Any]:
         from app.forecasting.live_forecast import compute_live_forecast_for_instrument
 
         nifty_quote = quotes.get("NIFTY")
-        raw_fc = compute_live_forecast_for_instrument("NIFTY", nifty_quote, iv=max(0.11, min(0.35, vix_val / 100.0)))
-        spot = raw_fc.get("spot_price") or (float(nifty_quote["last_price"]) if nifty_quote and nifty_quote.get("last_price") else 24850.0)
+        iv = max(0.11, min(0.35, vix_val / 100.0)) if vix_val is not None else None
+        raw_fc = compute_live_forecast_for_instrument("NIFTY", nifty_quote, iv=iv)
+        spot = raw_fc.get("spot_price")
+        if spot is None and nifty_quote and nifty_quote.get("last_price") is not None:
+            spot = float(nifty_quote["last_price"])
         p_up = raw_fc.get("probability_up")
 
         if p_up is not None and raw_fc.get("status") == "ACTIVE":
             direction = raw_fc.get("direction", "UNKNOWN")
             calibrated_p = round(p_up, 4)
-            raw_conf = raw_fc.get("confidence", 0.5)
+            raw_conf = raw_fc.get("confidence")
             decision = "BUY" if direction == "BULLISH" and calibrated_p > 0.55 else ("SELL" if direction == "BEARISH" and calibrated_p < 0.45 else "NO TRADE")
-            expected_move = raw_fc.get("expected_move_points") or round(spot * 0.0035, 1)
-            target = raw_fc.get("target_spot") or (round(spot + expected_move, 1) if decision == "BUY" else round(spot - expected_move, 1))
-            stop = raw_fc.get("stop_loss_spot") or (round(spot - expected_move * 0.7, 1) if decision == "BUY" else round(spot + expected_move * 0.7, 1))
-            no_trade_reasons = [] if decision != "NO TRADE" else ["Directional probability within neutral deadband [0.45, 0.55]"]
+            if decision == "NO TRADE":
+                expected_move = target = stop = None
+                no_trade_reasons = ["Directional probability within neutral deadband [0.45, 0.55]"]
+            else:
+                expected_move = raw_fc.get("expected_move_points")
+                target = raw_fc.get("target_spot")
+                stop = raw_fc.get("stop_loss_spot")
+                no_trade_reasons = []
         else:
-            # Fallback to approved empirical baseline over verified M23 dataset
-            direction = "BULLISH"
-            calibrated_p = 0.5340
-            raw_conf = 0.58
-            decision = "NO TRADE"  # Deadband gating
-            expected_move = round(spot * 0.0032, 1)
-            target = round(spot + expected_move, 1)
-            stop = round(spot - expected_move * 0.7, 1)
-            no_trade_reasons = ["Probability 53.4% falls inside safety deadband [48%, 55%]. Preserving capital cushion."]
+            direction = "UNKNOWN"
+            calibrated_p = None
+            raw_conf = None
+            decision = "NO TRADE"
+            expected_move = target = stop = None
+            no_trade_reasons = [
+                f"{raw_fc.get('status') or 'NO_FORECAST'}: {raw_fc.get('summary') or 'No live forecast available.'}"
+            ]
+
+        supporting_evidence = []
+        if raw_fc.get("status") == "ACTIVE":
+            supporting_evidence.append(
+                f"Model {raw_fc.get('model_version')} inferred on features ending {raw_fc.get('feature_bar_end')} "
+                f"({raw_fc.get('feature_source')})."
+            )
+        if vix_val is not None:
+            supporting_evidence.append(f"Volatility index reading: {vix_val:.1f}.")
 
         return {
             "instrument": "NIFTY",
@@ -222,45 +237,40 @@ def get_instrument_forecast(instrument: str) -> dict[str, Any]:
             "predicted_direction": direction,
             "calibrated_probability": calibrated_p,
             "raw_confidence": raw_conf,
-            "forecast_horizon": "15m (HTF Resampled)",
+            "forecast_horizon": "Next 15m close",
             "expected_return_points": expected_move,
             "spot_price": spot,
             "target_spot": target,
             "stop_loss_spot": stop,
-            "supporting_evidence": [
-                f"Fitted model evaluated on verified 6,227-bar dataset (M23/M40).",
-                f"India VIX at {vix_val:.1f}% indicates normal volatility regime.",
-                f"Alpha-to-friction cushion verified at 22.1x over 2.0 bps statutory charges.",
-            ],
+            "supporting_evidence": supporting_evidence,
             "contradicting_evidence": [
-                "Full-cycle historical walk-forward maximum drawdown was 9.62%.",
-                "Higher time-frame (HTF) trend regime shift can trigger deadband veto.",
+                "Live model is the 15m logistic regression; it is not the half-day regime-gated strategy evaluated in walk-forward research.",
+                "Model probabilities are not calibrated.",
             ],
-            "data_timestamp": now_iso,
-            "provenance": "VERIFIED_GROWW_STORAGE (SHA-256: bc7d31bceebf13a3)",
-            "invalidation_conditions": [
-                f"Breach of stop-loss level at ₹{stop:.1f}",
-                "India VIX surge above 18.0% (Regime 3 Shift)",
-                "Consensus epistemic dispersion D > 0.45",
-            ],
+            "data_timestamp": raw_fc.get("generated_at") or now_iso,
+            "provenance": raw_fc.get("feature_source") or "UNAVAILABLE",
+            "forecast_status": raw_fc.get("status"),
+            "invalidation_conditions": (
+                [f"Breach of stop-loss level at ₹{stop:.1f}"] if stop is not None else []
+            ) + ["Consensus epistemic dispersion D > 0.45"],
             "transaction_cost_assumptions": {
                 "turnover_friction_bps": 2.0,
-                "stt_rate": "0.0125% on sell turnover",
-                "exchange_turnover_fee": "0.00297% (NSE)",
+                "stt_rate": "0.1% on option sell premium",
+                "exchange_turnover_fee": "0.03503% on option premium (NSE)",
                 "gst_rate": "18.0% on brokerage + exchange charges",
                 "sebi_turnover_fee": "₹10 per crore",
                 "stamp_duty": "0.003% on buy value",
                 "flat_brokerage": "₹20 per executed order",
             },
             "reasons_for_no_trade": no_trade_reasons,
-            "model_status": "APPROVED_RESEARCH_ARTIFACT",
+            "model_status": "RESEARCH_ONLY_UNVALIDATED",
             "safety_controls_locked": True,
         }
 
     # --- 2. BSE SENSEX Forecast Pipeline ---
     if inst == "SENSEX":
         sensex_quote = quotes.get("SENSEX")
-        spot = float(sensex_quote["last_price"]) if sensex_quote and sensex_quote.get("last_price") else 81380.0
+        spot = float(sensex_quote["last_price"]) if sensex_quote and sensex_quote.get("last_price") is not None else None
 
         return {
             "instrument": "SENSEX",
@@ -268,14 +278,14 @@ def get_instrument_forecast(instrument: str) -> dict[str, Any]:
             "decision": "NO TRADE",
             "predicted_direction": "UNKNOWN",
             "calibrated_probability": None,
-            "raw_confidence": 0.0,
+            "raw_confidence": None,
             "forecast_horizon": "15m (Experimental)",
             "expected_return_points": None,
             "spot_price": spot,
             "target_spot": None,
             "stop_loss_spot": None,
             "supporting_evidence": [
-                f"Live BSE SENSEX quote actively tracked at ₹{spot:,.1f}.",
+                f"Live BSE SENSEX quote tracked at ₹{spot:,.1f}." if spot is not None else "Live BSE SENSEX quote unavailable.",
                 "BSE derivative chain options analytics supported (Lot 20).",
                 "Domestic corporate earnings and macro indicators shared.",
             ],
@@ -308,7 +318,7 @@ def get_instrument_forecast(instrument: str) -> dict[str, Any]:
 
     # --- 3. MCX CRUDEOIL MINI Forecast Pipeline ---
     crude_quote = commodities.get("CRUDEOILMINI") or commodities.get("CRUDEMINI")
-    spot = float(crude_quote["last_price"]) if crude_quote and crude_quote.get("last_price") else 6150.0
+    spot = float(crude_quote["last_price"]) if crude_quote and crude_quote.get("last_price") is not None else None
 
     return {
         "instrument": "CRUDEOILMINI",
@@ -316,7 +326,7 @@ def get_instrument_forecast(instrument: str) -> dict[str, Any]:
         "decision": "NO TRADE",
         "predicted_direction": "UNKNOWN",
         "calibrated_probability": None,
-        "raw_confidence": 0.0,
+        "raw_confidence": None,
         "forecast_horizon": "15m Commodity Swing",
         "expected_return_points": None,
         "spot_price": spot,
@@ -359,6 +369,108 @@ def get_instrument_forecast(instrument: str) -> dict[str, Any]:
     }
 
 
+def _round_or_none(value: Any, digits: int = 2) -> float | None:
+    if value is None:
+        return None
+    try:
+        return round(float(value), digits)
+    except (TypeError, ValueError):
+        return None
+
+
+def _nifty_backtest_from_artifact(m40_path: Path) -> dict[str, Any]:
+    """Serve only numbers computed by the M40 walk-forward run; never literal placeholders."""
+    unevaluated = {
+        "instrument": "NIFTY",
+        "name": "NIFTY 50",
+        "evaluation_status": "UNEVALUATED",
+        "reason": (
+            f"No computed walk-forward artifact found at {m40_path.name}. "
+            "Run the M40 benchmark to produce one; no performance figures are shown without it."
+        ),
+    }
+    if not m40_path.is_file():
+        return unevaluated
+    try:
+        data = json.loads(m40_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {**unevaluated, "reason": f"Walk-forward artifact {m40_path.name} could not be parsed."}
+
+    strategies = (data.get("nifty_summary") or {}).get("strategies") or {}
+    regime = strategies.get("empirical_prior_regime_gated")
+    if not regime:
+        return {**unevaluated, "reason": "Walk-forward artifact has no empirical_prior_regime_gated NIFTY strategy."}
+
+    dev_net = _round_or_none(regime.get("dev_net_return_2bps"))
+    holdout_folds = data.get("holdout_fold_count")
+    caveats = [
+        "Research result only. The live forecast runs a different model (15m logistic regression).",
+        "The 'empirical prior' is a constant probability; returns come from the ADX/DI regime filter, not a learned model.",
+        f"Holdout covers only {holdout_folds} folds; accuracy near 50% on this sample is not distinguishable from chance."
+        if holdout_folds is not None
+        else "Holdout size is not recorded in the artifact.",
+        "Strategy was chosen by comparing many model/mode combinations, which inflates the reported holdout result.",
+        "Costs are 2 bps on index returns; option premiums, spreads and theta are not modelled.",
+    ]
+    if dev_net is not None and dev_net < 0:
+        caveats.insert(0, f"Development-fold net return is negative ({dev_net}%); only the holdout is positive.")
+
+    return {
+        "instrument": "NIFTY",
+        "name": "NIFTY 50",
+        "evaluation_status": "RESEARCH_WALK_FORWARD",
+        "evaluation_methodology": "Purged & embargoed expanding-window walk-forward (M40 artifact)",
+        "folds_summary": {
+            "total_folds": data.get("num_folds"),
+            "dev_folds": data.get("dev_fold_count"),
+            "holdout_folds": holdout_folds,
+            "total_15m_candles": data.get("total_15m_candles"),
+            "htf_swing_bars": data.get("total_aligned_rows"),
+        },
+        "dataset_provenance": {
+            "dataset_id": data.get("nifty_dataset_id"),
+            "artifact": m40_path.name,
+            "artifact_created_at": data.get("created_at"),
+        },
+        "performance_after_costs": {
+            "statutory_friction_bps": 2.0,
+            "full_period_net_return": _round_or_none(regime.get("full_net_return_2bps")),
+            "full_period_gross_return": _round_or_none(regime.get("full_gross_return_0bps")),
+            "holdout_net_return": _round_or_none(regime.get("holdout_net_return_2bps")),
+            "dev_net_return": dev_net,
+            "mean_fold_max_drawdown": _round_or_none(regime.get("full_max_drawdown_2bps")),
+            "drawdown_reconciliation_note": (
+                "Drawdown is the mean of per-fold maximum drawdowns, not the drawdown of one chained equity curve. "
+                "Fold returns are summed, not compounded."
+            ),
+        },
+        "statistical_metrics": {
+            "holdout_accuracy": _round_or_none(regime.get("holdout_accuracy"), 4),
+            "holdout_brier_skill_score": _round_or_none(regime.get("holdout_brier_skill_score"), 4),
+            "dev_accuracy": _round_or_none(regime.get("dev_accuracy"), 4),
+            "holdout_turnover_units": _round_or_none(regime.get("holdout_turnover_units"), 1),
+            "full_turnover_units": _round_or_none(regime.get("full_turnover_units"), 1),
+        },
+        "baseline_comparisons": [
+            {
+                "model": row.get("model_name"),
+                "mode": row.get("strategy_mode"),
+                "dev_net_return_2bps": _round_or_none(row.get("dev_net_return_2bps")),
+                "full_net_return_2bps": _round_or_none(row.get("full_net_return_2bps")),
+                "holdout_net_return_2bps": _round_or_none(row.get("holdout_net_return_2bps")),
+                "mean_fold_max_drawdown": _round_or_none(row.get("full_max_drawdown_2bps")),
+            }
+            for row in strategies.values()
+        ],
+        "caveats": caveats,
+        "execution_assumptions": [
+            "Entry and exit at the open of the bar after each half-day signal bar",
+            "Half-day open-to-open target: positions opened on the afternoon bar are held overnight",
+            "2.0 bps per side on index returns; no option premium, spread or theta modelling",
+        ],
+    }
+
+
 def get_instrument_backtest(instrument: str) -> dict[str, Any]:
     """Return independent instrument-level backtest reports.
 
@@ -372,85 +484,7 @@ def get_instrument_backtest(instrument: str) -> dict[str, Any]:
         inst = "NIFTY"
 
     if inst == "NIFTY":
-        # Load verified benchmark results from disk if present, else structured report
-        m40_path = REPO_ROOT / "var" / "datasets" / "m40_multi_asset_benchmark.json"
-        data = json.loads(m40_path.read_text(encoding="utf-8")) if m40_path.is_file() else {}
-        nifty_sum = data.get("nifty_summary") or {}
-        strategies = nifty_sum.get("strategies") or {}
-        regime_strat = strategies.get("empirical_prior_regime_gated") or {}
-
-        return {
-            "instrument": "NIFTY",
-            "name": "NIFTY 50",
-            "evaluation_status": "VERIFIED_WALK_FORWARD",
-            "evaluation_methodology": "19-Fold Purged & Embargoed Chronological Walk-Forward",
-            "folds_summary": {
-                "total_folds": 19,
-                "dev_folds": 14,
-                "holdout_folds": 5,
-                "total_15m_candles": 6227,
-                "htf_swing_bars": 488,
-            },
-            "dataset_provenance": {
-                "dataset_id": "derived_nifty_15m_m23_bc7d31bceebf13a3.json",
-                "sha256": "bc7d31bceebf13a34a1c94daabd788d2b83ee1397f89060183ed7e68d2b55692",
-                "date_range": "2026-04-16 to 2026-10-14",
-                "quarantine_clean": True,
-            },
-            "performance_after_costs": {
-                "statutory_friction_bps": 2.0,
-                "full_period_net_return": round(float(regime_strat.get("full_net_return_2bps", 2.16)), 2),
-                "full_period_gross_return": round(float(regime_strat.get("full_gross_return_0bps", 2.54)), 2),
-                "holdout_net_return": round(float(regime_strat.get("holdout_net_return_2bps", 3.93)), 2),
-                "dev_net_return": round(float(regime_strat.get("dev_net_return_2bps", -1.77)), 2),
-                "full_period_max_drawdown": 9.62,
-                "local_holdout_window_drawdown": 0.04,
-                "drawdown_reconciliation_note": (
-                    "The 0.04% drawdown is strictly a local holdout artifact (75 bars). "
-                    "Across all 19 folds, maximum cumulative drawdown was 9.62%."
-                ),
-            },
-            "statistical_metrics": {
-                "holdout_accuracy": 0.52,
-                "holdout_brier_skill_score": 0.0101,
-                "alpha_to_friction_ratio": 22.15,
-                "mean_bar_displacement_pct": 0.443,
-                "turnover_units": 9.5,
-                "trade_count": 488,
-            },
-            "baseline_comparisons": [
-                {
-                    "model": "Empirical Prior (Regime-Gated)",
-                    "mode": "HTF Regime Gating",
-                    "full_net_return_2bps": 2.16,
-                    "holdout_net_return_2bps": 3.93,
-                    "max_drawdown": 9.62,
-                    "status": "OPTIMAL_CANDIDATE",
-                },
-                {
-                    "model": "Empirical Prior (Deadband)",
-                    "mode": "Deadband Only",
-                    "full_net_return_2bps": -1.83,
-                    "holdout_net_return_2bps": 0.0,
-                    "max_drawdown": 0.76,
-                    "status": "PASSIVE_BASELINE",
-                },
-                {
-                    "model": "Empirical Prior (Raw)",
-                    "mode": "Ungated",
-                    "full_net_return_2bps": -2.31,
-                    "holdout_net_return_2bps": 1.82,
-                    "max_drawdown": 2.22,
-                    "status": "BENCHMARK_BASELINE",
-                },
-            ],
-            "execution_assumptions": [
-                "Orders placed at open of next 15m candle following HTF bar close",
-                "2.0 bps total transaction slippage and statutory charge deduction",
-                "Zero overnight gap risk in intraday mode",
-                "Full lot sizing: 25 units per contract",
-            ],
-        }
+        return _nifty_backtest_from_artifact(REPO_ROOT / "var" / "datasets" / "m40_multi_asset_benchmark.json")
 
     if inst == "SENSEX":
         return {
@@ -516,19 +550,23 @@ def get_instrument_data_health(session: Session | None = None) -> dict[str, Any]
 
         if inst_id == "NIFTY":
             q = quotes.get("NIFTY")
-            last_px = float(q["last_price"]) if q and q.get("last_price") else 24850.0
-            stored_cnt = stored_counts.get("NSE-NIFTY", 6227)
-            status = "HEALTHY_VERIFIED"
-            gap_note = "No data gap. Full 6,227-candle persistent dataset verified with SHA-256 integrity."
+            last_px = float(q["last_price"]) if q and q.get("last_price") is not None else None
+            stored_cnt = stored_counts.get("NSE-NIFTY", 0)
+            status = "HEALTHY_VERIFIED" if stored_cnt > 0 and last_px is not None else "DATA_GAP"
+            gap_note = (
+                f"{stored_cnt:,} persisted NIFTY candles in storage."
+                if stored_cnt > 0
+                else "No persisted NIFTY candles found in storage."
+            )
         elif inst_id == "SENSEX":
             q = quotes.get("SENSEX")
-            last_px = float(q["last_price"]) if q and q.get("last_price") else 81380.0
+            last_px = float(q["last_price"]) if q and q.get("last_price") is not None else None
             stored_cnt = stored_counts.get("BSE-SENSEX", 0)
             status = "PARTIAL_LTP_ONLY"
             gap_note = "Historical candle dataset pending ingestion. Live LTP snapshot verified via BSE feed."
         else:  # CRUDEOILMINI
             q = commodities.get("CRUDEOILMINI") or commodities.get("CRUDEMINI")
-            last_px = float(q["last_price"]) if q and q.get("last_price") else 6150.0
+            last_px = float(q["last_price"]) if q and q.get("last_price") is not None else None
             stored_cnt = stored_counts.get("MCX-CRUDEOILMINI", 0)
             status = "DATA_FEED_GAP"
             gap_note = "Groww Trade API integration does not provide MCX commodity candle feeds or options data."

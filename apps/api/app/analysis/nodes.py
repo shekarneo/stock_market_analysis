@@ -381,13 +381,15 @@ def report_node(state: AnalysisState) -> dict:
                 # Record immutable forecast prediction for subsequent calibration
                 try:
                     from app.analysis.outcome_tracker import record_forecast_prediction
+                    if nifty_f.get("spot_price") is None or nifty_f.get("direction") not in {"BULLISH", "BEARISH"}:
+                        raise ValueError("Forecast lacks a live spot price or direction; not recorded.")
                     record_forecast_prediction(
                         analysis_id=state.get("run_id") or "live_run",
                         instrument="NIFTY",
                         model_version=model_ver,
                         probability_up=p_up,
-                        direction=nifty_f.get("direction", "BEARISH"),
-                        spot_price=float(nifty_f.get("spot_price") or 23146.15),
+                        direction=nifty_f["direction"],
+                        spot_price=float(nifty_f["spot_price"]),
                         horizon="next_m15_close",
                         decision=decision,
                         data_provenance=(state.get("quality") or {}).get("data_class") or "UNVERIFIED_PROVIDER",

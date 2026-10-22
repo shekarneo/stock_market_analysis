@@ -153,6 +153,9 @@ def generate_deterministic_banknifty_15m_candles(
 ) -> list[list[Any]]:
     """Synthesize synchronized BANK NIFTY 15m continuous candles bar-by-bar from NIFTY.
 
+    WARNING: the output is SYNTHETIC test data, not market data. Any benchmark built on it
+    measures the generator, not BANK NIFTY.
+
     Ensures:
     1. Exact calendar timestamp alignment with NIFTY 50 (identical session structure).
     2. Realistic banking index beta (1.28) and higher annualized volatility.
@@ -234,6 +237,12 @@ def build_and_save_banknifty_dataset(
         "dataset_name": "derived_banknifty_15m_m40_1y",
         "symbol": "NSE-BANKNIFTY",
         "interval": "15minute",
+        "data_origin": "SYNTHETIC",
+        "synthetic": True,
+        "limitations": [
+            "Generated from NIFTY log returns * beta plus Gaussian noise; not real BANK NIFTY market data.",
+            "Must not be used for live forecasts, accuracy claims or cross-asset generalization evidence.",
+        ],
         "candle_count": len(bank_candles),
         "date_range": [bank_candles[0][0], bank_candles[-1][0]],
         "created_at": datetime.now(timezone.utc).isoformat(),

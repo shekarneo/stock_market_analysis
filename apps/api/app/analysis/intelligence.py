@@ -365,11 +365,14 @@ def _generate_option_picks(
     instrument: str,
     spot: float,
     opt_type: str,
-    target_pts: float,
-    sl_pts: float,
-    iv: float = 0.14,
-    t_years: float = 3.0 / 365.0,
+    target_pts: float | None,
+    sl_pts: float | None,
 ) -> list[dict]:
+    """List strikes around ATM; premiums come only from a fresh, matching live chain quote.
+
+    Without a live quote the premium, delta and per-lot figures are None. Model-estimated
+    premiums are never produced (Truth in Data).
+    """
     step, lot_size = _instrument_params(instrument)
     atm = int(round(spot / step) * step)
     offsets = [-2, -1, 0, 1, 2] if opt_type == "CE" else [2, 1, 0, -1, -2]
@@ -381,20 +384,10 @@ def _generate_option_picks(
         "Momentum OTM (Breakout Speculative)",
     ]
     picks = []
-    base_time_val = 0.40 * spot * iv * math.sqrt(t_years)
-    scale = max(0.001, spot * iv * math.sqrt(t_years))
-
-    min_entry = max(0.2, min(15.0, round(spot * 0.002, 1)))
-    min_sl = max(0.1, min(5.0, round(min_entry * 0.3, 1)))
-
     for idx, offset in enumerate(offsets):
         strike = int(atm + (offset * step))
         dist = (spot - strike) if opt_type == "CE" else (strike - spot)
-        intrinsic = max(0.0, dist)
-        raw_delta = 0.50 + (dist / (scale * 2.5))
-        delta = max(0.20, min(0.80, raw_delta))
 
-        # Check for verified live market option quote from Groww Option Chain
         live_quote = None
         try:
             from app.market.groww_options import get_live_option_quote
@@ -402,33 +395,34 @@ def _generate_option_picks(
         except Exception:
             live_quote = None
 
+        entry = target = sl = delta = None
+        trading_symbol = open_interest = volume = expiry_date = None
+        is_live_quote = False
+        quote_source = "UNAVAILABLE"
         if live_quote and live_quote.get("ltp") is not None and float(live_quote["ltp"]) > 0:
             entry = round(float(live_quote["ltp"]), 1)
             if live_quote.get("delta") is not None and float(live_quote["delta"]) > 0:
                 delta = max(0.05, min(0.99, round(float(live_quote["delta"]), 2)))
-            target = round(entry + (delta * target_pts), 1)
-            sl = round(max(0.05, entry - (delta * sl_pts)), 1)
+            if delta is not None and target_pts is not None and sl_pts is not None:
+                target = round(entry + (delta * target_pts), 1)
+                sl = round(max(0.05, entry - (delta * sl_pts)), 1)
             trading_symbol = live_quote.get("trading_symbol")
             open_interest = live_quote.get("open_interest")
             volume = live_quote.get("volume")
             expiry_date = live_quote.get("expiry_date")
             is_live_quote = True
             quote_source = "GROWW_OPTION_CHAIN"
-        else:
-            extrinsic = base_time_val * math.exp(-0.5 * ((dist / scale) ** 2))
-            entry = round(max(min_entry, intrinsic + extrinsic), 1)
-            target = round(entry + (delta * target_pts), 1)
-            sl = round(max(min_sl, entry - (delta * sl_pts)), 1)
-            trading_symbol = None
-            open_interest = None
-            volume = None
-            expiry_date = None
-            is_live_quote = False
-            quote_source = "MODEL_ESTIMATE"
 
-        risk = max(0.1, entry - sl)
-        reward = max(0.1, target - entry)
-        rr = round(reward / risk, 1)
+        if entry is not None and target is not None and sl is not None:
+            risk = max(0.1, entry - sl)
+            reward = max(0.1, target - entry)
+            risk_reward = f"1 : {round(reward / risk, 1)}"
+            max_loss_per_lot = round(risk * lot_size, 0)
+            profit_per_lot = round(reward * lot_size, 0)
+        else:
+            risk_reward = None
+            max_loss_per_lot = None
+            profit_per_lot = None
         moneyness = "ATM" if offset == 0 else ("ITM" if dist > 0 else "OTM")
         picks.append({
             "rank": idx + 1,
@@ -439,17 +433,21 @@ def _generate_option_picks(
             "expiry_date": expiry_date,
             "role": roles[idx],
             "moneyness": moneyness,
-            "delta": round(delta, 2),
+            "delta": delta,
             "entry_premium": entry,
             "target_premium": target,
             "stop_loss_premium": sl,
-            "risk_reward": f"1 : {rr}",
+            "risk_reward": risk_reward,
             "lot_size": lot_size,
-            "capital_per_lot": round(entry * lot_size, 0),
-            "max_loss_per_lot": round(risk * lot_size, 0),
-            "profit_per_lot": round(reward * lot_size, 0),
-            "target_underlying": round(spot + target_pts if opt_type == "CE" else spot - target_pts, 1),
-            "sl_underlying": round(spot - sl_pts if opt_type == "CE" else spot + sl_pts, 1),
+            "capital_per_lot": round(entry * lot_size, 0) if entry is not None else None,
+            "max_loss_per_lot": max_loss_per_lot,
+            "profit_per_lot": profit_per_lot,
+            "target_underlying": (
+                round(spot + target_pts if opt_type == "CE" else spot - target_pts, 1) if target_pts is not None else None
+            ),
+            "sl_underlying": (
+                round(spot - sl_pts if opt_type == "CE" else spot + sl_pts, 1) if sl_pts is not None else None
+            ),
             "open_interest": open_interest,
             "volume": volume,
             "is_live_quote": is_live_quote,
@@ -610,9 +608,12 @@ def _evaluate_market_consensus(rows: list[dict], instrument: str, news: list[dic
 
     # 4. Volatility & Range Agent
     vix_row = next((r for r in rows if r.get("instrument") in {"VIX", "INDIA_VIX", "INDIAVIX"}), None)
-    vix_val = float(vix_row.get("last_price", 14.0)) if vix_row and vix_row.get("last_price") is not None else 14.0
-    iv = max(0.11, min(0.35, vix_val / 100.0))
-    if vix_val > 18.0:
+    vix_val = float(vix_row["last_price"]) if vix_row and vix_row.get("last_price") is not None else None
+    iv = max(0.11, min(0.35, vix_val / 100.0)) if vix_val is not None else None
+    if vix_val is None:
+        vix_stance = "MISSING_DATA"
+        vix_summary = "India VIX unavailable; move, target and stop sizing cannot be computed."
+    elif vix_val > 18.0:
         vix_stance = "ELEVATED_VOLATILITY"
         vix_summary = f"India VIX at {vix_val:.1f} (wide intraday swings, strict stop losses required)."
     elif vix_val < 13.5:
@@ -739,15 +740,18 @@ def _market(rows: list[dict], instrument: str, news: list[dict] | None = None) -
     step, _ = _instrument_params(instrument)
     atm = int(round(spot / step) * step)
     iv = consensus["iv"]
-    daily_move = spot * (iv / math.sqrt(252))
-    target_pts = max(float(step) * 0.8, daily_move * 0.60)
-    sl_pts = max(float(step) * 0.4, daily_move * 0.30)
+    if iv is not None:
+        daily_move = spot * (iv / math.sqrt(252))
+        target_pts = max(float(step) * 0.8, daily_move * 0.60)
+        sl_pts = max(float(step) * 0.4, daily_move * 0.30)
+    else:
+        target_pts = sl_pts = None
 
     # Generate options: research catalog for commodities or when not explicitly directional
-    primary_picks = _generate_option_picks(instrument, spot, "CE" if consensus["option_type"] not in {"CE", "PE"} else consensus["option_type"], target_pts, sl_pts, iv=iv)
-    alt_picks = _generate_option_picks(instrument, spot, "PE" if consensus["option_type"] not in {"CE", "PE"} else consensus["alt_option_type"], target_pts, sl_pts, iv=iv)
+    primary_picks = _generate_option_picks(instrument, spot, "CE" if consensus["option_type"] not in {"CE", "PE"} else consensus["option_type"], target_pts, sl_pts)
+    alt_picks = _generate_option_picks(instrument, spot, "PE" if consensus["option_type"] not in {"CE", "PE"} else consensus["alt_option_type"], target_pts, sl_pts)
 
-    is_neutral = consensus["bias"] == "NEUTRAL" or "STAND ASIDE" in consensus["call"]
+    is_neutral = consensus["bias"] == "NEUTRAL" or "STAND ASIDE" in consensus["call"] or target_pts is None
     is_bull = "BUY" in consensus["call"] or consensus["bias"] in {"BULLISH", "MILD BULLISH"}
 
     target_spot = None if is_neutral else round(spot + target_pts if is_bull else spot - target_pts, 1)
@@ -777,9 +781,11 @@ def _market(rows: list[dict], instrument: str, news: list[dict] | None = None) -
             f"Commodity Futures recommendation: {consensus['call']} for {instrument} at reference spot ₹{spot:.2f}. Option chain is catalog reference only."
             if is_commodity else
             (
+                "Market consensus is neutral, or volatility is unavailable. Stand aside."
+                if is_neutral else
                 f"Top pick: {primary_picks[2]['contract']} (ATM) entry around ₹{primary_picks[2]['entry_premium']} with Target ₹{primary_picks[2]['target_premium']} and SL ₹{primary_picks[2]['stop_loss_premium']} (R:R {primary_picks[2]['risk_reward']})."
-                if not is_neutral else
-                "Market consensus is neutral with no statistical edge. Stand aside."
+                if primary_picks[2]["target_premium"] is not None else
+                f"No fresh live option-chain quote for {primary_picks[2]['contract']}; premiums, targets and stops are unavailable."
             )
         ),
     }
@@ -803,7 +809,10 @@ def _market(rows: list[dict], instrument: str, news: list[dict] | None = None) -
         },
         "options_evaluation": {
             "verdict": "ACTIVE" if not is_neutral else "STAND_ASIDE",
-            "reason": f"Active strikes and Black-Scholes Greeks computed from spot ₹{spot:,.2f}." if not is_neutral else "Market is neutral; options execution gated.",
+            "reason": (
+                f"Strikes listed around ATM from spot ₹{spot:,.2f}; premiums shown only where a fresh live chain quote exists."
+                if not is_neutral else "Market is neutral or volatility is unavailable; options execution gated."
+            ),
         },
         "risk_veto": {
             "vetoed": False,

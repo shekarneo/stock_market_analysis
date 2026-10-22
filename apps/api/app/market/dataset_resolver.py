@@ -10,8 +10,9 @@ def resolve_dataset_file(inst: str) -> Path | None:
         p = REPO_ROOT / "var/datasets/derived_nifty_15m_m23_bc7d31bceebf13a3.json"
         return p if p.exists() else None
     elif sym in {"BANKNIFTY", "NSE-BANKNIFTY", "BANK NIFTY", "BANK"}:
-        p = REPO_ROOT / "var/datasets/derived_banknifty_15m_m40.json"
-        return p if p.exists() else None
+        # derived_banknifty_15m_m40.json is SYNTHETIC (generated from NIFTY returns plus random noise
+        # by m40_multi_asset_research). It is quarantined and never served as market data.
+        return None
     elif sym in {"SENSEX", "BSE-SENSEX"}:
         p = REPO_ROOT / "var/datasets/derived_sensex_15m.json"
         return p if p.exists() else None

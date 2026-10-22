@@ -427,7 +427,7 @@ export default function V6Desk({ defaultTab = "trades", hideTickers = false } = 
                     }}
                     onClick={() => { setFeedCategoryFilter("COMMODITIES"); setFeedIndexFilter("ALL"); }}
                   >
-                    ⚡ MCX Commodities ({commoditiesList.length || 4})
+                    ⚡ MCX Commodities ({commoditiesList.length})
                   </button>
                   <button
                     type="button"
@@ -443,7 +443,7 @@ export default function V6Desk({ defaultTab = "trades", hideTickers = false } = 
                     }}
                     onClick={() => { setFeedCategoryFilter("GLOBAL"); setFeedIndexFilter("ALL"); }}
                   >
-                    🌐 Global Benchmarks ({globalIndicesList.length || 5})
+                    🌐 Global Benchmarks ({globalIndicesList.length})
                   </button>
                 </div>
 
@@ -750,7 +750,7 @@ export default function V6Desk({ defaultTab = "trades", hideTickers = false } = 
               Deterministic Consensus
             </span>
             <span style={{ fontSize: "0.72rem", color: "var(--muted)" }}>
-              News Wire ({news.body?.items?.length || 39}) · Macro (8) · Tech
+              News Wire ({news.body?.items?.length ?? 0}) · Macro · Tech
             </span>
           </div>
 

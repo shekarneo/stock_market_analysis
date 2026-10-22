@@ -96,17 +96,28 @@ def create_suggestion(
     if entry_spot <= 0 or target_points <= 0 or stop_loss_points <= 0:
         raise ValueError("Spot and point distances must be positive.")
     up = opt == "CE"
+    model_premiums = dict(model_premiums or {})
+    if model_premiums.pop("estimated", False):
+        # Client-side placeholder premiums are not market data; never store or score them.
+        for key in ("entry", "target", "stop_loss", "delta"):
+            model_premiums.pop(key, None)
+        model_premiums["data_source"] = "UNAVAILABLE"
     # Check for live Groww option quote to lock in genuine market entry premium
     try:
         from app.market.groww_options import get_live_option_quote
         live_q = get_live_option_quote(contract)
         if live_q and live_q.get("ltp") is not None and float(live_q["ltp"]) > 0:
-            model_premiums = dict(model_premiums or {})
             model_premiums["entry"] = round(float(live_q["ltp"]), 1)
-            delta = float(live_q.get("delta") or 0.5)
-            model_premiums["delta"] = round(delta, 2)
-            model_premiums["target"] = round(model_premiums["entry"] + (delta * target_points), 1)
-            model_premiums["stop_loss"] = round(max(0.05, model_premiums["entry"] - (delta * stop_loss_points)), 1)
+            delta = live_q.get("delta")
+            if delta is not None and float(delta) > 0:
+                delta = float(delta)
+                model_premiums["delta"] = round(delta, 2)
+                model_premiums["target"] = round(model_premiums["entry"] + (delta * target_points), 1)
+                model_premiums["stop_loss"] = round(max(0.05, model_premiums["entry"] - (delta * stop_loss_points)), 1)
+            else:
+                # No live delta: premium targets cannot be derived; scoring falls back to spot levels.
+                for key in ("delta", "target", "stop_loss"):
+                    model_premiums.pop(key, None)
             model_premiums["trading_symbol"] = live_q.get("trading_symbol")
             model_premiums["expiry_date"] = live_q.get("expiry_date")
             model_premiums["data_source"] = "GROWW_OPTION_CHAIN"
