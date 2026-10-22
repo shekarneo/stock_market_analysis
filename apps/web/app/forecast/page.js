@@ -10,6 +10,24 @@ import { flagLabel } from "../research/status.mjs";
 import { observationClass, valueText } from "../research/present.mjs";
 import { useMarketData } from "../components/MarketDataContext";
 
+// Null-safe formatters for benchmark figures (missing values show "N/A", never 0)
+function fmtSigned(val, digits = 2, suffix = "") {
+  if (val == null || Number.isNaN(Number(val))) return "N/A";
+  const n = Number(val);
+  return `${n > 0 ? "+" : ""}${n.toFixed(digits)}${suffix}`;
+}
+function fmtRatioPct(val, digits = 2) {
+  return val == null || Number.isNaN(Number(val)) ? "N/A" : `${(Number(val) * 100).toFixed(digits)}%`;
+}
+function fmtNum(val, digits = 2, suffix = "") {
+  return val == null || Number.isNaN(Number(val)) ? "N/A" : `${Number(val).toFixed(digits)}${suffix}`;
+}
+function edgePill(row) {
+  return row?.edge_evidence === "STATISTICALLY_SUPPORTED"
+    ? <span className="pill ok" style={{ fontSize: "0.65rem", padding: "1px 6px" }}>EDGE SUPPORTED</span>
+    : <span className="pill warn" style={{ fontSize: "0.65rem", padding: "1px 6px" }}>NO EDGE</span>;
+}
+
 function pct(val) {
   if (val == null) return "—";
   return `${Number(val).toFixed(2)}%`;
@@ -673,7 +691,7 @@ function ModelTrainingWorkstation() {
                 <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
                   <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Holdout Accuracy</span>
                   <strong style={{ fontSize: "1.4rem", color: result.holdout_accuracy >= 0.52 ? "#10b981" : "#f59e0b" }}>
-                    {(result.holdout_accuracy * 100).toFixed(2)}%
+                    {fmtRatioPct(result.holdout_accuracy, 2)}
                   </strong>
                   <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "2px" }}>Folds 15–19 Out-of-Sample</small>
                 </div>
@@ -681,7 +699,7 @@ function ModelTrainingWorkstation() {
                 <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
                   <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Brier Skill Score</span>
                   <strong style={{ fontSize: "1.4rem", color: result.holdout_brier_skill_score > 0 ? "#10b981" : "#ef4444" }}>
-                    {result.holdout_brier_skill_score > 0 ? "+" : ""}{result.holdout_brier_skill_score.toFixed(4)}
+                    {fmtSigned(result.holdout_brier_skill_score, 4)}
                   </strong>
                   <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "2px" }}>vs Climatological Baseline</small>
                 </div>
@@ -689,7 +707,7 @@ function ModelTrainingWorkstation() {
                 <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
                   <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Holdout Net Return</span>
                   <strong style={{ fontSize: "1.4rem", color: result.holdout_net_return_2bps > 0 ? "#10b981" : "#ef4444" }}>
-                    {result.holdout_net_return_2bps > 0 ? "+" : ""}{result.holdout_net_return_2bps.toFixed(2)}%
+                    {fmtSigned(result.holdout_net_return_2bps, 2, "%")}
                   </strong>
                   <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "2px" }}>After 2 bps Friction</small>
                 </div>
@@ -697,11 +715,48 @@ function ModelTrainingWorkstation() {
                 <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
                   <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Full Max Drawdown</span>
                   <strong style={{ fontSize: "1.4rem", color: "#f87171" }}>
-                    {result.full_max_drawdown.toFixed(2)}%
+                    {fmtNum(result.full_max_drawdown, 2, "%")}
                   </strong>
                   <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "2px" }}>Across 19 Expanding Folds</small>
                 </div>
               </div>
+
+              {result.honest_evaluation ? (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "12px", marginBottom: "16px" }}>
+                  <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
+                    <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Edge Evidence</span>
+                    <div style={{ marginTop: "6px" }}>{edgePill(result.honest_evaluation)}</div>
+                    <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "4px" }}>Dev DSR ≥ 0.95 and holdout PSR ≥ 0.5</small>
+                  </div>
+                  <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
+                    <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Dev Deflated Sharpe</span>
+                    <strong style={{ fontSize: "1.4rem" }}>{fmtNum(result.honest_evaluation.dev_deflated_sharpe, 3)}</strong>
+                    <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "2px" }}>Sharpe {fmtNum(result.honest_evaluation.dev_sharpe_annualized, 2)} (annualized)</small>
+                  </div>
+                  <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
+                    <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Holdout at Realistic Cost</span>
+                    <strong style={{ fontSize: "1.4rem" }}>{fmtSigned(result.honest_evaluation.holdout_return_realistic_cost_pct, 2, "%")}</strong>
+                    <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "2px" }}>
+                      {fmtNum(result.honest_evaluation.cost_per_side_bps, 2)} bps/side · {result.honest_evaluation.holdout_trades ?? "N/A"} trades
+                    </small>
+                  </div>
+                  <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--line)", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
+                    <span style={{ display: "block", fontSize: "0.75rem", color: "var(--sub)", textTransform: "uppercase", fontWeight: 600 }}>Holdout Hit Rate (95% CI)</span>
+                    <strong style={{ fontSize: "1.4rem" }}>{fmtRatioPct(result.honest_evaluation.holdout_active_accuracy, 1)}</strong>
+                    <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem", marginTop: "2px" }}>
+                      {result.honest_evaluation.holdout_accuracy_ci95
+                        ? `${fmtRatioPct(result.honest_evaluation.holdout_accuracy_ci95[0], 0)}–${fmtRatioPct(result.honest_evaluation.holdout_accuracy_ci95[1], 0)}`
+                        : "CI N/A"}
+                    </small>
+                  </div>
+                </div>
+              ) : null}
+
+              {(result.unavailable_models || []).length > 0 ? (
+                <p style={{ color: "var(--muted)", fontSize: "0.78rem", marginBottom: "10px" }}>
+                  Excluded (library not installed): {result.unavailable_models.join(", ")}.
+                </p>
+              ) : null}
 
               {result.all_strategies && result.all_strategies.length > 0 ? (
                 <div className="table-wrap">
@@ -716,6 +771,8 @@ function ModelTrainingWorkstation() {
                         <th>Holdout Net Return (2bps)</th>
                         <th>Full Net Return (2bps)</th>
                         <th>Max Drawdown</th>
+                        <th>Dev DSR</th>
+                        <th>Edge</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -725,15 +782,17 @@ function ModelTrainingWorkstation() {
                           <tr key={idx} style={{ background: isSelected ? "rgba(59, 130, 246, 0.1)" : "transparent" }}>
                             <td><strong>{row.model_name}</strong> {isSelected ? <span className="pill ok" style={{ fontSize: "0.65rem", padding: "1px 6px" }}>SELECTED</span> : null}</td>
                             <td><code>{row.strategy_mode}</code></td>
-                            <td>{(row.holdout_accuracy * 100).toFixed(2)}%</td>
-                            <td>{row.holdout_brier_skill_score > 0 ? "+" : ""}{row.holdout_brier_skill_score.toFixed(4)}</td>
+                            <td>{fmtRatioPct(row.holdout_accuracy, 2)}</td>
+                            <td>{fmtSigned(row.holdout_brier_skill_score, 4)}</td>
                             <td style={{ color: row.holdout_net_return_2bps > 0 ? "#10b981" : "#ef4444", fontWeight: 600 }}>
-                              {row.holdout_net_return_2bps > 0 ? "+" : ""}{row.holdout_net_return_2bps.toFixed(2)}%
+                              {fmtSigned(row.holdout_net_return_2bps, 2, "%")}
                             </td>
                             <td style={{ color: row.full_net_return_2bps > 0 ? "#10b981" : "#ef4444" }}>
-                              {row.full_net_return_2bps > 0 ? "+" : ""}{row.full_net_return_2bps.toFixed(2)}%
+                              {fmtSigned(row.full_net_return_2bps, 2, "%")}
                             </td>
-                            <td>{row.full_max_drawdown.toFixed(2)}%</td>
+                            <td>{fmtNum(row.full_max_drawdown, 2, "%")}</td>
+                            <td>{fmtNum(row.dev_deflated_sharpe, 3)}</td>
+                            <td>{edgePill(row)}</td>
                           </tr>
                         );
                       })}
@@ -947,20 +1006,35 @@ function ModelTrainingWorkstation() {
           {/* SUITE RESULTS & RANKED LEADERBOARD */}
           {suiteResult ? (
             <div style={{ marginTop: "24px" }}>
+              {/* Edge verdict across every evaluated combination */}
+              <div style={{
+                marginBottom: "14px", padding: "10px 14px", borderRadius: "6px", fontSize: "0.85rem",
+                background: suiteResult.edge_supported_count > 0 ? "rgba(16, 185, 129, 0.08)" : "rgba(245, 158, 11, 0.1)",
+                border: `1px solid ${suiteResult.edge_supported_count > 0 ? "#10b981" : "#f59e0b"}`,
+              }}>
+                <strong>Edge verdict:</strong> {suiteResult.edge_verdict}
+                <div style={{ color: "var(--muted)", fontSize: "0.75rem", marginTop: "4px" }}>
+                  Ranking basis: {suiteResult.selection_basis}.
+                </div>
+              </div>
+
               {/* Champion Summary Header Cards */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "12px", marginBottom: "18px" }}>
                 <div style={{ background: "rgba(16, 185, 129, 0.08)", border: "1px solid #10b981", borderRadius: "8px", padding: "14px", textAlign: "center" }}>
                   <span style={{ display: "block", fontSize: "0.72rem", color: "#34d399", textTransform: "uppercase", fontWeight: 700 }}>
-                    🏆 #1 Champion Model &amp; Strategy
+                    🏆 #1 on Development Evidence
                   </span>
                   <strong style={{ fontSize: "1.15rem", color: "var(--ink, #f8fafc)", display: "block", marginTop: "2px" }}>
                     {suiteResult.champion.instrument} · {suiteResult.champion.model_name.toUpperCase()}
                   </strong>
-                  <div style={{ fontSize: "0.8rem", color: "#10b981", fontWeight: 700, marginTop: "4px" }}>
-                    {suiteResult.champion.holdout_net_return_2bps > 0 ? "+" : ""}{suiteResult.champion.holdout_net_return_2bps.toFixed(2)}% Holdout Net Return
+                  <div style={{ fontSize: "0.8rem", fontWeight: 700, marginTop: "4px" }}>
+                    Dev DSR {fmtNum(suiteResult.champion.dev_deflated_sharpe, 3)} · {edgePill(suiteResult.champion)}
+                  </div>
+                  <div style={{ fontSize: "0.75rem", color: "var(--sub)", marginTop: "2px" }}>
+                    Holdout (confirmation only): {fmtSigned(suiteResult.champion.holdout_net_return_2bps, 2, "%")}
                   </div>
                   <small style={{ display: "block", color: "var(--sub, #94a3b8)", fontSize: "0.7rem", marginTop: "2px" }}>
-                    Mode: <code>{suiteResult.champion.strategy_mode}</code> · Acc: {(suiteResult.champion.holdout_accuracy * 100).toFixed(1)}%
+                    Mode: <code>{suiteResult.champion.strategy_mode}</code> · Acc: {fmtRatioPct(suiteResult.champion.holdout_accuracy, 1)}
                   </small>
                 </div>
 
@@ -969,13 +1043,13 @@ function ModelTrainingWorkstation() {
                     🎯 Top Holdout Accuracy
                   </span>
                   <strong style={{ fontSize: "1.15rem", color: "#38bdf8", display: "block", marginTop: "2px" }}>
-                    {(suiteResult.highest_accuracy_model.holdout_accuracy * 100).toFixed(2)}%
+                    {fmtRatioPct(suiteResult.highest_accuracy_model.holdout_accuracy, 2)}
                   </strong>
                   <div style={{ fontSize: "0.78rem", color: "var(--ink)", marginTop: "4px" }}>
                     {suiteResult.highest_accuracy_model.instrument} · {suiteResult.highest_accuracy_model.model_name}
                   </div>
                   <small style={{ display: "block", color: "var(--muted)", fontSize: "0.7rem" }}>
-                    BSS: {suiteResult.highest_accuracy_model.holdout_brier_skill_score > 0 ? "+" : ""}{suiteResult.highest_accuracy_model.holdout_brier_skill_score.toFixed(4)}
+                    BSS: {fmtSigned(suiteResult.highest_accuracy_model.holdout_brier_skill_score, 4)}
                   </small>
                 </div>
 
@@ -984,7 +1058,7 @@ function ModelTrainingWorkstation() {
                     🛡 Lowest Max Drawdown
                   </span>
                   <strong style={{ fontSize: "1.15rem", color: "#f59e0b", display: "block", marginTop: "2px" }}>
-                    {suiteResult.lowest_drawdown_model.full_max_drawdown.toFixed(2)}%
+                    {fmtNum(suiteResult.lowest_drawdown_model.full_max_drawdown, 2, "%")}
                   </strong>
                   <div style={{ fontSize: "0.78rem", color: "var(--ink)", marginTop: "4px" }}>
                     {suiteResult.lowest_drawdown_model.instrument} · {suiteResult.lowest_drawdown_model.model_name}
@@ -1012,7 +1086,7 @@ function ModelTrainingWorkstation() {
               {suiteResult.top_by_instrument && Object.keys(suiteResult.top_by_instrument).length > 0 ? (
                 <div style={{ marginBottom: "18px" }}>
                   <h3 style={{ fontSize: "0.92rem", fontWeight: 700, color: "var(--ink, #f8fafc)", marginBottom: "8px" }}>
-                    🥇 Top Champion Model by Instrument
+                    🥇 Top Model by Instrument (development evidence)
                   </h3>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: "10px" }}>
                     {Object.entries(suiteResult.top_by_instrument).map(([instKey, topRow]) => (
@@ -1026,10 +1100,10 @@ function ModelTrainingWorkstation() {
                         </div>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "4px", fontSize: "0.78rem" }}>
                           <span style={{ color: topRow.holdout_net_return_2bps > 0 ? "#10b981" : "#ef4444", fontWeight: 700 }}>
-                            {topRow.holdout_net_return_2bps > 0 ? "+" : ""}{topRow.holdout_net_return_2bps.toFixed(2)}% Holdout
+                            {fmtSigned(topRow.holdout_net_return_2bps, 2, "%")} Holdout
                           </span>
                           <span style={{ color: "var(--sub)" }}>
-                            Acc: {(topRow.holdout_accuracy * 100).toFixed(1)}%
+                            Acc: {fmtRatioPct(topRow.holdout_accuracy, 1)}
                           </span>
                         </div>
                       </div>
@@ -1060,7 +1134,7 @@ function ModelTrainingWorkstation() {
 
               <div className="table-wrap">
                 <table>
-                  <caption>Complete Ranked Matrix: Sorted by Holdout Net Return after 2.0 bps Friction</caption>
+                  <caption>Complete Ranked Matrix: sorted by development deflated Sharpe (holdout shown for confirmation only)</caption>
                   <thead>
                     <tr>
                       <th style={{ width: "60px", textAlign: "center" }}>Rank</th>
@@ -1072,6 +1146,7 @@ function ModelTrainingWorkstation() {
                       <th>Holdout Accuracy</th>
                       <th>Brier Skill Score</th>
                       <th>Max Drawdown</th>
+                      <th>Dev DSR</th>
                       <th>Status</th>
                       <th style={{ textAlign: "center" }}>Action</th>
                     </tr>
@@ -1097,23 +1172,18 @@ function ModelTrainingWorkstation() {
                             </td>
                             <td><code>{row.strategy_mode}</code></td>
                             <td style={{ color: row.holdout_net_return_2bps > 0 ? "#10b981" : "#ef4444", fontWeight: 700 }}>
-                              {row.holdout_net_return_2bps > 0 ? "+" : ""}{row.holdout_net_return_2bps.toFixed(2)}%
+                              {fmtSigned(row.holdout_net_return_2bps, 2, "%")}
                             </td>
                             <td style={{ color: row.full_net_return_2bps > 0 ? "#10b981" : "#ef4444" }}>
-                              {row.full_net_return_2bps > 0 ? "+" : ""}{row.full_net_return_2bps.toFixed(2)}%
+                              {fmtSigned(row.full_net_return_2bps, 2, "%")}
                             </td>
-                            <td>{(row.holdout_accuracy * 100).toFixed(2)}%</td>
+                            <td>{fmtRatioPct(row.holdout_accuracy, 2)}</td>
                             <td style={{ color: row.holdout_brier_skill_score > 0 ? "#10b981" : "#ef4444" }}>
-                              {row.holdout_brier_skill_score > 0 ? "+" : ""}{row.holdout_brier_skill_score.toFixed(4)}
+                              {fmtSigned(row.holdout_brier_skill_score, 4)}
                             </td>
-                            <td>{row.full_max_drawdown.toFixed(2)}%</td>
-                            <td>
-                              {row.holdout_net_return_2bps > 0 ? (
-                                <span className="pill ok" style={{ fontSize: "0.65rem", padding: "1px 6px" }}>ALPHA+</span>
-                              ) : (
-                                <span className="pill warn" style={{ fontSize: "0.65rem", padding: "1px 6px" }}>NEGATIVE</span>
-                              )}
-                            </td>
+                            <td>{fmtNum(row.full_max_drawdown, 2, "%")}</td>
+                            <td>{fmtNum(row.dev_deflated_sharpe, 3)}</td>
+                            <td>{edgePill(row)}</td>
                             <td style={{ textAlign: "center" }}>
                               {isActive ? (
                                 <span className="pill ok" style={{ fontSize: "0.68rem", padding: "2px 8px" }}>✓ Active in Analysis</span>

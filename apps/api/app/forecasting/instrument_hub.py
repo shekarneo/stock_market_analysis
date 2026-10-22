@@ -379,6 +379,32 @@ def _round_or_none(value: Any, digits: int = 2) -> float | None:
         return None
 
 
+def _honest_summary(honest: dict) -> dict[str, Any] | None:
+    """Significance block from a chained evaluation; None for legacy artifacts."""
+    dev = honest.get("development") or {}
+    hold = honest.get("holdout") or {}
+    if not dev:
+        return None
+    dsr = dev.get("deflated_sharpe")
+    hold_psr = hold.get("psr_vs_zero")
+    hold_acc = hold.get("directional_accuracy") or {}
+    supported = dsr is not None and dsr >= 0.95 and hold_psr is not None and hold_psr >= 0.5
+    return {
+        "cost_per_side_bps": _round_or_none((dev.get("cost_per_side") or 0) * 1e4),
+        "dev_sharpe_annualized": _round_or_none(dev.get("sharpe_annualized"), 3),
+        "dev_deflated_sharpe": _round_or_none(dsr, 4),
+        "trials_considered": dev.get("trials_considered"),
+        "dev_return_realistic_cost_pct": _round_or_none(dev.get("total_return_pct")),
+        "holdout_return_realistic_cost_pct": _round_or_none(hold.get("total_return_pct")),
+        "holdout_psr_vs_zero": _round_or_none(hold_psr, 4),
+        "holdout_trades": hold.get("trades"),
+        "holdout_active_accuracy": _round_or_none(hold_acc.get("accuracy"), 4),
+        "holdout_accuracy_ci95": [round(x, 4) for x in hold_acc["ci95"]] if hold_acc.get("ci95") else None,
+        "holdout_accuracy_p_value": _round_or_none(hold_acc.get("p_value_vs_50pct"), 4),
+        "edge_evidence": "STATISTICALLY_SUPPORTED" if supported else "NOT_SUPPORTED",
+    }
+
+
 def _nifty_backtest_from_artifact(m40_path: Path) -> dict[str, Any]:
     """Serve only numbers computed by the M40 walk-forward run; never literal placeholders."""
     unevaluated = {
@@ -404,6 +430,8 @@ def _nifty_backtest_from_artifact(m40_path: Path) -> dict[str, Any]:
 
     dev_net = _round_or_none(regime.get("dev_net_return_2bps"))
     holdout_folds = data.get("holdout_fold_count")
+    chained = regime.get("aggregation") == "chained_compounded"
+    honest = _honest_summary(regime.get("honest") or {})
     caveats = [
         "Research result only. The live forecast runs a different model (15m logistic regression).",
         "The 'empirical prior' is a constant probability; returns come from the ADX/DI regime filter, not a learned model.",
@@ -413,6 +441,10 @@ def _nifty_backtest_from_artifact(m40_path: Path) -> dict[str, Any]:
         "Strategy was chosen by comparing many model/mode combinations, which inflates the reported holdout result.",
         "Costs are 2 bps on index returns; option premiums, spreads and theta are not modelled.",
     ]
+    if not chained:
+        caveats.insert(0, "Legacy artifact: fold returns were summed and drawdown averaged across folds. Regenerate the M40 benchmark for chained, compounded figures and significance tests.")
+    elif honest and honest.get("edge_evidence") != "STATISTICALLY_SUPPORTED":
+        caveats.insert(0, "Significance tests do not support an edge after realistic costs (deflated Sharpe below 0.95 or a negative holdout).")
     if dev_net is not None and dev_net < 0:
         caveats.insert(0, f"Development-fold net return is negative ({dev_net}%); only the holdout is positive.")
 
@@ -439,12 +471,16 @@ def _nifty_backtest_from_artifact(m40_path: Path) -> dict[str, Any]:
             "full_period_gross_return": _round_or_none(regime.get("full_gross_return_0bps")),
             "holdout_net_return": _round_or_none(regime.get("holdout_net_return_2bps")),
             "dev_net_return": dev_net,
-            "mean_fold_max_drawdown": _round_or_none(regime.get("full_max_drawdown_2bps")),
+            "max_drawdown": _round_or_none(regime.get("full_max_drawdown_2bps")),
+            "drawdown_basis": "CHAINED_CURVE" if chained else "MEAN_OF_FOLD_MAXIMA",
             "drawdown_reconciliation_note": (
-                "Drawdown is the mean of per-fold maximum drawdowns, not the drawdown of one chained equity curve. "
-                "Fold returns are summed, not compounded."
+                "Returns are compounded and drawdown is measured on one chained out-of-sample curve; "
+                "positions carry across folds and every change and the final exit are charged."
+                if chained else
+                "Legacy artifact: drawdown is the mean of per-fold maximum drawdowns and fold returns are summed."
             ),
         },
+        "significance": honest,
         "statistical_metrics": {
             "holdout_accuracy": _round_or_none(regime.get("holdout_accuracy"), 4),
             "holdout_brier_skill_score": _round_or_none(regime.get("holdout_brier_skill_score"), 4),
@@ -459,7 +495,8 @@ def _nifty_backtest_from_artifact(m40_path: Path) -> dict[str, Any]:
                 "dev_net_return_2bps": _round_or_none(row.get("dev_net_return_2bps")),
                 "full_net_return_2bps": _round_or_none(row.get("full_net_return_2bps")),
                 "holdout_net_return_2bps": _round_or_none(row.get("holdout_net_return_2bps")),
-                "mean_fold_max_drawdown": _round_or_none(row.get("full_max_drawdown_2bps")),
+                "max_drawdown": _round_or_none(row.get("full_max_drawdown_2bps")),
+                "dev_deflated_sharpe": _round_or_none(((row.get("honest") or {}).get("development") or {}).get("deflated_sharpe"), 4),
             }
             for row in strategies.values()
         ],

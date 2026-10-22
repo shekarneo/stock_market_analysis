@@ -1009,21 +1009,28 @@ def train_and_benchmark_model(
             if s.model_name == model_key and s.strategy_mode == mode_key:
                 matching = s
                 break
-        if not matching and report.strategies:
-            matching = report.strategies[0]
+        if not matching:
+            # Never substitute another model's results for the one requested
+            return {
+                "ok": False,
+                "code": "MODEL_UNAVAILABLE",
+                "message": f"No results for {model_key}/{mode_key}. Unavailable models: {', '.join(report.unavailable_models) or 'none'}.",
+                "unavailable_models": report.unavailable_models,
+            }
 
         all_summaries = []
         for s in report.strategies:
             all_summaries.append({
                 "model_name": s.model_name,
                 "strategy_mode": s.strategy_mode,
-                "holdout_accuracy": round(s.holdout_accuracy, 4),
-                "holdout_brier_skill_score": round(s.holdout_brier_skill_score, 4),
-                "holdout_net_return_2bps": round(s.holdout_net_return_2bps, 2),
-                "holdout_max_drawdown": round(s.holdout_max_drawdown_2bps, 2),
-                "holdout_win_rate": round(s.holdout_win_rate, 4),
-                "full_net_return_2bps": round(s.full_net_return_2bps, 2),
-                "full_max_drawdown": round(s.full_max_drawdown_2bps, 2),
+                "holdout_accuracy": _round_opt(s.holdout_accuracy, 4),
+                "holdout_brier_skill_score": _round_opt(s.holdout_brier_skill_score, 4),
+                "holdout_net_return_2bps": _round_opt(s.holdout_net_return_2bps, 2),
+                "holdout_max_drawdown": _round_opt(s.holdout_max_drawdown_2bps, 2),
+                "holdout_win_rate": _round_opt(s.holdout_win_rate, 4),
+                "full_net_return_2bps": _round_opt(s.full_net_return_2bps, 2),
+                "full_max_drawdown": _round_opt(s.full_max_drawdown_2bps, 2),
+                **_honest_row(s),
             })
 
         return {
@@ -1037,19 +1044,64 @@ def train_and_benchmark_model(
             "num_folds": report.num_folds,
             "dev_fold_count": report.dev_fold_count,
             "holdout_fold_count": report.holdout_fold_count,
-            "holdout_accuracy": round(matching.holdout_accuracy, 4) if matching else None,
-            "holdout_brier_skill_score": round(matching.holdout_brier_skill_score, 4) if matching else None,
-            "holdout_net_return_2bps": round(matching.holdout_net_return_2bps, 2) if matching else None,
-            "holdout_max_drawdown": round(matching.holdout_max_drawdown_2bps, 2) if matching else None,
-            "holdout_win_rate": round(matching.holdout_win_rate, 4) if matching else None,
-            "full_net_return_2bps": round(matching.full_net_return_2bps, 2) if matching else None,
-            "full_max_drawdown": round(matching.full_max_drawdown_2bps, 2) if matching else None,
+            "holdout_accuracy": _round_opt(matching.holdout_accuracy, 4) if matching else None,
+            "holdout_brier_skill_score": _round_opt(matching.holdout_brier_skill_score, 4) if matching else None,
+            "holdout_net_return_2bps": _round_opt(matching.holdout_net_return_2bps, 2) if matching else None,
+            "holdout_max_drawdown": _round_opt(matching.holdout_max_drawdown_2bps, 2) if matching else None,
+            "holdout_win_rate": _round_opt(matching.holdout_win_rate, 4) if matching else None,
+            "full_net_return_2bps": _round_opt(matching.full_net_return_2bps, 2) if matching else None,
+            "full_max_drawdown": _round_opt(matching.full_max_drawdown_2bps, 2) if matching else None,
             "all_strategies": all_summaries,
+            "honest_evaluation": _honest_row(matching) if matching else None,
+            "unavailable_models": report.unavailable_models,
+            "evaluation_notes": report.evaluation_notes,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
     except Exception as exc:
         log.exception("benchmark training failed")
         return {"ok": False, "code": "TRAINING_ERROR", "message": f"{exc.__class__.__name__}: {str(exc)}"}
+
+
+def _round_opt(value: object, digits: int) -> float | None:
+    return round(float(value), digits) if isinstance(value, (int, float)) else None
+
+
+EDGE_DSR_THRESHOLD = 0.95
+
+
+def _honest_row(summary: object) -> dict:
+    """Flatten a strategy's chained out-of-sample evaluation for API responses."""
+    honest = getattr(summary, "honest", None) or {}
+    dev = honest.get("development") or {}
+    hold = honest.get("holdout") or {}
+    dev_acc = dev.get("directional_accuracy") or {}
+    hold_acc = hold.get("directional_accuracy") or {}
+    dsr = dev.get("deflated_sharpe")
+    hold_psr = hold.get("psr_vs_zero")
+    supported = dsr is not None and dsr >= EDGE_DSR_THRESHOLD and hold_psr is not None and hold_psr >= 0.5
+    return {
+        "dev_sharpe_annualized": _round_opt(dev.get("sharpe_annualized"), 3),
+        "dev_deflated_sharpe": _round_opt(dsr, 4),
+        "dev_return_realistic_cost_pct": _round_opt(dev.get("total_return_pct"), 2),
+        "dev_trades": dev.get("trades"),
+        "dev_accuracy_p_value": _round_opt(dev_acc.get("p_value_vs_50pct"), 4),
+        "holdout_return_realistic_cost_pct": _round_opt(hold.get("total_return_pct"), 2),
+        "holdout_max_drawdown_chained_pct": _round_opt(hold.get("max_drawdown_pct"), 2),
+        "holdout_psr_vs_zero": _round_opt(hold_psr, 4),
+        "holdout_trades": hold.get("trades"),
+        "holdout_active_accuracy": _round_opt(hold_acc.get("accuracy"), 4),
+        "holdout_accuracy_ci95": [round(x, 4) for x in hold_acc["ci95"]] if hold_acc.get("ci95") else None,
+        "cost_per_side_bps": _round_opt((dev.get("cost_per_side") or 0) * 1e4, 2) if dev else None,
+        "edge_evidence": "STATISTICALLY_SUPPORTED" if supported else "NOT_SUPPORTED",
+    }
+
+
+def _dev_rank_key(row: dict) -> tuple:
+    """Rank on development evidence only; the holdout never influences selection."""
+    dsr = row.get("dev_deflated_sharpe")
+    sr = row.get("dev_sharpe_annualized")
+    return (dsr if dsr is not None else float("-inf"), sr if sr is not None else float("-inf"))
+
 
 
 class MultiBenchmarkRequest(BaseModel):
@@ -1130,20 +1182,21 @@ def multi_instrument_model_benchmark(
                     "instrument": inst.upper(),
                     "model_name": s.model_name,
                     "strategy_mode": s.strategy_mode,
-                    "holdout_net_return_2bps": round(s.holdout_net_return_2bps, 2),
-                    "holdout_accuracy": round(s.holdout_accuracy, 4),
-                    "holdout_brier_skill_score": round(s.holdout_brier_skill_score, 4),
-                    "holdout_win_rate": round(s.holdout_win_rate, 4),
-                    "full_net_return_2bps": round(s.full_net_return_2bps, 2),
-                    "full_max_drawdown": round(s.full_max_drawdown_2bps, 2),
-                    "holdout_max_drawdown": round(s.holdout_max_drawdown_2bps, 2),
-                    "turnover_units": round(s.holdout_turnover_units, 2),
+                    "holdout_net_return_2bps": _round_opt(s.holdout_net_return_2bps, 2),
+                    "holdout_accuracy": _round_opt(s.holdout_accuracy, 4),
+                    "holdout_brier_skill_score": _round_opt(s.holdout_brier_skill_score, 4),
+                    "holdout_win_rate": _round_opt(s.holdout_win_rate, 4),
+                    "full_net_return_2bps": _round_opt(s.full_net_return_2bps, 2),
+                    "full_max_drawdown": _round_opt(s.full_max_drawdown_2bps, 2),
+                    "holdout_max_drawdown": _round_opt(s.holdout_max_drawdown_2bps, 2),
+                    "turnover_units": _round_opt(s.holdout_turnover_units, 2),
                     "total_candles": len(candles),
+                    **_honest_row(s),
                 }
                 instrument_strategies.append(item)
 
             if instrument_strategies:
-                top_inst = max(instrument_strategies, key=lambda x: (x["holdout_net_return_2bps"], x["holdout_accuracy"]))
+                top_inst = max(instrument_strategies, key=_dev_rank_key)
                 result = (inst.upper(), instrument_strategies, top_inst)
                 _BENCHMARK_REPORT_CACHE[cache_key] = result
                 return result
@@ -1166,14 +1219,17 @@ def multi_instrument_model_benchmark(
     if not leaderboard:
         raise AppError("BENCHMARK_EMPTY", "No valid datasets could be evaluated. Ensure datasets are pulled and available on disk.", 400)
 
-    leaderboard.sort(key=lambda x: (x["holdout_net_return_2bps"], x["holdout_accuracy"], x["full_net_return_2bps"]), reverse=True)
+    # Rank on development evidence only (deflated Sharpe, then Sharpe). Holdout figures are
+    # reported once for confirmation and never used to choose a winner.
+    leaderboard.sort(key=_dev_rank_key, reverse=True)
 
     for rank_idx, row in enumerate(leaderboard, 1):
         row["rank"] = rank_idx
 
     overall_champion = leaderboard[0]
-    highest_acc = max(leaderboard, key=lambda x: x["holdout_accuracy"])
-    lowest_dd = min(leaderboard, key=lambda x: x["full_max_drawdown"])
+    highest_acc = max(leaderboard, key=lambda x: x["holdout_accuracy"] if x["holdout_accuracy"] is not None else float("-inf"))
+    lowest_dd = min(leaderboard, key=lambda x: x["full_max_drawdown"] if x["full_max_drawdown"] is not None else float("inf"))
+    supported = [row for row in leaderboard if row["edge_evidence"] == "STATISTICALLY_SUPPORTED"]
 
     return {
         "ok": True,
@@ -1181,6 +1237,13 @@ def multi_instrument_model_benchmark(
         "instruments_evaluated": list(top_by_instrument.keys()),
         "models_evaluated": dedup_models,
         "champion": overall_champion,
+        "selection_basis": "development deflated Sharpe (all evaluated combinations counted as trials); holdout not used for ranking",
+        "edge_supported_count": len(supported),
+        "edge_verdict": (
+            f"{len(supported)} combination(s) show development DSR >= {EDGE_DSR_THRESHOLD} and a non-negative holdout."
+            if supported else
+            "No combination shows statistically supported edge after costs; the top rank is the least-bad, not a recommendation."
+        ),
         "highest_accuracy_model": highest_acc,
         "lowest_drawdown_model": lowest_dd,
         "top_by_instrument": top_by_instrument,

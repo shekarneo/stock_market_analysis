@@ -59,6 +59,13 @@ from app.forecasting.m37_lightgbm_htf_research import (
     generate_19_expanding_folds,
     simulate_trading_execution,
 )
+from app.forecasting.evaluation import (
+    FuturesCostModel,
+    OOSBar,
+    add_deflated_sharpe,
+    chained_equity_metrics,
+    evaluate_partition,
+)
 from app.forecasting.metrics import binary_metrics
 from app.settings import REPO_ROOT
 
@@ -295,6 +302,7 @@ def evaluate_asset_walk_forward(
     grouped: dict[tuple[str, str], list[M40FoldResult]] = {
         (m, mode.value): [] for m in models_to_run for mode in strategy_modes
     }
+    oos_bars: dict[tuple[str, str], list[OOSBar]] = {key: [] for key in grouped}
 
     for fold_idx, (ts, te, vs, ve) in enumerate(folds, 1):
         partition_label = "development" if fold_idx <= dev_fold_count else "holdout"
@@ -357,6 +365,17 @@ def evaluate_asset_walk_forward(
                             pos[i] = 0.0
 
                 sim = simulate_trading_execution(pos, val_returns)
+                oos_bars[(m_name, mode.value)].extend(
+                    OOSBar(
+                        timestamp=str(val_data[i].timestamp),
+                        partition=partition_label,
+                        position=float(pos[i]),
+                        bar_return=float(val_returns[i]),
+                        probability=float(probs[i]),
+                        label=int(y_val[i]),
+                    )
+                    for i in range(len(val_data))
+                )
 
                 res = M40FoldResult(
                     fold_index=fold_idx,
@@ -385,33 +404,58 @@ def evaluate_asset_walk_forward(
                 grouped[(m_name, mode.value)].append(res)
 
     # 3. Strategy Summaries
+    # Returns are compounded over one chained out-of-sample curve (positions carry across
+    # contiguous folds, every change and the final exit are charged). Fold returns are not
+    # summed, and drawdown is the drawdown of that chained curve, not a mean of fold maxima.
+    legacy_cost = 0.0002
+    realistic_cost = FuturesCostModel().per_side()
+
+    def _curve(bars: list[OOSBar], cost: float) -> dict[str, Any]:
+        return chained_equity_metrics(bars, cost_per_side=cost)
+
+    honest_by_key: dict[tuple[str, str], dict] = {}
+    for key, bars in oos_bars.items():
+        if bars:
+            honest_by_key[key] = {
+                "development": evaluate_partition([b for b in bars if b.partition == "development"], cost_per_side=realistic_cost),
+                "holdout": evaluate_partition([b for b in bars if b.partition == "holdout"], cost_per_side=realistic_cost),
+                "full": evaluate_partition(bars, cost_per_side=realistic_cost),
+            }
+    add_deflated_sharpe(list(honest_by_key.values()), partition="development")
+
     strategies_summary: dict[str, dict[str, Any]] = {}
     for (m_name, mode_val), f_list in grouped.items():
         key = f"{m_name}_{mode_val}"
         dev_folds = [f for f in f_list if f.partition == "development"]
         holdout_folds = [f for f in f_list if f.partition == "holdout"]
 
-        def _sum(lst: list[M40FoldResult], attr: str) -> float:
-            return float(sum(getattr(x, attr) for x in lst))
-
         def _mean(lst: list[M40FoldResult], attr: str) -> float:
             return float(np.mean([getattr(x, attr) for x in lst])) if lst else 0.0
 
+        bars = oos_bars[(m_name, mode_val)]
+        dev_bars = [b for b in bars if b.partition == "development"]
+        hold_bars = [b for b in bars if b.partition == "holdout"]
+        dev_curve = _curve(dev_bars, legacy_cost)
+        hold_curve = _curve(hold_bars, legacy_cost)
+        full_curve = _curve(bars, legacy_cost)
+        gross_curve = _curve(bars, 0.0)
         strategies_summary[key] = {
             "model_name": m_name,
             "strategy_mode": mode_val,
-            "dev_net_return_2bps": _sum(dev_folds, "net_return_2bps"),
-            "dev_turnover_units": _sum(dev_folds, "turnover_units"),
+            "dev_net_return_2bps": dev_curve["total_return_pct"],
+            "dev_turnover_units": dev_curve["turnover_units"],
             "dev_accuracy": _mean(dev_folds, "accuracy"),
             "dev_brier_skill_score": _mean(dev_folds, "brier_skill_score"),
-            "holdout_net_return_2bps": _sum(holdout_folds, "net_return_2bps"),
-            "holdout_turnover_units": _sum(holdout_folds, "turnover_units"),
+            "holdout_net_return_2bps": hold_curve["total_return_pct"],
+            "holdout_turnover_units": hold_curve["turnover_units"],
             "holdout_accuracy": _mean(holdout_folds, "accuracy"),
             "holdout_brier_skill_score": _mean(holdout_folds, "brier_skill_score"),
-            "full_net_return_2bps": _sum(f_list, "net_return_2bps"),
-            "full_gross_return_0bps": _sum(f_list, "gross_return_0bps"),
-            "full_turnover_units": _sum(f_list, "turnover_units"),
-            "full_max_drawdown_2bps": _mean(f_list, "max_drawdown_2bps"),
+            "full_net_return_2bps": full_curve["total_return_pct"],
+            "full_gross_return_0bps": gross_curve["total_return_pct"],
+            "full_turnover_units": full_curve["turnover_units"],
+            "full_max_drawdown_2bps": full_curve["max_drawdown_pct"],
+            "aggregation": "chained_compounded",
+            "honest": honest_by_key.get((m_name, mode_val), {}),
         }
 
     return strategies_summary, fold_results

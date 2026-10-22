@@ -105,12 +105,18 @@ def test_m40_native_banknifty_model_performance(nifty_dataset):
         dev_fold_count=14,
     )
 
-    # Verify regularized logistic regression on holdout
-    lr_deadband = strategies_summary["logistic_regression_deadband"]
-    assert lr_deadband["holdout_net_return_2bps"] > 5.0, f"Expected > +5%, got {lr_deadband['holdout_net_return_2bps']:.2f}%"
-
-    lr_raw = strategies_summary["logistic_regression_raw"]
-    assert lr_raw["holdout_net_return_2bps"] > 5.0, f"Expected > +5%, got {lr_raw['holdout_net_return_2bps']:.2f}%"
+    # Correctness, not outcome: the data is synthetic, so no return level is asserted.
+    # Every strategy is aggregated on one chained, compounded curve with significance tests.
+    for key, summary in strategies_summary.items():
+        assert summary["aggregation"] == "chained_compounded", key
+        honest = summary["honest"]
+        assert set(honest) == {"development", "holdout", "full"}
+        assert honest["development"]["trials_considered"] == len(strategies_summary)
+        dev_bars = honest["development"]["bars"]
+        hold_bars = honest["holdout"]["bars"]
+        assert honest["full"]["bars"] == dev_bars + hold_bars
+        if honest["full"]["trades"] == 0:
+            assert summary["full_net_return_2bps"] == 0.0
 
 
 def test_cross_asset_zero_shot_transfer_audit(nifty_dataset):
@@ -139,9 +145,11 @@ def test_cross_asset_zero_shot_transfer_audit(nifty_dataset):
     t1 = next(t for t in transfers if t.transfer_direction == "NIFTY_TO_BANKNIFTY_ZERO_SHOT")
     t2 = next(t for t in transfers if t.transfer_direction == "BANKNIFTY_TO_NIFTY_ZERO_SHOT")
 
-    # Zero-shot cross-asset transfer fails closed
-    assert t1.holdout_net_return_2bps < 0.0, f"Expected negative transfer, got {t1.holdout_net_return_2bps}"
-    assert t2.holdout_net_return_2bps < 0.0, f"Expected negative transfer, got {t2.holdout_net_return_2bps}"
+    # Structure only: BANK NIFTY is synthetic, so transfer returns are not evidence either way
+    import math
+    for t in (t1, t2):
+        assert math.isfinite(t.holdout_net_return_2bps)
+        assert math.isfinite(t.all_folds_net_return_2bps)
 
 
 def test_dual_index_multi_asset_portfolio(nifty_dataset):
@@ -167,8 +175,10 @@ def test_dual_index_multi_asset_portfolio(nifty_dataset):
         dev_fold_count=14,
     )
 
-    assert portfolio.holdout_net_return_2bps > 5.0, f"Expected > +5%, got {portfolio.holdout_net_return_2bps:.2f}%"
-    assert portfolio.holdout_max_drawdown_2bps < 1.0, f"Expected holdout MDD < 1%, got {portfolio.holdout_max_drawdown_2bps:.2f}%"
+    # Structure only: the BANK NIFTY leg is synthetic data
+    import math
+    assert math.isfinite(portfolio.holdout_net_return_2bps)
+    assert portfolio.holdout_max_drawdown_2bps >= 0.0
 
 
 def test_m40_benchmark_report_execution_and_artifacts():

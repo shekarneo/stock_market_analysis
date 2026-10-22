@@ -59,7 +59,12 @@ def load_registered_model(
     versions = entry.get("versions") or {}
     # Find latest approved version (v1, etc.)
     target_version = None
-    for v_key in sorted(versions.keys(), reverse=True):
+    # Natural version order: "v10" is newer than "v9" (plain string sort gets this wrong)
+    def _version_order(key: str) -> tuple:
+        digits = "".join(ch if ch.isdigit() else " " for ch in str(key)).split()
+        return tuple(int(d) for d in digits) or (-1,)
+
+    for v_key in sorted(versions.keys(), key=_version_order, reverse=True):
         candidate = versions[v_key]
         status = candidate.get("status")
         # Allowed research statuses
@@ -639,6 +644,8 @@ def compute_live_forecast_for_instrument(
         "is_live_feature_vector": bool(quote_data.get("is_live_feature_vector", is_live_feature_vector)),
         "quote_source": quote_data.get("quote_source", "MARKET_SNAPSHOT"),
         "is_live_quote": bool(quote_data.get("is_live_quote", False)),
+        "model_registry_status": model.get("status"),
+        "after_cost_validation": "NONE",
         "summary": (
             f"Fitted model {model.get('model_version')} predicts {int(p_up * 100)}% P(Up) vs "
             f"{int(p_down * 100)}% P(Down) with {round(confidence * 100)}% conviction over completed candle."

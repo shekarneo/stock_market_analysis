@@ -30,6 +30,10 @@ log = logging.getLogger("imm.agents")
 
 VALID_BIASES = {"BULLISH", "BEARISH", "NEUTRAL", "MIXED", "UNKNOWN"}
 
+# An uncalibrated P(up) this close to 0.5 is not a directional signal
+QUANT_DEADBAND_LOW = 0.45
+QUANT_DEADBAND_HIGH = 0.55
+
 
 from app.instruments import COMMODITY_UNDERLYINGS, CRUDE_FAMILY, canonical_underlying, is_india_vix_row
 
@@ -775,11 +779,12 @@ def quant_forecast_analyst_node(state: AnalysisState) -> dict:
         return {"agent_outputs": agent_outputs}
 
     findings = []
-    directional_bias = "NEUTRAL"
-    confidence = 0.50
+    directional_bias = "UNKNOWN"
+    confidence = None
     limitations = [
         "Models fit on historical training data only.",
         "Probabilities require independently verified market data to promote to forecast_ready.",
+        "The live model has no walk-forward validation after costs; probabilities are uncalibrated.",
     ]
 
     try:
@@ -796,20 +801,24 @@ def quant_forecast_analyst_node(state: AnalysisState) -> dict:
                 p_str = f"{p_up:.3f}" if p_up is not None else "N/A"
                 findings.append(f"Model {m_ver} on {inst}: direction={direction}, P(up)={p_str}.")
 
-            active_f = next((f for f in forecasts if f.get("instrument") == target_inst), None) or forecasts[0]
-            if active_f:
-                direction = active_f.get("direction")
-                p_up = _safe_float(active_f.get("probability_up"))
-                p_down = _safe_float(active_f.get("probability_down"))
-                if direction in {"UP", "BULLISH"}:
-                    directional_bias = "BULLISH"
-                    confidence = p_up if p_up is not None else 0.60
-                elif direction in {"DOWN", "BEARISH"}:
-                    directional_bias = "BEARISH"
-                    confidence = p_down if p_down is not None else 0.60
-                else:
-                    directional_bias = "NEUTRAL"
-                    confidence = 0.50
+            # Only the target instrument's own forecast counts; never another instrument's
+            active_f = next((f for f in forecasts if f.get("instrument") == target_inst), None)
+            p_up = _safe_float(active_f.get("probability_up")) if active_f else None
+            if active_f is None or active_f.get("status") != "ACTIVE" or p_up is None:
+                status = active_f.get("status") if active_f else "NO_FORECAST"
+                findings.append(f"No active forecast for {target_inst} ({status}); quant vote withheld.")
+            elif QUANT_DEADBAND_LOW <= p_up <= QUANT_DEADBAND_HIGH:
+                directional_bias = "NEUTRAL"
+                confidence = round(1.0 - abs(p_up - 0.5) * 2.0, 2)
+                findings.append(
+                    f"P(up)={p_up:.3f} is inside the [{QUANT_DEADBAND_LOW:.2f}, {QUANT_DEADBAND_HIGH:.2f}] deadband; no directional vote."
+                )
+            elif p_up > QUANT_DEADBAND_HIGH:
+                directional_bias = "BULLISH"
+                confidence = p_up
+            else:
+                directional_bias = "BEARISH"
+                confidence = 1.0 - p_up
         else:
             findings.append("No active registered model produced probabilities on the current candle set.")
     except Exception as exc:
@@ -823,7 +832,7 @@ def quant_forecast_analyst_node(state: AnalysisState) -> dict:
         t0=t0,
         findings=findings,
         directional_bias=directional_bias,
-        confidence=round(confidence, 2),
+        confidence=round(confidence, 2) if confidence is not None else None,
         evidence_references=[],
         missing_evidence=[],
         limitations=limitations,

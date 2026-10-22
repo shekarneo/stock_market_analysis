@@ -47,6 +47,7 @@ export default function InstrumentBacktestCard() {
   const isEvaluated = bt.evaluation_status === "RESEARCH_WALK_FORWARD";
   const perf = bt.performance_after_costs || {};
   const stats = bt.statistical_metrics || {};
+  const sig = bt.significance || null;
   const pct = (v) => (v == null ? "N/A" : `${v >= 0 ? "+" : ""}${v}%`);
   const tone = (v) => (v == null ? "" : v >= 0 ? "emerald-text" : "rose-text");
 
@@ -125,11 +126,13 @@ export default function InstrumentBacktestCard() {
             </div>
 
             <div className="v6-metric-card">
-              <span className="v6-metric-label">Mean Per-Fold Max Drawdown</span>
+              <span className="v6-metric-label">Max Drawdown</span>
               <div className="v6-metric-val rose-text">
-                {perf.mean_fold_max_drawdown != null ? `${perf.mean_fold_max_drawdown}%` : "N/A"}
+                {perf.max_drawdown != null ? `${perf.max_drawdown}%` : "N/A"}
               </div>
-              <span className="v6-metric-sub">Not the drawdown of a chained equity curve</span>
+              <span className="v6-metric-sub">
+                {perf.drawdown_basis === "CHAINED_CURVE" ? "Chained out-of-sample curve" : "Legacy: mean of per-fold maxima"}
+              </span>
             </div>
 
             <div className="v6-metric-card">
@@ -153,6 +156,46 @@ export default function InstrumentBacktestCard() {
             </div>
           </div>
 
+          {/* Significance after realistic costs (chained evaluation) */}
+          <div className="v6-subpanel" style={{ marginTop: "1rem" }}>
+            <h4 className="v6-subpanel-title">Is the edge real? (Significance after realistic costs)</h4>
+            {sig ? (
+              <div className="v6-metrics-grid">
+                <div className="v6-metric-card">
+                  <span className="v6-metric-label">Edge Evidence</span>
+                  <div className={`v6-metric-val ${sig.edge_evidence === "STATISTICALLY_SUPPORTED" ? "emerald-text" : "rose-text"}`}>
+                    {sig.edge_evidence === "STATISTICALLY_SUPPORTED" ? "Supported" : "Not supported"}
+                  </div>
+                  <span className="v6-metric-sub">Requires dev DSR ≥ 0.95 and holdout PSR ≥ 0.5</span>
+                </div>
+                <div className="v6-metric-card">
+                  <span className="v6-metric-label">Dev Deflated Sharpe</span>
+                  <div className="v6-metric-val">{sig.dev_deflated_sharpe ?? "N/A"}</div>
+                  <span className="v6-metric-sub">
+                    Sharpe {sig.dev_sharpe_annualized ?? "N/A"} · {sig.trials_considered ?? "N/A"} trials counted
+                  </span>
+                </div>
+                <div className="v6-metric-card">
+                  <span className="v6-metric-label">Holdout at {sig.cost_per_side_bps ?? "N/A"} bps/side</span>
+                  <div className={`v6-metric-val ${tone(sig.holdout_return_realistic_cost_pct)}`}>{pct(sig.holdout_return_realistic_cost_pct)}</div>
+                  <span className="v6-metric-sub">{sig.holdout_trades ?? "N/A"} trades · PSR {sig.holdout_psr_vs_zero ?? "N/A"}</span>
+                </div>
+                <div className="v6-metric-card">
+                  <span className="v6-metric-label">Holdout Hit Rate (95% CI)</span>
+                  <div className="v6-metric-val">
+                    {sig.holdout_active_accuracy != null ? `${(sig.holdout_active_accuracy * 100).toFixed(1)}%` : "N/A"}
+                  </div>
+                  <span className="v6-metric-sub">
+                    {sig.holdout_accuracy_ci95 ? `${(sig.holdout_accuracy_ci95[0] * 100).toFixed(0)}–${(sig.holdout_accuracy_ci95[1] * 100).toFixed(0)}%` : "CI N/A"}
+                    {sig.holdout_accuracy_p_value != null ? ` · p=${sig.holdout_accuracy_p_value}` : ""}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <p className="v6-section-desc">Significance tests are not available for this (legacy) artifact. Regenerate the M40 benchmark.</p>
+            )}
+          </div>
+
           {/* Aggregation note */}
           <div className="v6-scientific-banner">
             <div className="v6-banner-icon">⚖️</div>
@@ -174,7 +217,8 @@ export default function InstrumentBacktestCard() {
                     <th>Dev Net Return</th>
                     <th>Holdout Net Return</th>
                     <th>Full Net Return</th>
-                    <th>Mean Fold Max DD</th>
+                    <th>Max DD</th>
+                    <th>Dev DSR</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -185,7 +229,8 @@ export default function InstrumentBacktestCard() {
                       <td className={tone(b.dev_net_return_2bps)}>{pct(b.dev_net_return_2bps)}</td>
                       <td className={tone(b.holdout_net_return_2bps)}>{pct(b.holdout_net_return_2bps)}</td>
                       <td className={tone(b.full_net_return_2bps)}>{pct(b.full_net_return_2bps)}</td>
-                      <td>{b.mean_fold_max_drawdown != null ? `${b.mean_fold_max_drawdown}%` : "N/A"}</td>
+                      <td>{b.max_drawdown != null ? `${b.max_drawdown}%` : "N/A"}</td>
+                      <td>{b.dev_deflated_sharpe ?? "N/A"}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -97,7 +97,10 @@ def test_backtest_serves_artifact_values_and_caveats(tmp_path):
     perf = report["performance_after_costs"]
     assert perf["holdout_net_return"] == 3.93
     assert perf["dev_net_return"] == -1.77
-    assert perf["mean_fold_max_drawdown"] == 1.1
+    assert perf["max_drawdown"] == 1.1
+    assert perf["drawdown_basis"] == "MEAN_OF_FOLD_MAXIMA"  # legacy artifact without chained aggregation
+    assert report["significance"] is None
+    assert any("Legacy artifact" in c for c in report["caveats"])
     assert report["statistical_metrics"]["holdout_accuracy"] == 0.52
     assert any("negative" in c for c in report["caveats"])
     assert all("status" not in row for row in report["baseline_comparisons"])

@@ -547,8 +547,10 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
         - `raw`: Continuous unconstrained directional execution ($P > 0.50$).
       - `Validation Scheme Badge`: Confirms 19 Expanding Folds (14 Development / 5 Holdout).
       - `⚡ Train & Benchmark [MODEL]` Button: Triggers `POST /api/forecasting/train-benchmark` with real-time progress.
-      - `Individual Benchmark Scorecard`: Holdout Accuracy %, Brier Skill Score, Holdout Net Return (2.0 bps friction), and Full Max Drawdown %.
-      - `Strategy Comparison Matrix Table`: Displays all strategy gating variations for the evaluated model with `SELECTED` badge on the active mode.
+      - `Individual Benchmark Scorecard`: Holdout Accuracy %, Brier Skill Score, Holdout Net Return (2.0 bps friction), and Full Max Drawdown % (drawdown of the chained out-of-sample curve). Missing values show `N/A`.
+      - `Significance Tiles` (from `honest_evaluation`): `Edge Evidence` (`EDGE SUPPORTED` only when development deflated Sharpe ≥ 0.95 and holdout PSR ≥ 0.5, otherwise `NO EDGE`), `Dev Deflated Sharpe` (with annualized Sharpe), `Holdout at Realistic Cost` (NSE futures statutory charges + 1 bp slippage per side, with trade count), and `Holdout Hit Rate (95% CI)` (Wilson interval on non-flat bars).
+      - `Excluded (library not installed)` note: models whose library is missing are excluded and listed, never reported under the empirical prior. Requesting such a model returns `MODEL_UNAVAILABLE` instead of another model's results.
+      - `Strategy Comparison Matrix Table`: Displays all strategy gating variations for the evaluated model with `SELECTED` badge on the active mode, plus `Dev DSR` and `Edge` columns.
     - **End-to-End Suite & Leaderboard Controls**:
       - `1. Select Datasets Checkbox Grid`:
         - Independent selection checkboxes for `NIFTY 50` (NSE), `BANK NIFTY` (NSE), `BSE SENSEX` (BSE), and `CRUDEOIL MINI` (MCX).
@@ -564,19 +566,20 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
         - Animated execution indicator (`⏳ Executing Multi-Asset Walk-Forward Matrix...`).
         - **High-Performance Multi-Threading & Response Caching**: Multi-instrument benchmark runs concurrently across thread pools with optimized estimators (XGBoost `hist` tree method, top-level PyTorch DLinear decomposition, and thread-pinned CatBoost/Random Forest), dropping runtime from >70s to ~8–12 seconds. Subsequent runs with identical configurations return instantaneously (<5ms) from the in-memory cache.
         - **Gateway Timeout & Non-JSON Fallback Protection**: Both individual and suite benchmark API calls implement defensive JSON response parsing. If a reverse proxy 504 gateway timeout occurs, the UI intercepts the HTML response and surfaces an informative guidance message rather than an unhandled `JSON.parse` syntax error.
+      - `Edge Verdict Banner` (green when any combination has supported edge, amber otherwise): states how many combinations show development DSR ≥ 0.95 with a non-negative holdout, or that none do and the top rank is the least-bad rather than a recommendation. Shows the ranking basis.
       - `Champion Trophy Summary Cards`:
-        - `🏆 #1 Champion Model & Strategy`: Displays the top-ranked combination across all assets, its holdout net return %, mode, and accuracy.
+        - `🏆 #1 on Development Evidence`: The combination with the highest development deflated Sharpe (every evaluated combination counted as a trial), its `EDGE SUPPORTED` / `NO EDGE` pill, and its holdout return labelled "confirmation only".
         - `🎯 Top Holdout Accuracy`: Highest directional accuracy model and Brier Skill Score.
         - `🛡 Lowest Max Drawdown`: Model with minimal peak-to-trough equity drawdown.
         - `📊 Evaluated Combinations`: Total combinations tested across the 19 expanding folds.
-      - `🥇 Top Champion Model by Instrument Cards`:
-        - Dedicated cards highlighting the #1 winning model, mode, holdout return, and accuracy for each evaluated instrument (`NIFTY`, `BANKNIFTY`, `SENSEX`, `CRUDEOILMINI`).
+      - `🥇 Top Model by Instrument (development evidence) Cards`:
+        - Dedicated cards highlighting the best model and mode per instrument by development deflated Sharpe, with holdout return and accuracy for reference. BANK NIFTY is skipped (its dataset is synthetic and quarantined).
       - `Filter Instrument Dropdown`:
         - Instant client-side filtering (`All Instruments`, `NIFTY`, `BANKNIFTY`, `SENSEX`, `CRUDEOILMINI`).
       - `🏆 Ranked SOTA Walk-Forward Leaderboard Table`:
-        - Ranked by Holdout Net Return after 2.0 bps friction with tie-breakers on accuracy and full walk-forward net return.
+        - Ranked by development deflated Sharpe, then development Sharpe. The holdout is never used to rank or choose a winner; it is shown once for confirmation.
         - Medals for top positions: `🥇 #1`, `🥈 #2`, `🥉 #3`, followed by numeric rank `#4`, `#5`, etc.
-        - Columns: `Rank`, `Instrument`, `Model Architecture`, `Strategy Mode`, `Holdout Net Return (2bps)`, `Full Net Return (2bps)`, `Holdout Accuracy`, `Brier Skill Score`, `Max Drawdown`, `Status` (`ALPHA+` in green or `NEGATIVE` in amber), and `Action`.
+        - Columns: `Rank`, `Instrument`, `Model Architecture`, `Strategy Mode`, `Holdout Net Return (2bps)`, `Full Net Return (2bps)`, `Holdout Accuracy`, `Brier Skill Score`, `Max Drawdown` (chained curve), `Dev DSR`, `Status` (`EDGE SUPPORTED` in green or `NO EDGE` in amber), and `Action`.
         - `⚡ Set for Analysis` Action Button: Promotes any model and strategy mode combination from the leaderboard to serve as the live predictive model across the Overview, Analysis Desk, and Live Trend Graph. When active, displays a `✓ Active in Analysis` pill.
       - `Active Analysis Model Banner & Indicator`: Prominent banner at the top of the workstation displaying the currently active model architecture (e.g. `LIGHTGBM`, `XGBOOST`, `DLINEAR`) and strategy mode (`Regime-Gated`, `Deadband`, `Raw`), accompanied by a direct jump link to the Live Trend Graph (`📈 View in Live Graph ↑`).
       - `⚡ Set as Active Model for Analysis Button` (Individual Mode): Located directly below the strategy comparison table in the Individual Model tab, allowing operators to immediately promote any individually evaluated model to active analysis status.
@@ -703,9 +706,10 @@ Accessible via the collapsible `Tools Show (7) ▾` toggle in the left navigatio
   - Reads only the computed M40 artifact (`var/datasets/m40_multi_asset_benchmark.json`). If it is missing or unreadable, status is `UNEVALUATED` and no figures are shown.
   - Header pills: `STATUS: RESEARCH_WALK_FORWARD` (or `UNEVALUATED`) and `FRICTION: <bps> BPS ON INDEX (NOT OPTIONS)`.
   - **Caveats banner** (shown first): development-fold return when negative, live-model mismatch, constant-prior strategy, small holdout, holdout selection bias, and index-only costs.
-  - Metric tiles: `Holdout Net Return` (with Full Period and Dev Folds), `Mean Per-Fold Max Drawdown` (not a chained-curve drawdown), `Holdout Skill & Calibration` (Brier Skill Score and accuracy), and `Turnover` (holdout and full period, holdout fold count). Signs come from the data; missing values show `N/A`.
-  - `How these figures are aggregated` note: fold returns are summed; drawdown is the mean of per-fold maxima.
-  - `All Evaluated Strategies` table: Model, Mode, Dev / Holdout / Full net return, and mean fold max drawdown for every strategy in the artifact. No "optimal candidate" label is assigned.
+  - Metric tiles: `Holdout Net Return` (with Full Period and Dev Folds), `Max Drawdown` (sub-label `Chained out-of-sample curve`, or `Legacy: mean of per-fold maxima` for artifacts produced before the chained evaluation), `Holdout Skill & Calibration` (Brier Skill Score and accuracy), and `Turnover` (holdout and full period, holdout fold count). Signs come from the data; missing values show `N/A`.
+  - `Is the edge real? (Significance after realistic costs)` panel: `Edge Evidence` (Supported / Not supported; requires dev DSR ≥ 0.95 and holdout PSR ≥ 0.5), `Dev Deflated Sharpe` (with Sharpe and number of trials counted), `Holdout at <bps> bps/side` (return, trades, PSR), and `Holdout Hit Rate (95% CI)` with binomial p-value. For a legacy artifact the panel says significance is unavailable and to regenerate the M40 benchmark.
+  - `How these figures are aggregated` note: chained, compounded curve with every position change and the final exit charged (or the legacy summed/averaged description for old artifacts).
+  - `All Evaluated Strategies` table: Model, Mode, Dev / Holdout / Full net return, Max DD, and Dev DSR for every strategy in the artifact. No "optimal candidate" label is assigned.
   - Execution assumptions list and provenance footer (`Dataset`, `Artifact`, `Computed` timestamp).
 - **Factor Attribution Card (`<V6MultiAssetCard />`)**:
   - Header pill `BANK NIFTY DATA: SYNTHETIC` (rose) and a disclosure banner using the API's `data_quarantine.note`: BANK NIFTY candles are generated from NIFTY returns plus noise, so BANK NIFTY, cross-asset and dual-index results are not evidence of real performance. The synthetic dataset is never used for live forecasts.

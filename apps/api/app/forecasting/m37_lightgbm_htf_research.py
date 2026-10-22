@@ -103,6 +103,13 @@ from app.forecasting.m28_regime_research import (
     extract_regime_aligned_features,
 )
 from app.forecasting.metrics import binary_metrics
+from app.forecasting.evaluation import (
+    FuturesCostModel,
+    OOSBar,
+    add_deflated_sharpe,
+    chained_equity_metrics,
+    evaluate_partition,
+)
 from app.settings import REPO_ROOT
 
 log = logging.getLogger("imm.m37_lightgbm_htf_research")
@@ -162,6 +169,9 @@ class M37StrategySummary:
     full_net_return_0bps: float
     full_net_return_5bps: float
     full_net_return_10bps: float
+    # Chained out-of-sample evaluation (app.forecasting.evaluation): development /
+    # holdout / full curves with realistic futures costs, Sharpe, PSR, DSR, CIs.
+    honest: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -179,6 +189,8 @@ class M37BenchmarkReport:
     fold_results: list[M37FoldResult]
     safety_invariants: dict[str, bool]
     timestamp: str
+    unavailable_models: list[str] = field(default_factory=list)
+    evaluation_notes: list[str] = field(default_factory=list)
 
 
 def generate_19_expanding_folds(
@@ -346,6 +358,10 @@ def run_m37_lightgbm_benchmark(
                 log.warning("Chronos cache load fallback: %s", e)
 
     fold_results: list[M37FoldResult] = []
+    unavailable: set[str] = set()
+    oos_bars: dict[tuple[str, str], list[OOSBar]] = {
+        (m, mode.value): [] for m in models_to_evaluate for mode in strategy_modes
+    }
 
     # Map of (model, mode) -> list of fold results
     grouped_folds: dict[tuple[str, str], list[M37FoldResult]] = {
@@ -391,7 +407,7 @@ def run_m37_lightgbm_benchmark(
                 clf_lgb.fit(X_train, y_train)
                 model_probs["lightgbm"] = clf_lgb.predict_proba(X_val)[:, 1]
             else:
-                model_probs["lightgbm"] = np.full(len(y_val), p_base)
+                unavailable.add("lightgbm")
 
         if "xgboost" in models_to_evaluate:
             if HAS_XGBOOST:
@@ -407,7 +423,7 @@ def run_m37_lightgbm_benchmark(
                 clf_xgb.fit(X_train, y_train)
                 model_probs["xgboost"] = clf_xgb.predict_proba(X_val)[:, 1]
             else:
-                model_probs["xgboost"] = np.full(len(y_val), p_base)
+                unavailable.add("xgboost")
 
         if "catboost" in models_to_evaluate:
             if HAS_CATBOOST:
@@ -422,7 +438,7 @@ def run_m37_lightgbm_benchmark(
                 clf_cb.fit(X_train, y_train)
                 model_probs["catboost"] = clf_cb.predict_proba(X_val)[:, 1]
             else:
-                model_probs["catboost"] = np.full(len(y_val), p_base)
+                unavailable.add("catboost")
 
         if "random_forest" in models_to_evaluate:
             clf_rf = RandomForestClassifier(
@@ -469,19 +485,21 @@ def run_m37_lightgbm_benchmark(
                         p_dl = dlinear_net(torch.tensor(X_val, dtype=torch.float32)).numpy()
                     model_probs["dlinear"] = p_dl
                 except Exception as e:
-                    log.warning("DLinear fit fallback: %s", e)
-                    model_probs["dlinear"] = np.full(len(y_val), p_base)
+                    log.warning("DLinear fit failed; model excluded: %s", e)
+                    unavailable.add("dlinear")
             else:
-                model_probs["dlinear"] = np.full(len(y_val), p_base)
+                unavailable.add("dlinear")
 
         if "chronos" in models_to_evaluate:
-            if chronos_cache_probs:
-                val_slice = [chronos_cache_probs[(vs + i) % len(chronos_cache_probs)] for i in range(len(y_val))]
-                model_probs["chronos"] = np.array(val_slice, dtype=float)
+            # The cache must cover every validation row; wrapping around would misalign probabilities
+            if chronos_cache_probs and len(chronos_cache_probs) >= ve:
+                model_probs["chronos"] = np.array(chronos_cache_probs[vs:ve], dtype=float)
             else:
-                model_probs["chronos"] = np.full(len(y_val), p_base)
+                unavailable.add("chronos")
 
         for m_name in models_to_evaluate:
+            if m_name in unavailable or m_name not in model_probs:
+                continue
             p_val = model_probs[m_name]
 
             bm = binary_metrics(y_val.tolist(), p_val.tolist())
@@ -515,6 +533,17 @@ def run_m37_lightgbm_benchmark(
                             positions[i] = 0.0  # Cash (NO_TRADE)
 
                 sim = simulate_trading_execution(positions, val_returns)
+                oos_bars[(m_name, mode.value)].extend(
+                    OOSBar(
+                        timestamp=str(val_data[i].timestamp),
+                        partition=partition_label,
+                        position=float(positions[i]),
+                        bar_return=float(val_returns[i]),
+                        probability=float(p_val[i]),
+                        label=int(y_val[i]),
+                    )
+                    for i in range(len(val_data))
+                )
 
                 fold_res = M37FoldResult(
                     fold_index=fold_idx,
@@ -544,35 +573,60 @@ def run_m37_lightgbm_benchmark(
     # Step 3: Compute aggregate summaries across partitions
     strategy_summaries: list[M37StrategySummary] = []
 
+    cost_per_side = FuturesCostModel().per_side()
+    honest_by_key: dict[tuple[str, str], dict] = {}
+    for key, bars in oos_bars.items():
+        if not bars:
+            continue
+        honest_by_key[key] = {
+            "development": evaluate_partition([b for b in bars if b.partition == "development"], cost_per_side=cost_per_side),
+            "holdout": evaluate_partition([b for b in bars if b.partition == "holdout"], cost_per_side=cost_per_side),
+            "full": evaluate_partition(bars, cost_per_side=cost_per_side),
+        }
+    # Every evaluated (model, mode) counts as a trial when judging the best development Sharpe
+    add_deflated_sharpe(list(honest_by_key.values()), partition="development")
+
     for (m_name, mode_val), f_list in grouped_folds.items():
+        if not f_list:
+            continue
         dev_list = [f for f in f_list if f.partition == "development"]
         hold_list = [f for f in f_list if f.partition == "holdout"]
 
-        # Dev compounding returns and averages
-        dev_ret_2bps = float(np.prod([1.0 + f.net_return_2bps / 100.0 for f in dev_list]) - 1.0) * 100.0
-        dev_turnover = float(sum(f.turnover_units for f in dev_list))
-        dev_max_dd = float(max(f.max_drawdown_2bps for f in dev_list)) if dev_list else 0.0
-        dev_acc = float(np.mean([f.accuracy for f in dev_list]))
-        dev_bss = float(np.mean([f.brier_skill_score for f in dev_list]))
-        dev_active = float(np.mean([f.active_bars_pct for f in dev_list]))
-        dev_win = float(np.mean([f.win_rate for f in dev_list]))
+        # Returns and drawdowns come from one chained out-of-sample curve per partition
+        # (positions carry across contiguous folds; each change and the final exit are charged).
+        bars = oos_bars[(m_name, mode_val)]
+        dev_bars = [b for b in bars if b.partition == "development"]
+        hold_bars = [b for b in bars if b.partition == "holdout"]
 
-        # Holdout compounding returns and averages
-        hold_ret_2bps = float(np.prod([1.0 + f.net_return_2bps / 100.0 for f in hold_list]) - 1.0) * 100.0
-        hold_turnover = float(sum(f.turnover_units for f in hold_list))
-        hold_max_dd = float(max(f.max_drawdown_2bps for f in hold_list)) if hold_list else 0.0
-        hold_acc = float(np.mean([f.accuracy for f in hold_list]))
-        hold_bss = float(np.mean([f.brier_skill_score for f in hold_list]))
-        hold_active = float(np.mean([f.active_bars_pct for f in hold_list]))
-        hold_win = float(np.mean([f.win_rate for f in hold_list]))
+        def _curve(sel: list[OOSBar], cost: float) -> dict:
+            return chained_equity_metrics(sel, cost_per_side=cost)
 
-        # Full walkforward compounding returns
-        full_ret_0bps = float(np.prod([1.0 + f.gross_return_0bps / 100.0 for f in f_list]) - 1.0) * 100.0
-        full_ret_2bps = float(np.prod([1.0 + f.net_return_2bps / 100.0 for f in f_list]) - 1.0) * 100.0
-        full_ret_5bps = float(np.prod([1.0 + f.net_return_5bps / 100.0 for f in f_list]) - 1.0) * 100.0
-        full_ret_10bps = float(np.prod([1.0 + f.net_return_10bps / 100.0 for f in f_list]) - 1.0) * 100.0
-        full_turnover = float(sum(f.turnover_units for f in f_list))
-        full_max_dd = float(max(f.max_drawdown_2bps for f in f_list)) if f_list else 0.0
+        dev_c = _curve(dev_bars, 0.0002)
+        hold_c = _curve(hold_bars, 0.0002)
+        full_c = _curve(bars, 0.0002)
+
+        dev_ret_2bps = dev_c["total_return_pct"]
+        dev_turnover = dev_c["turnover_units"]
+        dev_max_dd = dev_c["max_drawdown_pct"]
+        dev_acc = float(np.mean([f.accuracy for f in dev_list])) if dev_list else 0.0
+        dev_bss = float(np.mean([f.brier_skill_score for f in dev_list])) if dev_list else 0.0
+        dev_active = float(np.mean([f.active_bars_pct for f in dev_list])) if dev_list else 0.0
+        dev_win = float(np.mean([f.win_rate for f in dev_list])) if dev_list else 0.0
+
+        hold_ret_2bps = hold_c["total_return_pct"]
+        hold_turnover = hold_c["turnover_units"]
+        hold_max_dd = hold_c["max_drawdown_pct"]
+        hold_acc = float(np.mean([f.accuracy for f in hold_list])) if hold_list else 0.0
+        hold_bss = float(np.mean([f.brier_skill_score for f in hold_list])) if hold_list else 0.0
+        hold_active = float(np.mean([f.active_bars_pct for f in hold_list])) if hold_list else 0.0
+        hold_win = float(np.mean([f.win_rate for f in hold_list])) if hold_list else 0.0
+
+        full_ret_0bps = _curve(bars, 0.0)["total_return_pct"]
+        full_ret_2bps = full_c["total_return_pct"]
+        full_ret_5bps = _curve(bars, 0.0005)["total_return_pct"]
+        full_ret_10bps = _curve(bars, 0.0010)["total_return_pct"]
+        full_turnover = full_c["turnover_units"]
+        full_max_dd = full_c["max_drawdown_pct"]
 
         strategy_summaries.append(
             M37StrategySummary(
@@ -598,6 +652,7 @@ def run_m37_lightgbm_benchmark(
                 full_net_return_0bps=full_ret_0bps,
                 full_net_return_5bps=full_ret_5bps,
                 full_net_return_10bps=full_ret_10bps,
+                honest=honest_by_key.get((m_name, mode_val), {}),
             )
         )
 
@@ -624,6 +679,14 @@ def run_m37_lightgbm_benchmark(
         fold_results=fold_results,
         safety_invariants=safety_invariants,
         timestamp=datetime.now(timezone.utc).isoformat(),
+        unavailable_models=sorted(unavailable),
+        evaluation_notes=[
+            "honest.* metrics use one chained out-of-sample curve per partition with a cost on every position change and the final exit.",
+            f"Costs: NSE index-futures statutory charges plus 1 bp assumed slippage = {cost_per_side * 1e4:.2f} bps per side; brokerage excluded. Option premiums, spreads and theta are not modelled.",
+            "Select strategies on honest.development only; honest.holdout is for a single confirmation, not for ranking.",
+            "deflated_sharpe treats every evaluated (model, mode) as a trial.",
+            "Models whose library is unavailable are excluded, never reported under the empirical prior.",
+        ],
     )
 
     return report

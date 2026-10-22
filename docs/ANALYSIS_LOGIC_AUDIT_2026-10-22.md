@@ -124,3 +124,32 @@ New tests: `apps/api/tests/test_signal_direction_logic.py` and two new cases in 
 13. Backtest the traded instrument (option-chain P&L or futures) with realistic costs.
 14. Get multi-year data. Pick models on dev only, then evaluate once on a fresh holdout.
 15. Replace tests that assert backtest returns with correctness tests.
+
+**Phase 3 status (2026-10-22): implemented in code, results not yet regenerated.**
+
+What changed:
+- `app/forecasting/evaluation.py` is the new evaluation module. It provides:
+  - a chained out-of-sample equity curve, with a cost on every position change and on the final exit;
+  - a correctly annualized Sharpe ratio;
+  - the probabilistic and deflated Sharpe ratios;
+  - the Wilson interval and binomial p-value for accuracy;
+  - a Brier skill score measured against the evaluation set's own base rate;
+  - a block-bootstrap confidence interval;
+  - a cost model for NSE index futures (statutory charges plus 1 bp assumed slippage, about 2.5 bps per side).
+- **M37/M40:**
+  - Legacy figures are now compounded on the chained curve. Fold returns are no longer summed, and drawdown is no longer averaged across folds.
+  - Every strategy carries an `honest` block (development, holdout and full).
+  - A model whose library is missing is excluded, instead of being reported under the empirical prior's numbers.
+  - The Chronos wraparound misalignment is removed.
+- **Benchmarks:** `/multi-benchmark` and `/train-benchmark` rank on development deflated Sharpe only. They report an edge verdict and return `MODEL_UNAVAILABLE` instead of substituting another model.
+- **Live model:**
+  - The quant analyst votes only on its own instrument's ACTIVE forecast, with a [0.45, 0.55] deadband.
+  - The registry orders versions numerically, so v10 sorts after v9.
+  - Forecasts are labelled `after_cost_validation: NONE`.
+- **Tests:** tests asserting returns above +5% (M40), above Rs 40k (M42) and exact golden P&L (CLI) are replaced with chaining, accounting-identity and structure checks.
+
+Still open:
+- **Data:** only one year of 15-minute data exists. Multi-year history is needed before any holdout is meaningful.
+- **Option P&L backtest:** this needs historical option-chain data, which is not in the repo. Costs remain futures-based.
+- **Results:** regenerate the M37/M40/M42 artifacts on the Linux box. Past report numbers (M28–M42 docs) were produced with the old aggregation and should not be quoted.
+- **CLI golden test:** since Phase 2, NIFTY sizing uses lot 65 (the earlier tests assumed 25). Any golden numbers from older runs no longer apply.
