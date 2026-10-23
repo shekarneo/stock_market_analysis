@@ -718,6 +718,38 @@ Accessible via the collapsible `Tools Show (7) ▾` toggle in the left navigatio
 - **Factor Attribution Card (`<V6MultiAssetCard />`)**:
   - Header pill `BANK NIFTY DATA: SYNTHETIC` (rose) and a disclosure banner using the API's `data_quarantine.note`: BANK NIFTY candles are generated from NIFTY returns plus noise, so BANK NIFTY, cross-asset and dual-index results are not evidence of real performance. The synthetic dataset is never used for live forecasts.
   - Decomposes strategy returns into Market Beta, Momentum, Volatility Regime, and Mean Reversion factors.
+- **Multi-Year Daily & Half-Day Research Card (`<MultiYearResearchCard />`)**:
+  - **Purpose**: tests on several years of Groww history (from 2020) whether next-day direction, next-half-day direction or next-day volatility can be forecast, and scores every result with walk-forward evaluation, trading costs and significance tests. Research only: nothing on this card places orders, touches the paper ledger or changes the live model.
+  - **Header pills**:
+    - `FETCH: RUNNING | SUCCEEDED | FAILED` or `RESEARCH: ...`: the state of the last background job (one job runs at a time).
+    - `DIRECTION EDGE: SUPPORTED` (green) or `NOT SUPPORTED` (red): shown once a report exists. Supported needs a development deflated Sharpe of at least 0.95 and a holdout PSR of at least 0.9.
+  - The description lists the inputs Groww cannot supply and that are therefore not used (MCX crude, USD/INR, FII/DII flows).
+  - **1. Fetch history from Groww**:
+    - `Symbols` checkboxes: `NIFTY`, `BANKNIFTY`, `INDIAVIX`, `SENSEX` (all ticked by default).
+    - `Intervals` checkboxes: `Daily (1day)` (ticked by default) and `15-minute (for half-day)`, which the half-day horizon needs.
+    - `From` / `To` date pickers: `From` defaults to 2020-01-01 and cannot be earlier; an empty `To` means today.
+    - `Also build NIFTY put/call OI ratio` checkbox: also builds the daily NIFTY PE/CE open-interest ratio from near-the-money option contracts. Slow (thousands of requests), resumable, and it needs NIFTY daily history (saved or in this fetch).
+    - `Fetch history` button (`POST /api/research/multiyear/fetch`): starts the download in the background using the saved Groww token. It is disabled while a job runs or when no symbol or interval is ticked. The request is audited.
+    - **Series table**: one row per symbol and interval, showing `Candles` (or `not fetched`), `From`, `To`, `Failed windows` (red when above zero: those date ranges were not received and are left empty, never filled), and `Rejected rows` (candles dropped for impossible prices). The `NIFTY PCR` row shows the days built and expiries skipped.
+  - **2. Run the research**:
+    - `First training window (days)` (default 500, range 100–5000) and `Test window (days)` (default 20, range 5–250): the walk-forward settings. The half-day horizon uses 1000 and 40 half-day bars.
+    - `Include put/call ratio features` checkbox: adds the PCR feature set; disabled until a PCR has been built.
+    - `Run research` button (`POST /api/research/multiyear/run`): runs in the background and writes `var/datasets/research_daily_report.json`. It is disabled while a job runs or when nothing has been fetched (a note then says to fetch NIFTY daily history first). The request is audited.
+  - **Last job**: the job's kind, start time (UTC), status, its error (if it failed) and its log. The card polls `GET /api/research/multiyear` every 3 seconds while a job runs.
+  - **3. Results** (from `GET /api/research/multiyear/report`):
+    - **Note line**: when the report was generated, the bars used per input and the cost per side.
+    - **Tiles**:
+      - `Direction: best on development`: model and feature set, with horizon and number of trials.
+      - `Its holdout return / accuracy`: that model's return on the final 20% of the data, its accuracy and the binomial p-value against 50%.
+      - `Volatility: selected model`: chosen on development QLIKE, with its holdout QLIKE (lower is better).
+      - `Beats naive volatility (holdout)`: `YES` only when the Diebold–Mariano test against "today's volatility" is significant (p < 0.05) in the model's favour; the DM p-value is shown below.
+    - **`Direction trials` table**: one row per horizon, feature set and model, with `Dev deflated Sharpe`, `Holdout return` (green or red by sign), `Holdout Sharpe` (annualized), `Holdout accuracy (n, p)` and `Trades`. A row with too little data shows `INSUFFICIENT_ROWS` and its row count.
+      - Feature sets: `price` (returns, gap, realized volatility), `price_vix` (adds VIX level, VIX change and the VIX-minus-realized-variance spread), `price_vix_cross` (adds BANKNIFTY and SENSEX returns relative to NIFTY), `price_vix_cross_pcr` (adds PCR level and change).
+      - Models: `empirical_prior` (always predicts the training up-rate; the baseline), `logistic` (L2 logistic regression), `lightgbm` (shallow trees).
+    - **`Volatility models (next-day)` table**:
+      - Models: `naive_rv1`, `har`, `vix_implied`, `har_vix`. ★ marks the one selected on development.
+      - Columns: holdout `QLIKE`, `MSE (log var)`, `Mincer–Zarnowitz R²` (how much of the realized variation the forecast explains), and Diebold–Mariano `stat, p` against the naive and VIX forecasts. A negative stat means the row's model had lower loss.
+    - Missing values show `N/A` or `—`; undefined metrics are served as null, never as zero.
 
 ---
 

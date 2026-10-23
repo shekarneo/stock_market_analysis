@@ -6,6 +6,7 @@ import Link from "next/link";
 import ResearchBoard, { csrf } from "../components/ResearchBoard";
 import InstrumentBacktestCard from "../components/InstrumentBacktestCard";
 import V6MultiAssetCard from "../components/V6MultiAssetCard";
+import MultiYearResearchCard from "../components/MultiYearResearchCard";
 
 export default function BacktestPage() {
   return (
@@ -25,6 +26,7 @@ export default function BacktestPage() {
           </div>
           <InstrumentBacktestCard />
           <V6MultiAssetCard />
+          <MultiYearResearchCard />
           <Runner />
         </>
       )}

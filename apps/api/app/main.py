@@ -37,6 +37,7 @@ from app.logging_config import configure_logging
 from app.integrations.routes import router as integrations_router
 from app.market.history_routes import router as history_router
 from app.registry.routes import router as registry_router
+from app.research.multiyear_routes import router as multiyear_research_router
 from app.options.candidate import assess_option_candidate
 from app.options.proposal import build_research_proposal
 from app.research.decision import build_research_decision
@@ -101,6 +102,7 @@ app.include_router(history_router)
 app.include_router(integrations_router)
 app.include_router(paper_router)
 app.include_router(watchlist_router)
+app.include_router(multiyear_research_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[get_settings().web_origin],
