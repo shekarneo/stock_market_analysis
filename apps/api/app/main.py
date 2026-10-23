@@ -758,7 +758,7 @@ def read_paper_readiness(
     read_session(request, settings)
     from app.research.paper_readiness_audit import audit_paper_trading_readiness
     report = audit_paper_trading_readiness(session)
-    return report.model_dump()
+    return report.to_dict()
 
 
 SYNTHETIC_BANKNIFTY_NOTICE = {
