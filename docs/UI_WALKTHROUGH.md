@@ -333,8 +333,12 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   - **State Persistence**: Current mode is stored under `imm_execution_mode` in `localStorage`.
   - **Fail-Closed Confirmation Modal**: Switching to `LIVE` triggers a modal requiring explicit confirmation. Live orders remain permanently locked if Kill Switch is engaged.
 - **`🛑 KILL SWITCH` / `🔄 Reset Kill Switch` Button**:
-  - Emergency circuit breaker: Immediately halts all automated trading, forces `imm_auto_trading_enabled` to `false` in `localStorage`, cancels open pending orders, and blocks new order generation.
-  - Displays red warning banner when tripped: *"Engine locked by operator. Open orders squared off. Reset to resume."*
+  - Emergency circuit breaker wired to the **server** kill switch (`POST /api/kill-switch`, audited). Pressing it locks this page immediately (auto-trading off, simulated orders squared off), then trips the server switch so new entries are blocked for every session, the worker and the risk gates. If the server call fails, the notice says the lock is local only.
+  - `🔄 Reset Kill Switch` clears the server switch. It is disabled while the out-of-band halt is active, and the page stays locked if the server still reports entries halted.
+  - Exits are never blocked by the kill switch, so open positions can still be closed.
+  - Status line `Server switch: clear | TRIPPED | UNKNOWN (entries blocked)` and `Out-of-band halt: clear | ACTIVE (<reasons>)`, refreshed from `GET /api/kill-switch` every 15 seconds. Any server-side halt also locks the page.
+  - Out-of-band halt: a halt file (`IMM_HALT_FILE`, default `var/run/HALT`) or a GPIO-style input (`IMM_HALT_GPIO_PATH`, halts when its value equals `IMM_HALT_GPIO_ACTIVE`, default `1`; an unreadable input also halts). It works with the database and UI down and can only be cleared at its source (`python -m app.cli halt clear` or the physical switch), never from this page.
+  - Displays red warning text when tripped: *"Engine locked. New entries blocked; exits still allowed. Reset to resume."*
 - **Risk Threshold Controls**:
   - `Max Lots per Trade`: Limits position size (default: 1 lot; persisted in `imm_max_lots`).
   - `Daily Loss Threshold (₹)`: Hard loss cap (default: ₹5,000; persisted in `imm_daily_loss_limit`); if cumulative daily loss reaches this limit, the Kill Switch trips automatically.

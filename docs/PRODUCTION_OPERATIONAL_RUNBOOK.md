@@ -80,10 +80,18 @@ flowchart TD
 
 ### 1. Tripping the Operational Kill Switch Manually
 If unusual volatility, broker quote disconnection, or exchange technical glitches occur:
-- **API Endpoint:** `POST /api/risk/kill-switch`
+- **UI:** `/live` → `🛑 KILL SWITCH` (calls the API below).
+- **API Endpoint:** `POST /api/kill-switch` (session + CSRF); read state with `GET /api/kill-switch`.
 - **Payload:** `{"enabled": true, "reason": "OPERATOR_EMERGENCY_LOCKOUT: [Details]"}`
+- **CLI:** `python -m app.cli kill-switch trip --reason "..."` (`status`, `clear`).
 - **Database Effect:** Sets `OpsState.kill_switch = True` and writes immutable audit record to `AuditEvent`.
-- **Immediate System Behavior:** All order proposals receive immediate `VETO: KILL_SWITCH` across all pipelines.
+- **Immediate System Behavior:** All new-entry proposals receive `VETO: KILL_SWITCH` across all pipelines. Exits remain allowed.
+
+### 1b. Out-of-Band Halt (works with the database, API or UI down)
+- **Halt file:** `python -m app.cli halt trip --reason "..."` or `touch var/run/HALT` (path set by `IMM_HALT_FILE`). Clear with `python -m app.cli halt clear` or `rm`.
+- **Hardware input:** set `IMM_HALT_GPIO_PATH` to a file holding the input level (e.g. `/sys/class/gpio/gpio17/value` wired to a physical switch) and `IMM_HALT_GPIO_ACTIVE` to the halting value (default `1`). If the configured input cannot be read, entries halt (fail closed).
+- **Checked by:** the risk gates (before any database read), paper simulation, the experimental-paper grant, the live-order guard, and the worker's analysis loop (the position monitor keeps running so exits and square-offs continue). `GET /health` and `GET /api/kill-switch` report it.
+- **Clearing:** only at its source. The API and UI cannot clear it.
 
 ### 2. Automated Circuit Breaker Tripping Remediation
 When the automated drift monitor trips the kill switch due to critical distribution shift ($\text{PSI} \ge 0.25$):

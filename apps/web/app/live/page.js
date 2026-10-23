@@ -166,6 +166,9 @@ export default function LiveTradingPage() {
   const [executionMode, setExecutionMode] = useState("PAPER"); // "PAPER" or "LIVE"
   const [showLiveConfirmModal, setShowLiveConfirmModal] = useState(false);
   const [killSwitchTriggered, setKillSwitchTriggered] = useState(false);
+  // Server-side state (source of truth): DB kill switch + out-of-band halt (file/GPIO)
+  const [serverHalt, setServerHalt] = useState(null);
+  const [killSwitchBusy, setKillSwitchBusy] = useState(false);
   const [maxLots, setMaxLots] = useState(1);
   const [dailyLossLimit, setDailyLossLimit] = useState(5000);
   const [activeTab, setActiveTab] = useState("ALL");
@@ -553,7 +556,40 @@ export default function LiveTradingPage() {
     setTimeout(() => setActionNotice(""), 5000);
   };
 
-  const handleKillSwitch = () => {
+  const applyServerHalt = useCallback((state) => {
+    setServerHalt(state);
+    // Any server-side halt (or an unknown switch) locks this page too
+    if (state?.entries_halted) setKillSwitchTriggered(true);
+  }, []);
+
+  const loadKillSwitch = useCallback(async () => {
+    try {
+      const res = await fetch("/api/kill-switch");
+      if (res.ok) applyServerHalt(await res.json());
+    } catch {
+      // Keep the last known state; the local lock is unaffected
+    }
+  }, [applyServerHalt]);
+
+  useEffect(() => {
+    loadKillSwitch();
+    const timer = setInterval(loadKillSwitch, 15000);
+    return () => clearInterval(timer);
+  }, [loadKillSwitch]);
+
+  const postKillSwitch = async (enabled, reason) => {
+    const res = await fetch("/api/kill-switch", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-csrf-token": csrf() },
+      body: JSON.stringify({ enabled, reason }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body) throw new Error(body?.message || `HTTP ${res.status}`);
+    return body;
+  };
+
+  const handleKillSwitch = async () => {
+    // Lock locally first so this page stops even if the server call fails
     setKillSwitchTriggered(true);
     setAutoTradingEnabled(false);
     try {
@@ -567,13 +603,39 @@ export default function LiveTradingPage() {
         status: "SQUARED_OFF",
       }))
     );
-    setActionNotice("🛑 EMERGENCY KILL SWITCH ACTIVATED! All active bot orders squared off. Order routing locked.");
+    setKillSwitchBusy(true);
+    try {
+      applyServerHalt(await postKillSwitch(true, "Emergency kill switch from /live"));
+      setActionNotice("🛑 KILL SWITCH ACTIVATED on the server. New entries are blocked for every session; simulated orders here squared off.");
+    } catch (err) {
+      setActionNotice(`⚠️ Server kill switch NOT confirmed (${err.message}). This page is locked locally only — trip it from the CLI or the halt file.`);
+    } finally {
+      setKillSwitchBusy(false);
+    }
   };
 
-  const handleResetKillSwitch = () => {
-    setKillSwitchTriggered(false);
-    setActionNotice("Kill Switch reset. Engine is in safe standby mode.");
-    setTimeout(() => setActionNotice(""), 4000);
+  const handleResetKillSwitch = async () => {
+    if (serverHalt?.external_halt?.halted) {
+      setActionNotice(`Out-of-band halt is active (${serverHalt.external_halt.reasons.join(", ")}). Clear it at its source first.`);
+      setTimeout(() => setActionNotice(""), 5000);
+      return;
+    }
+    setKillSwitchBusy(true);
+    try {
+      const state = await postKillSwitch(false, "Kill switch reset from /live");
+      setServerHalt(state);
+      if (state.entries_halted) {
+        setActionNotice("Server still reports entries halted; the lock stays on.");
+      } else {
+        setKillSwitchTriggered(false);
+        setActionNotice("Kill switch cleared on the server. Engine is in safe standby mode.");
+      }
+    } catch (err) {
+      setActionNotice(`⚠️ Kill switch not cleared (${err.message}). The lock stays on.`);
+    } finally {
+      setKillSwitchBusy(false);
+      setTimeout(() => setActionNotice(""), 5000);
+    }
   };
 
   const handleFireOrderAndWatch = async (inst, side, contract, price, rec) => {
@@ -1089,6 +1151,7 @@ export default function LiveTradingPage() {
                 <button
                   type="button"
                   onClick={handleKillSwitch}
+                  disabled={killSwitchBusy}
                   style={{
                     background: "#e11d48",
                     color: "#ffffff",
@@ -1107,6 +1170,8 @@ export default function LiveTradingPage() {
                 <button
                   type="button"
                   onClick={handleResetKillSwitch}
+                  disabled={killSwitchBusy || Boolean(serverHalt?.external_halt?.halted)}
+                  title={serverHalt?.external_halt?.halted ? "Out-of-band halt active: clear the halt file or GPIO input first" : "Clear the server kill switch"}
                   style={{
                     background: "#0284c7",
                     color: "#ffffff",
@@ -1124,10 +1189,20 @@ export default function LiveTradingPage() {
             </div>
             <div style={{ fontSize: "0.82rem", color: "#fecdd3", lineHeight: 1.5 }}>
               {killSwitchTriggered ? (
-                <strong style={{ color: "#ffffff" }}>Engine locked by operator. Open orders squared off. Reset to resume.</strong>
+                <strong style={{ color: "#ffffff" }}>Engine locked. New entries blocked; exits still allowed. Reset to resume.</strong>
               ) : (
                 <>Max daily loss threshold: <strong style={{ color: "#ffffff" }}>₹{dailyLossLimit.toLocaleString("en-IN")}</strong>. Mandatory stop-loss enforced on all trades.</>
               )}
+              <div data-testid="server-kill-switch-status" style={{ marginTop: "6px", fontSize: "0.76rem" }}>
+                Server switch:{" "}
+                <strong style={{ color: "#ffffff" }}>
+                  {serverHalt == null ? "unknown" : serverHalt.kill_switch == null ? "UNKNOWN (entries blocked)" : serverHalt.kill_switch ? "TRIPPED" : "clear"}
+                </strong>
+                {" · "}Out-of-band halt:{" "}
+                <strong style={{ color: "#ffffff" }}>
+                  {serverHalt?.external_halt?.halted ? `ACTIVE (${serverHalt.external_halt.reasons.join(", ")})` : serverHalt ? "clear" : "unknown"}
+                </strong>
+              </div>
             </div>
           </div>
         </div>

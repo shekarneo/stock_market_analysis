@@ -89,6 +89,12 @@ def run_paper_simulation(session: Session, body: dict, *, actor: str) -> dict:
         return _finish(session, actor, None, "MODE_NOT_PAPER", ["MODE_NOT_PAPER"], state=None, risk=None)
     if body.get("paper_approved") is True or body.get("live_approved") is True or body.get("real_market_data_verified") is True:
         return _finish(session, actor, None, "APPROVAL_FLAG_IGNORED", ["APPROVAL_FLAG_IGNORED"], state=None, risk=None)
+    from app.risk.external_halt import external_halt_status
+
+    halt = external_halt_status()
+    if halt["halted"]:
+        # Checked before any intent is opened, so a halted desk creates nothing
+        return _finish(session, actor, None, "EXTERNAL_HALT", ["EXTERNAL_HALT", *halt["reasons"]], state=None, risk=None)
     dataset = body.get("dataset") if isinstance(body.get("dataset"), dict) else None
     if not isinstance(dataset, dict):
         return _finish(session, actor, None, "LINEAGE_MISSING", ["LINEAGE_MISSING"], state=None, risk=None)
@@ -189,6 +195,10 @@ def _server_experimental(session: Session) -> bool:
     from app.config.store import current_config
     from app.risk.ledger import read_kill_switch
 
+    from app.risk.external_halt import external_halt_status
+
+    if external_halt_status()["halted"]:
+        return False
     try:
         config = current_config(session)
     except Exception:

@@ -20,6 +20,11 @@ def request_order(mode: OperatingMode, intent: dict, *, live_trading_enabled: bo
     LIVE_TRADING still cannot place an order in M0: the function raises
     LiveOrderDisabled and no broker client is imported.
     """
+    from app.risk.external_halt import external_halt_status
+
+    halt = external_halt_status()
+    if halt["halted"]:
+        raise ModeForbidden(f"Entries are halted by the out-of-band switch ({', '.join(halt['reasons'])}).")
     if mode is not OperatingMode.LIVE_TRADING:
         raise ModeForbidden(f"{mode.value} cannot call the live broker order function.")
     if not live_trading_enabled or not server_flag:

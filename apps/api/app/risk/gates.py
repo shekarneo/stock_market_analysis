@@ -120,6 +120,14 @@ def _mode_gate(mode: object, reasons: list[str]) -> dict:
 def _kill_switch_gate(session: Session | None, exit_intent: bool, reasons: list[str]) -> dict:
     if exit_intent:
         return _observed(_gate("kill_switch", "NOT_APPLICABLE", False, "KILL_SWITCH_DOES_NOT_BLOCK_EXIT"), _kill_observation("not_applicable", None))
+    # Out-of-band switch first: it needs no database and wins over everything else
+    from app.risk.external_halt import external_halt_status
+
+    halt = external_halt_status()
+    if halt["halted"]:
+        reasons.append("EXTERNAL_HALT")
+        reasons.extend(halt["reasons"])
+        return _observed(_gate("kill_switch", "VETO", True, "EXTERNAL_HALT"), _kill_observation("external_halt", True))
     if session is None:
         reasons.append("KILL_SWITCH_NOT_READ")
         return _observed(_gate("kill_switch", "NOT_EVALUATED", False, "KILL_SWITCH_NOT_READ"), _kill_observation("not_read", None))

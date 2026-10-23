@@ -140,6 +140,12 @@ class PasswordBody(BaseModel):
     new_password: str
 
 
+class KillSwitchBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+    reason: str = Field(min_length=3, max_length=300)
+
+
 class LiveOrderBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     note: str = ""
@@ -167,6 +173,9 @@ class WalkForwardBody(BaseModel):
 
 def settings_dep() -> Settings:
     return get_settings()
+
+
+from app.risk.external_halt import external_halt_status  # noqa: E402
 
 
 @app.get("/health")
@@ -201,6 +210,7 @@ def health(settings: Settings = Depends(settings_dep)) -> dict:
         "live_trading_enabled": live_trading_enabled,
         "live_order_server_flag": settings.live_order_server_flag,
         "kill_switch": kill_switch,
+        "external_halt": external_halt_status(),
     }
 
 
@@ -280,6 +290,55 @@ def write_password(
     change_password(session, current=body.current_password, new=body.new_password)
     session.add(AuditEvent(actor=principal.get("username", "operator"), action="account.password", entity="operator_accounts", before=None, after=None))
     return {"changed": True}
+
+
+def _kill_switch_payload(session: Session) -> dict:
+    from app.risk.ledger import read_kill_switch
+
+    try:
+        ops = session.get(OpsState, 1)
+        server = read_kill_switch(session)
+        note = ops.note if ops else None
+    except Exception:
+        server, note = None, None
+    halt = external_halt_status()
+    return {
+        "kill_switch": server,  # None = unknown (row missing or unreadable), never assumed off
+        "note": note,
+        "external_halt": halt,
+        "entries_halted": bool(server) or server is None or halt["halted"],
+    }
+
+
+@app.get("/api/kill-switch")
+def read_kill_switch_state(
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+) -> dict:
+    """Server kill switch plus the out-of-band halt. Exits stay allowed either way."""
+    read_session(request, settings)
+    return _kill_switch_payload(session)
+
+
+@app.post("/api/kill-switch")
+def write_kill_switch(
+    body: KillSwitchBody,
+    request: Request,
+    session: Session = Depends(get_db),
+    settings: Settings = Depends(settings_dep),
+) -> dict:
+    """Trip or clear the server kill switch (audited). The out-of-band halt is not
+    changed here: it is cleared only at its source (halt file or GPIO input)."""
+    from app.errors import AppError
+    from app.risk.ledger import set_kill_switch
+
+    principal = require_csrf(request, settings)
+    actor = f"ui:{principal.get('username') or principal.get('sub') or 'operator'}"
+    result = set_kill_switch(session, body.enabled, actor=actor, reason=body.reason.strip())
+    if not result.get("applied", True):
+        raise AppError(result.get("detail") or "KILL_SWITCH_NOT_APPLIED", "The kill switch was not changed.", 422)
+    return {**_kill_switch_payload(session), "changed": True}
 
 
 @app.get("/api/options/research")

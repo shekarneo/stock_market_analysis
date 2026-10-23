@@ -341,9 +341,16 @@ class Worker:
                     "status": "FOLLOWER_IDLE",
                 }
 
-            # Run loops
+            # Run loops. The out-of-band halt skips the analysis (entry) loop but keeps
+            # the position monitor running so exits and square-offs still happen.
+            from app.risk.external_halt import external_halt_status
+
+            halt = external_halt_status()
             pre_post = self.run_pre_post_market_loop(session, now=now)
-            analysis = self.run_analysis_loop(session, now=now)
+            if halt["halted"]:
+                analysis = {"loop": "analysis", "skipped": True, "reason": "EXTERNAL_HALT", "halt": halt}
+            else:
+                analysis = self.run_analysis_loop(session, now=now)
             positions = self.run_position_monitor_loop(session, now=now)
             drift = self.run_outcome_drift_loop(
                 session,

@@ -22,7 +22,10 @@ def research_status(session: Session, settings: Settings) -> dict:
     has_pos_limit = risk.max_open_positions is not None and risk.max_open_positions > 0
     has_risk_fraction = risk.max_risk_fraction_per_trade is not None and risk.max_risk_fraction_per_trade > 0
     has_daily_loss = risk.daily_loss_fraction is not None and risk.daily_loss_fraction > 0
-    kill_switch_active = bool(switch)
+    from app.risk.external_halt import external_halt_status
+
+    external_halt = external_halt_status()
+    kill_switch_active = bool(switch) or external_halt["halted"]
 
     virtual_risk_configured = has_capital and has_pos_limit and has_risk_fraction and has_daily_loss
     experimental_paper_enabled = (mode == "PAPER") and (not kill_switch_active) and virtual_risk_configured
@@ -51,6 +54,9 @@ def research_status(session: Session, settings: Settings) -> dict:
     if kill_switch_active:
         blockers.append({"code": "KILL_SWITCH_ACTIVE", "class": "risk"})
         experimental_blockers.append({"code": "KILL_SWITCH_ACTIVE", "class": "risk"})
+    if external_halt["halted"]:
+        blockers.append({"code": "EXTERNAL_HALT", "class": "risk"})
+        experimental_blockers.append({"code": "EXTERNAL_HALT", "class": "risk"})
     if mode != "PAPER":
         experimental_blockers.append({"code": "MODE_NOT_PAPER", "class": "operator"})
 
@@ -67,6 +73,8 @@ def research_status(session: Session, settings: Settings) -> dict:
         blockers.append({"code": "MARKET_DATA_UNVERIFIED", "class": "external"})
 
     return {
+        "external_halt": external_halt,
+
         # State 1: Operational Mode
         "mode": mode,
         "operational_mode": mode,

@@ -199,11 +199,16 @@ def cmd_kill_switch(args: argparse.Namespace) -> int:
     try:
         action = args.action.lower()
         if action == "status":
+            from app.risk.external_halt import external_halt_status
+
             ops = session.get(OpsState, 1)
-            is_tripped = False if ops is None else bool(ops.kill_switch)
-            reason = ops.note if ops else "No note"
-            print(f"Kill Switch Status: {'TRIPPED (HALTED)' if is_tripped else 'CLEARED (NORMAL)'}")
-            print(f"Current Note/Reason: {reason}")
+            if ops is None:
+                print("Kill Switch Status: UNKNOWN (no ops row; entries are not allowed)")
+            else:
+                print(f"Kill Switch Status: {'TRIPPED (HALTED)' if ops.kill_switch else 'CLEARED (NORMAL)'}")
+                print(f"Current Note/Reason: {ops.note or 'No note'}")
+            halt = external_halt_status()
+            print(f"Out-of-band halt   : {'ACTIVE ' + ', '.join(halt['reasons']) if halt['halted'] else 'clear'}")
             return 0
 
         if action == "trip":
@@ -222,6 +227,25 @@ def cmd_kill_switch(args: argparse.Namespace) -> int:
         return 1
     finally:
         session.close()
+
+
+def cmd_halt(args: argparse.Namespace) -> int:
+    """Out-of-band halt file: works with the database and API down."""
+    from app.risk.external_halt import clear_halt_file, external_halt_status, trip_halt_file
+
+    action = args.action.lower()
+    if action == "trip":
+        path = trip_halt_file(args.reason or "MANUAL_OUT_OF_BAND_HALT", actor="cli.operator")
+        print(f"Out-of-band halt ACTIVE: {path}")
+    elif action == "clear":
+        removed = clear_halt_file()
+        print("Halt file removed." if removed else "No halt file was present.")
+    halt = external_halt_status()
+    print(f"Entries halted: {halt['halted']} {', '.join(halt['reasons'])}".rstrip())
+    print(f"Halt file     : {halt['halt_file']}")
+    if halt["gpio_path"]:
+        print(f"GPIO input    : {halt['gpio_path']} = {halt['gpio_level']!r} (halts when {halt['gpio_active_value']!r})")
+    return 0
 
 
 def cmd_health(args: argparse.Namespace) -> int:
@@ -457,6 +481,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_retrain = subparsers.add_parser("retrain-live", help="Rebuild features, run the M3 holdout and register the live model")
     p_retrain.add_argument("--dataset-id", default=None, help="Stored history dataset id (omit to list them)")
     p_retrain.set_defaults(func=cmd_retrain_live)
+
+    # halt (out-of-band)
+    p_halt = subparsers.add_parser("halt", help="Out-of-band entry halt via a local halt file (no database needed)")
+    p_halt.add_argument("action", choices=["status", "trip", "clear"], help="Halt action")
+    p_halt.add_argument("--reason", default="", help="Reason written into the halt file")
+    p_halt.set_defaults(func=cmd_halt)
 
     # health
     p_health = subparsers.add_parser("health", help="Check operational health and invariants")
