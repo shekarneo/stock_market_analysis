@@ -325,3 +325,22 @@ Still open:
 4. `python -m app.cli research-daily [--with-pcr]` writes `var/datasets/research_daily_report.json` and prints every trial.
 
 **Results:** not yet run. This environment has no Groww token. Until the report exists, no edge claim is made.
+
+## Macro flows fix (2026-10-23): no invented releases, staleness, FII-led direction
+
+**Found in a live run:** the global-macro agent voted BULLISH because of FII/DII flows dated 2026-10-16, a week old. Those figures were themselves invented. When `var/market/macro_series.json` did not exist, `get_macro_observations` wrote a hard-coded snapshot labelled `VERIFIED_PUBLIC_REPORT`: FII −1245.5 Cr, DII +1850.25 Cr, USD/INR 95.08, US10Y 4.08. Missing values fell back to 0 or to those numbers. The direction also came from the net total, so FII selling offset by DII buying counted as bullish.
+
+**Fixed** (`app/market/macro_series.py`, `app/analysis/agent_nodes.py`):
+- **No file means no observations.** Nothing is written, and a series with a missing value is skipped instead of being filled.
+- **Staleness follows each release's publication schedule:**
+  - FII/DII at 17:30 IST, USD/INR at 13:30 IST, US10Y at the US close. Weekends are skipped.
+  - A release more than one business day behind the latest expected one is stale. It gets a `STALE: ...` limitation and no direction.
+- **FII-led direction:**
+  - BULLISH or BEARISH only when FII flow (at least ₹500 Cr) and net flow agree in sign.
+  - MIXED when DII flow offsets FII flow.
+  - UNKNOWN below ₹500 Cr.
+- **Macro agent:**
+  - Stale inputs are excluded from the vote and named in its findings.
+  - With no fresh directional factor it returns UNKNOWN with null confidence; it used to return NEUTRAL at 0.60.
+  - The latest daily release still counts during market hours, even though it is hours old.
+- **Still open:** nothing in the app fetches these releases. Until a real NSE/FBIL/Treasury fetcher fills `var/market/macro_series.json`, the macro stage reports these series as missing.

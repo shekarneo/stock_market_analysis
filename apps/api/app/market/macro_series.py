@@ -9,13 +9,15 @@ Usage Limitations:
 - These are daily settlement / reference indicators.
 - They MUST NOT be represented as intraday streaming prices.
 - If data is unavailable or retrieval fails, status remains MISSING_DATA.
+- Nothing is invented: without var/market/macro_series.json there are no observations.
+- A release older than its publication schedule allows is stale and has no direction.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -84,132 +86,188 @@ def save_macro_series(data: dict[str, Any], path: Path | None = None) -> None:
     temp.replace(target)
 
 
-def get_macro_observations(path: Path | None = None) -> list[dict[str, Any]]:
-    """Convert cached macro reference series into structured Analysis observations."""
+IST = timezone(timedelta(hours=5, minutes=30))
+
+# Business days a daily series may lag its latest expected publication before it is
+# stale (1 tolerates a single exchange holiday).
+STALE_AFTER_BUSINESS_DAYS = 1
+
+# Minimum absolute FII net flow (INR crore) treated as a directional signal.
+FII_SIGNAL_CRORES = 500.0
+
+
+def _num(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if out == out else None
+
+
+def _previous_business_day(day: date) -> date:
+    day -= timedelta(days=1)
+    while day.weekday() >= 5:
+        day -= timedelta(days=1)
+    return day
+
+
+def latest_expected_date(now: datetime, publish_time: time, tz: timezone = IST) -> date:
+    """The most recent business day whose release should already be published."""
+    local = now.astimezone(tz)
+    day = local.date()
+    if day.weekday() < 5 and local.time() >= publish_time:
+        return day
+    return _previous_business_day(day) if day.weekday() < 5 else _previous_business_day(day + timedelta(days=1))
+
+
+def business_days_behind(as_of: date, expected: date) -> int:
+    behind, cursor = 0, expected
+    while cursor > as_of:
+        cursor = _previous_business_day(cursor)
+        behind += 1
+    return behind
+
+
+def fii_dii_direction(fii: float, net: float) -> str:
+    """Implication for Indian equities, driven by foreign flows.
+
+    FII selling that domestic buying more than offsets (or the reverse) is MIXED, not
+    bullish; flows below the signal size carry no direction.
+    """
+    if abs(fii) < FII_SIGNAL_CRORES:
+        return "UNKNOWN"
+    if (fii > 0) == (net > 0):
+        return "BULLISH" if fii > 0 else "BEARISH"
+    return "MIXED"
+
+
+def _freshness(as_of_text: Any, now: datetime, publish_time: time, tz: timezone = IST) -> tuple[str | None, int | None, bool]:
+    """(as_of ISO date, business days behind, stale). Unparseable dates are stale."""
+    try:
+        as_of = date.fromisoformat(str(as_of_text)[:10])
+    except ValueError:
+        return None, None, True
+    behind = business_days_behind(as_of, latest_expected_date(now, publish_time, tz))
+    return as_of.isoformat(), behind, behind > STALE_AFTER_BUSINESS_DAYS
+
+
+def get_macro_observations(path: Path | None = None, now: datetime | None = None) -> list[dict[str, Any]]:
+    """Convert cached macro reference series into structured Analysis observations.
+
+    Only values present in the cached file are reported; nothing is invented or
+    defaulted. A series older than its publication schedule allows is marked stale
+    and carries no directional implication.
+    """
     cached = load_macro_series(path)
     if not cached:
-        # Provide default verified public reference snapshot if file not yet seeded
-        cached = {
-            "retrieved_at": datetime.now(timezone.utc).isoformat(),
-            "series": {
-                "FII_DII_FLOWS": {
-                    "instrument": "FII_DII_FLOWS",
-                    "fii_net_crores": -1245.50,
-                    "dii_net_crores": +1850.25,
-                    "net_total_crores": +604.75,
-                    "as_of_date": "2026-10-16",
-                    "source": "NSE Official Reports",
-                    "verification_status": "VERIFIED_PUBLIC_REPORT",
-                },
-                "USDINR_REF": {
-                    "instrument": "USDINR_REF",
-                    "rate": 95.08,
-                    "as_of_date": "2026-10-18",
-                    "source": "FBIL / RBI & ExchangeRate Reference",
-                    "verification_status": "VERIFIED_PUBLIC_REPORT",
-                },
-                "US10Y_YIELD": {
-                    "instrument": "US10Y_YIELD",
-                    "yield_pct": 4.08,
-                    "as_of_date": "2026-10-16",
-                    "source": "US Treasury Daily Yield Curve",
-                    "verification_status": "VERIFIED_PUBLIC_REPORT",
-                },
-            },
-        }
-        save_macro_series(cached, path)
-
+        return []
+    now = now or datetime.now(timezone.utc)
     series_map = cached.get("series") or {}
     observations = []
 
-    def _to_iso(date_str: str, time_suffix: str) -> str:
-        if not date_str:
-            return cached.get("retrieved_at") or datetime.now(timezone.utc).isoformat()
-        if "T" in date_str:
-            return date_str
-        return f"{date_str}T{time_suffix}"
+    def _stale_note(as_of: str | None, behind: int | None) -> str:
+        if as_of is None:
+            return "STALE: the release date is missing or unreadable."
+        return f"STALE: release dated {as_of} is {behind} business day(s) behind the latest expected release."
 
-    # 1. FII / DII Flows
+    # 1. FII / DII Flows (published 17:30 IST for that session)
     fii_data = series_map.get("FII_DII_FLOWS")
-    if fii_data and isinstance(fii_data, dict):
+    if isinstance(fii_data, dict):
         spec = MACRO_SERIES_SPECS["FII_DII_FLOWS"]
-        net_val = float(fii_data.get("net_total_crores", 0.0))
-        fii_val = float(fii_data.get("fii_net_crores", 0.0))
-        dii_val = float(fii_data.get("dii_net_crores", 0.0))
-        direction = "BULLISH" if net_val > 500.0 else ("BEARISH" if net_val < -500.0 else "NEUTRAL")
-        obs_time = _to_iso(str(fii_data.get("as_of_date") or "2026-10-16"), "17:30:00+05:30")
-        observations.append({
-            "instrument": "FII_DII_FLOWS",
-            "category": "MACRO",
-            "claim": f"NSE reported FII/DII net flows: FII {fii_val:+.1f} Cr, DII {dii_val:+.1f} Cr, Net total {net_val:+.1f} Cr.",
-            "claim_type": "OBSERVATION",
-            "source_name": spec["source"],
-            "provenance": "PROVIDER",
-            "last_price": net_val,
-            "unit": spec["units"],
-            "directional_implication": direction,
-            "time_horizon": "INTRADAY",
-            "data_class": "VERIFIED_PROVIDER_DATA",
-            "verification_status": fii_data.get("verification_status", "VERIFIED_PUBLIC_REPORT"),
-            "retrieved_at": cached.get("retrieved_at"),
-            "observed_at": obs_time,
-            "published_at": obs_time,
-            "details": {
-                "fii_net_crores": fii_val,
-                "dii_net_crores": dii_val,
-                "net_total_crores": net_val,
-            },
-            "limitations": [spec["limitations"], spec["publication_delay"]],
-        })
+        fii_val = _num(fii_data.get("fii_net_crores"))
+        dii_val = _num(fii_data.get("dii_net_crores"))
+        net_val = _num(fii_data.get("net_total_crores"))
+        if net_val is None and fii_val is not None and dii_val is not None:
+            net_val = fii_val + dii_val
+        as_of, behind, stale = _freshness(fii_data.get("as_of_date"), now, time(17, 30))
+        if fii_val is not None and dii_val is not None and net_val is not None and as_of is not None:
+            direction = "UNKNOWN" if stale else fii_dii_direction(fii_val, net_val)
+            limitations = [spec["limitations"], spec["publication_delay"]]
+            if stale:
+                limitations.insert(0, _stale_note(as_of, behind))
+            obs_time = f"{as_of}T17:30:00+05:30"
+            observations.append({
+                "instrument": "FII_DII_FLOWS",
+                "category": "MACRO",
+                "claim": (f"NSE reported FII/DII net flows for {as_of}: FII {fii_val:+.1f} Cr, "
+                          f"DII {dii_val:+.1f} Cr, Net total {net_val:+.1f} Cr."
+                          + (" (stale)" if stale else "")),
+                "claim_type": "OBSERVATION",
+                "source_name": fii_data.get("source") or spec["source"],
+                "provenance": "PROVIDER",
+                "last_price": net_val,
+                "unit": spec["units"],
+                "directional_implication": direction,
+                "time_horizon": "SHORT_TERM",
+                "data_class": "VERIFIED_PROVIDER_DATA",
+                "verification_status": fii_data.get("verification_status") or "UNVERIFIED",
+                "retrieved_at": cached.get("retrieved_at"),
+                "observed_at": obs_time,
+                "published_at": obs_time,
+                "stale": stale,
+                "business_days_behind": behind,
+                "details": {"fii_net_crores": fii_val, "dii_net_crores": dii_val, "net_total_crores": net_val},
+                "limitations": limitations,
+            })
 
-    # 2. USD/INR Reference Rate
+    # 2. USD/INR Reference Rate (published 13:30 IST)
     fx_data = series_map.get("USDINR_REF")
-    if fx_data and isinstance(fx_data, dict):
+    if isinstance(fx_data, dict):
         spec = MACRO_SERIES_SPECS["USDINR_REF"]
-        rate = float(fx_data.get("rate") or 95.08)
-        obs_time = _to_iso(str(fx_data.get("as_of_date") or "2026-10-16"), "13:30:00+05:30")
-        observations.append({
-            "instrument": "USDINR_REF",
-            "category": "MACRO",
-            "claim": f"FBIL/RBI published official USD/INR reference benchmark fixing at {rate:.2f}.",
-            "claim_type": "OBSERVATION",
-            "source_name": spec["source"],
-            "provenance": "PROVIDER",
-            "last_price": rate,
-            "unit": spec["units"],
-            "directional_implication": "NEUTRAL",
-            "time_horizon": "INTRADAY",
-            "data_class": "VERIFIED_PROVIDER_DATA",
-            "verification_status": fx_data.get("verification_status", "VERIFIED_PUBLIC_REPORT"),
-            "retrieved_at": cached.get("retrieved_at"),
-            "observed_at": obs_time,
-            "published_at": obs_time,
-            "limitations": [spec["limitations"], spec["publication_delay"]],
-        })
+        rate = _num(fx_data.get("rate"))
+        as_of, behind, stale = _freshness(fx_data.get("as_of_date"), now, time(13, 30))
+        if rate is not None and as_of is not None:
+            obs_time = f"{as_of}T13:30:00+05:30"
+            observations.append({
+                "instrument": "USDINR_REF",
+                "category": "MACRO",
+                "claim": f"FBIL/RBI USD/INR reference rate for {as_of}: {rate:.2f}." + (" (stale)" if stale else ""),
+                "claim_type": "OBSERVATION",
+                "source_name": fx_data.get("source") or spec["source"],
+                "provenance": "PROVIDER",
+                "last_price": rate,
+                "unit": spec["units"],
+                "directional_implication": "UNKNOWN",
+                "time_horizon": "SHORT_TERM",
+                "data_class": "VERIFIED_PROVIDER_DATA",
+                "verification_status": fx_data.get("verification_status") or "UNVERIFIED",
+                "retrieved_at": cached.get("retrieved_at"),
+                "observed_at": obs_time,
+                "published_at": obs_time,
+                "stale": stale,
+                "business_days_behind": behind,
+                "limitations": ([_stale_note(as_of, behind)] if stale else []) + [spec["limitations"], spec["publication_delay"]],
+            })
 
-    # 3. US 10Y Yield
+    # 3. US 10Y Yield (US close; dated in US Eastern business days, approximated here by UTC)
     y_data = series_map.get("US10Y_YIELD")
-    if y_data and isinstance(y_data, dict):
+    if isinstance(y_data, dict):
         spec = MACRO_SERIES_SPECS["US10Y_YIELD"]
-        y_val = float(y_data.get("yield_pct") or 4.08)
-        obs_time = _to_iso(str(y_data.get("as_of_date") or "2026-10-16"), "21:00:00+00:00")
-        observations.append({
-            "instrument": "US10Y_YIELD",
-            "category": "MACRO",
-            "claim": f"US Treasury benchmark 10-Year Constant Maturity Yield closed at {y_val:.2f}% p.a.",
-            "claim_type": "OBSERVATION",
-            "source_name": spec["source"],
-            "provenance": "PROVIDER",
-            "last_price": y_val,
-            "unit": spec["units"],
-            "directional_implication": "NEUTRAL",
-            "time_horizon": "INTRADAY",
-            "data_class": "VERIFIED_PROVIDER_DATA",
-            "verification_status": y_data.get("verification_status", "VERIFIED_PUBLIC_REPORT"),
-            "retrieved_at": cached.get("retrieved_at"),
-            "observed_at": obs_time,
-            "published_at": obs_time,
-            "limitations": [spec["limitations"], spec["publication_delay"]],
-        })
+        y_val = _num(y_data.get("yield_pct"))
+        as_of, behind, stale = _freshness(y_data.get("as_of_date"), now, time(21, 0), timezone.utc)
+        if y_val is not None and as_of is not None:
+            obs_time = f"{as_of}T21:00:00+00:00"
+            observations.append({
+                "instrument": "US10Y_YIELD",
+                "category": "MACRO",
+                "claim": f"US 10-Year Treasury yield closed at {y_val:.2f}% p.a. on {as_of}." + (" (stale)" if stale else ""),
+                "claim_type": "OBSERVATION",
+                "source_name": y_data.get("source") or spec["source"],
+                "provenance": "PROVIDER",
+                "last_price": y_val,
+                "unit": spec["units"],
+                "directional_implication": "UNKNOWN",
+                "time_horizon": "SHORT_TERM",
+                "data_class": "VERIFIED_PROVIDER_DATA",
+                "verification_status": y_data.get("verification_status") or "UNVERIFIED",
+                "retrieved_at": cached.get("retrieved_at"),
+                "observed_at": obs_time,
+                "published_at": obs_time,
+                "stale": stale,
+                "business_days_behind": behind,
+                "limitations": ([_stale_note(as_of, behind)] if stale else []) + [spec["limitations"], spec["publication_delay"]],
+            })
 
     return observations

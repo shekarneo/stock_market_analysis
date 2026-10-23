@@ -87,10 +87,19 @@ def test_news_classifier_exclusions_and_ambiguity():
     assert src_res["classification_provenance"] == "SOURCE_PROVIDED"
 
 
-def test_macro_series_observations_valid_evidence():
+def test_macro_series_observations_valid_evidence(tmp_path):
     """Verify official macro series produce valid EvidenceItem entries."""
+    import json
+
     now = datetime.now(timezone.utc)
-    obs = get_macro_observations()
+    path = tmp_path / "macro_series.json"
+    path.write_text(json.dumps({"retrieved_at": now.isoformat(), "series": {
+        "FII_DII_FLOWS": {"fii_net_crores": -1245.5, "dii_net_crores": 1850.25, "net_total_crores": 604.75,
+                          "as_of_date": "2026-10-16", "verification_status": "VERIFIED_PUBLIC_REPORT"},
+        "USDINR_REF": {"rate": 95.08, "as_of_date": "2026-10-18"},
+        "US10Y_YIELD": {"yield_pct": 4.08, "as_of_date": "2026-10-16"},
+    }}), encoding="utf-8")
+    obs = get_macro_observations(path)
     assert len(obs) >= 3
 
     insts = {o["instrument"] for o in obs}

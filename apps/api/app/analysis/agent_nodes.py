@@ -54,6 +54,19 @@ def _safe_float(val: Any) -> float | None:
         return None
 
 
+# Daily post-close releases: their freshness comes from the source's release-date check
+# (app.market.macro_series), because the newest release is always hours old intraday.
+DAILY_RELEASE_INSTRUMENTS = {"FII_DII_FLOWS", "USDINR_REF", "US10Y_YIELD"}
+
+
+def _is_stale(evidence: dict) -> bool:
+    if evidence.get("stale") is True or any(str(n).startswith("STALE") for n in evidence.get("limitations") or []):
+        return True
+    if evidence.get("instrument") in DAILY_RELEASE_INSTRUMENTS:
+        return False
+    return evidence.get("freshness") in {"STALE", "UNKNOWN"}
+
+
 def _skipped_output(role_name: str, display_name: str, cfg: SingleAgentConfig | None) -> AgentOutput:
     return AgentOutput(
         agent_id=role_name,
@@ -542,12 +555,22 @@ def global_macro_analyst_node(state: AnalysisState) -> dict:
         bull_count = sum(1 for m in crude_moves if m == "UP")
         bear_count = sum(1 for m in crude_moves if m == "DOWN")
     else:
-        bull_count = sum(1 for e in macro_evidence if e.get("directional_implication") == "BULLISH")
-        bear_count = sum(1 for e in macro_evidence if e.get("directional_implication") == "BEARISH")
+        # Only fresh evidence votes; a stale release (e.g. week-old FII/DII flows) is reported, not counted.
+        stale = [e for e in macro_evidence if _is_stale(e)]
+        if stale:
+            findings.append("Stale macro inputs excluded from the vote: "
+                            + ", ".join(sorted({str(e.get("instrument")) for e in stale})) + ".")
+        voting = [e for e in macro_evidence if not _is_stale(e)]
+        bull_count = sum(1 for e in voting if e.get("directional_implication") == "BULLISH")
+        bear_count = sum(1 for e in voting if e.get("directional_implication") == "BEARISH")
     vix_item = next((e for e in macro_evidence if is_india_vix_row(e)), None)
     vix_val = _safe_float(vix_item.get("last_price")) if vix_item else None
 
-    if bull_count > bear_count:
+    if bull_count == 0 and bear_count == 0:
+        directional_bias = "UNKNOWN"
+        confidence = None
+        findings.append("No fresh directional macro factor; no macro vote is cast.")
+    elif bull_count > bear_count:
         directional_bias = "BULLISH"
         confidence = 0.65 + min(0.20, (bull_count - bear_count) * 0.04)
         findings.append(f"Global macro tailwinds net positive: {bull_count} bullish vs {bear_count} bearish macro factors.")
@@ -576,7 +599,7 @@ def global_macro_analyst_node(state: AnalysisState) -> dict:
         t0=t0,
         findings=findings,
         directional_bias=directional_bias,
-        confidence=round(confidence, 2),
+        confidence=round(confidence, 2) if confidence is not None else None,
         evidence_references=[e.get("evidence_id") for e in macro_evidence if e.get("evidence_id")],
         missing_evidence=missing_instruments,
         limitations=["Macro signals are unverified for cross-market correlation."],
