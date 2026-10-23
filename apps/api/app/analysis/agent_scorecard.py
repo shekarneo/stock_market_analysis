@@ -174,6 +174,22 @@ def summarize(path: Path | None = None) -> dict:
             "first_call": min((r["made_at"] for r in rows), default=None), "agents": table}
 
 
+def evidence_by_agent(path: Path | None = None) -> dict[str, dict]:
+    """Per agent: scorecard status and the hit rate of its best-sampled horizon (consensus input).
+
+    Never raises: an unreadable scorecard means every agent is treated as unmeasured.
+    """
+    try:
+        agents = summarize(path)["agents"]
+    except Exception:  # noqa: BLE001
+        return {}
+    out = {}
+    for name, row in agents.items():
+        best = max((row["rest_of_day"], row["next_session"]), key=lambda s: s.get("n", 0))
+        out[name] = {"status": row["status"], "hit_rate": best.get("hit_rate"), "n": best.get("n", 0)}
+    return out
+
+
 def closes_from_history(rows_1d: list[list] | None) -> dict[str, float]:
     return {str(r[0])[:10]: float(r[4]) for r in rows_1d or []}
 

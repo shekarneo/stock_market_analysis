@@ -198,6 +198,12 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   - Quant ML Model: the registered 15-minute model, if any.
   - Risk & Uncertainty: the disagreement gate (0.45 cutoff).
   - Final Decision: weighted consensus plus safety vetoes.
+- **Track record pill** (next to `W_eff` on each agent card): how the agent's track record set its weight in the consensus.
+  - `Track record: replayed history` (green): measured on years of NIFTY data. Full weight, scaled by skill (2 × hit rate − 1).
+  - `Track record: PROVEN` (green): proven by the forward scorecard (at least 30 scored calls, p < 0.05). Full weight, using its scored hit rate.
+  - `Track record: none yet · 10% weight` (amber): its calls have not been scored enough yet, so it keeps 10% of its stated weight.
+  - `Track record: no edge · no weight` or `worse than chance · no weight` (red): the scorecard found no edge, so it gets zero weight. `W_eff` then reads `0.0 (no proven edge)`.
+  - **Effect**: an unproven agent can no longer outvote one with a measured record. When nothing proven carries enough weight, the `INSUFFICIENT_SPECIALIST_WEIGHT` veto keeps the verdict at stand aside.
 - **Trend & Momentum reference close**: when the live quote has no OHLC, the previous session's close comes from the saved Groww daily history, and the finding names that date.
 - **`⚡ Run Live Analysis`**: a full run with LLM agents can take over a minute. The web proxy allows up to 3 minutes (`proxyTimeout` in `apps/web/next.config.js`); before, runs longer than 30 s showed `Analysis failed (500)`.
        - `Research & Catalog Reference Desks (4)`: Intermarket & MCX 🛢️ (`Catalog Ref`), Mean Reversion 🔄 (`Catalog Ref`), HTF Resampling ⏱ (`Catalog Ref`), Expected Net Payoff 💰 (`Payoff Model`).

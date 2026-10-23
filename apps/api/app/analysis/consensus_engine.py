@@ -54,6 +54,13 @@ class SpecialistScore:
     is_probability: bool = False
     is_calibrated: bool = False
     provenance_verified: bool = False
+    # How the agent's track record set its weight (see evaluate_multi_agent_consensus(evidence=...))
+    evidence_status: str = "NOT_EVALUATED"
+    evidence_factor: float = 1.0
+
+
+# An agent whose calls have not been scored yet keeps only this share of its weight
+UNMEASURED_WEIGHT_FACTOR = 0.10
 
 
 @dataclass
@@ -141,9 +148,17 @@ def evaluate_multi_agent_consensus(
     uncertainty_veto_threshold: float = 0.45,
     consensus_activation_threshold: float = 0.30,
     provenance_verified: bool | None = None,
+    evidence: dict[str, dict[str, Any]] | None = None,
 ) -> ConsensusEvaluation:
     """Compute quantitative consensus weighting, entropy, and risk vetoes.
-    
+
+    evidence (role -> {"status", "hit_rate"} from the forward agent scorecard), when given,
+    makes weight follow track records: a call with a measured history record (semantic
+    MEASURED_HIT_RATE) or a PROVEN scorecard keeps full weight scaled by its skill
+    (2 x hit rate - 1); NO_EDGE_YET / WORSE_THAN_CHANCE get no weight; anything not yet
+    scored keeps UNMEASURED_WEIGHT_FACTOR of its weight. Without evidence, weights are
+    the stated ones (unchanged behaviour).
+
     Guarantees:
     - Point-in-time causality: Only evaluates data available in agent_outputs and state.
     - Zero future leakage: Evaluated purely on current analysis cycle.
@@ -218,7 +233,21 @@ def evaluate_multi_agent_consensus(
         is_cal = bool(out.get("is_calibrated", False))
         node_prov = bool(out.get("provenance_verified", provenance_verified))
 
-        # Effective weight: Base weight * confidence * quality.
+        # Track-record weighting (only when the caller supplies scorecard evidence)
+        ev_status, ev_factor = "NOT_EVALUATED", 1.0
+        if evidence is not None and bias_str in {"BULLISH", "BEARISH", "NEUTRAL"}:
+            record = evidence.get(role) or {}
+            if sem_type == "MEASURED_HIT_RATE" and is_cal:
+                ev_status = "MEASURED_HISTORY"
+            elif record.get("status") == "PROVEN" and record.get("hit_rate") is not None:
+                ev_status = "PROVEN_FORWARD"
+                conf = max(0.0, min(1.0, 2.0 * float(record["hit_rate"]) - 1.0))
+            elif record.get("status") in ("NO_EDGE_YET", "WORSE_THAN_CHANCE"):
+                ev_status, ev_factor = str(record["status"]), 0.0
+            else:
+                ev_status, ev_factor = "UNMEASURED", UNMEASURED_WEIGHT_FACTOR
+
+        # Effective weight: Base weight * confidence * quality (* track-record factor).
         # Zero weight for: fallback options node, failed/skipped nodes, a bias that carries
         # no directional information (UNKNOWN/MIXED), or no reported confidence.
         if role == AgentRole.OPTIONS.value and is_fallback:
@@ -228,7 +257,7 @@ def evaluate_multi_agent_consensus(
         elif bias_str not in {"BULLISH", "BEARISH", "NEUTRAL"} or conf is None:
             w_eff = 0.0
         else:
-            w_eff = w_base * conf * q_score
+            w_eff = w_base * conf * q_score * ev_factor
 
         specialist_scores[role] = SpecialistScore(
             role=role,
@@ -242,6 +271,8 @@ def evaluate_multi_agent_consensus(
             is_probability=is_prob,
             is_calibrated=is_cal,
             provenance_verified=node_prov,
+            evidence_status=ev_status,
+            evidence_factor=ev_factor,
         )
 
     # Step 2: Compute weighted consensus score

@@ -439,6 +439,13 @@ def _previous_session_close(instrument: str | None, state: AnalysisState) -> tup
         return None, None
 
 
+def _agent_evidence() -> dict[str, dict]:
+    """Forward scorecard per agent; agents without scored calls count as unmeasured."""
+    from app.analysis.agent_scorecard import evidence_by_agent
+
+    return evidence_by_agent()
+
+
 def technical_stated_confidence(ret: float) -> float:
     """The rule's own (unfitted) confidence for a move of `ret`; replaced by the measured hit rate when available."""
     return min(0.80, 0.60 + abs(ret) * 10)
@@ -999,8 +1006,8 @@ def risk_uncertainty_analyst_node(state: AnalysisState) -> dict:
     if is_sideways:
         findings.append("RISK VETO: Market is in sideways consolidation regime (M28 filter). Mandating NO_TRADE.")
 
-    # Quantitative Consensus & Uncertainty Gating (M38)
-    consensus_eval = evaluate_multi_agent_consensus(agent_outputs, state)
+    # Quantitative Consensus & Uncertainty Gating (M38), weighted by each agent's track record
+    consensus_eval = evaluate_multi_agent_consensus(agent_outputs, state, evidence=_agent_evidence())
     findings.append(
         f"Consensus directional score: {consensus_eval.consensus_score:+.2f}, "
         f"Epistemic uncertainty: {consensus_eval.epistemic_uncertainty:.2f}, "
@@ -1070,8 +1077,8 @@ def final_decision_agent_node(state: AnalysisState) -> dict:
     if "CONFLICT DETECTED" in risk_findings:
         reason_codes.append("SPECIALIST_BIAS_CONFLICT")
 
-    # Evaluate dynamic multi-agent consensus (M38)
-    consensus_eval = evaluate_multi_agent_consensus(agent_outputs, state)
+    # Evaluate dynamic multi-agent consensus (M38), weighted by each agent's track record
+    consensus_eval = evaluate_multi_agent_consensus(agent_outputs, state, evidence=_agent_evidence())
     for rc in consensus_eval.reason_codes:
         if rc not in reason_codes:
             reason_codes.append(rc)

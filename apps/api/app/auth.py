@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import hmac
 import secrets
+import time
 
 from fastapi import Request, Response
-from itsdangerous import BadSignature, URLSafeTimedSerializer
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from app.errors import AppError
 from app.settings import Settings
 
 SESSION_COOKIE = "imm_session"
 CSRF_COOKIE = "imm_csrf"
+SESSION_MAX_AGE_SECONDS = 60 * 60 * 12
+CLOCK_SKEW_TOLERANCE_SECONDS = 120
 
 
 def _serializer(settings: Settings) -> URLSafeTimedSerializer:
@@ -47,7 +50,15 @@ def read_session(request: Request, settings: Settings) -> dict:
     if not raw:
         raise AppError("UNAUTHENTICATED", "Sign in required.", 401)
     try:
-        payload = _serializer(settings).loads(raw, max_age=60 * 60 * 12)
+        payload = _serializer(settings).loads(raw, max_age=SESSION_MAX_AGE_SECONDS)
+    except SignatureExpired as exc:
+        # A clock that steps backwards (NTP/VM time sync) makes a fresh token look signed in
+        # the future; tolerate a small skew, but never extend the 12-hour lifetime.
+        signed = exc.date_signed
+        skew = signed.timestamp() - time.time() if signed else None
+        if skew is None or not 0 < skew <= CLOCK_SKEW_TOLERANCE_SECONDS:
+            raise AppError("UNAUTHENTICATED", "Sign in required.", 401) from exc
+        payload = _serializer(settings).loads(raw)
     except BadSignature as exc:
         raise AppError("UNAUTHENTICATED", "Sign in required.", 401) from exc
     if payload.get("sub") != "operator":

@@ -408,3 +408,15 @@ Still open:
   - Calls are scored against the session close and the next close from saved Groww history.
   - Status: COLLECTING (fewer than 30 scored), then PROVEN, NO_EDGE_YET or WORSE_THAN_CHANCE.
   - This is the only honest test for the news, macro and LLM-assisted agents, because a historical replay would leak the future.
+
+## Consensus weighted by track record (2026-10-23)
+
+**Problem seen live:** at 15:23 IST NIFTY was above the previous close, and the measured technical agent said BULLISH (weight 0.05). The unmeasured news and macro agents said BEARISH with stated confidences of 0.65 and 0.69 (weights 0.33 and 0.24), so the consensus was −0.84 against the price.
+
+**Change** (`consensus_engine.evaluate_multi_agent_consensus(evidence=...)`; the decision nodes pass the forward scorecard):
+- **Measured on history** (`MEASURED_HIT_RATE`) or **PROVEN** on the scorecard: full weight, with confidence = skill (2 × hit − 1). A PROVEN agent uses its scored hit rate.
+- **NO_EDGE_YET / WORSE_THAN_CHANCE:** weight 0.
+- **Unmeasured** (no scored calls, or still COLLECTING): 10% of its stated weight (`UNMEASURED_WEIGHT_FACTOR`).
+- **Unchanged:** direct engine calls without evidence keep the stated weights. Each specialist score now carries `evidence_status` and `evidence_factor`.
+
+**Result in the UI (15:30 IST):** news 0.33 → 0.03, macro 0.24 → 0.02, technical 0.07 (now the largest). The total proven weight was 0.13, so the verdict stayed at stand aside.

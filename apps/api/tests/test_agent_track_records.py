@@ -138,6 +138,76 @@ def test_consensus_weights_measured_agents_by_skill():
     assert compute_specialist_confidence({"confidence": 0.8}) == 0.8  # stated confidences unchanged
 
 
+def _today_outputs() -> dict:
+    """23 Oct 15:23 IST: price above yesterday's close; news and macro still bearish."""
+    measured = {"status": "SUCCESS", "directional_bias": "BULLISH", "confidence": 0.524,
+                "semantic_type": "MEASURED_HIT_RATE", "is_calibrated": True, "findings": []}
+    stated = {"status": "SUCCESS", "semantic_type": "HEURISTIC_SIGNAL_STRENGTH", "findings": []}
+    return {"technical_analyst": measured,
+            "news_event_analyst": {**stated, "directional_bias": "BEARISH", "confidence": 0.65},
+            "global_macro_analyst": {**stated, "directional_bias": "BEARISH", "confidence": 0.69}}
+
+
+def test_without_evidence_the_stated_weights_are_unchanged():
+    from app.analysis.consensus_engine import evaluate_multi_agent_consensus
+
+    ev = evaluate_multi_agent_consensus(_today_outputs(), provenance_verified=True)
+    scores = ev.specialist_scores
+    assert scores["news_event_analyst"]["evidence_status"] == "NOT_EVALUATED"
+    assert ev.consensus_score < -0.5  # unmeasured bearish agents dominate, as before
+
+
+def test_unmeasured_agents_keep_a_tenth_of_their_weight():
+    from app.analysis.consensus_engine import UNMEASURED_WEIGHT_FACTOR, evaluate_multi_agent_consensus
+
+    before = evaluate_multi_agent_consensus(_today_outputs(), provenance_verified=True).specialist_scores
+    ev = evaluate_multi_agent_consensus(_today_outputs(), provenance_verified=True, evidence={})
+    s = ev.specialist_scores
+    assert s["technical_analyst"]["evidence_status"] == "MEASURED_HISTORY"
+    assert s["technical_analyst"]["effective_weight"] == pytest.approx(before["technical_analyst"]["effective_weight"])
+    for role in ("news_event_analyst", "global_macro_analyst"):
+        assert s[role]["evidence_status"] == "UNMEASURED"
+        assert s[role]["effective_weight"] == pytest.approx(before[role]["effective_weight"] * UNMEASURED_WEIGHT_FACTOR)
+    # Neither side has real evidence of skill, so no strong direction comes out
+    assert abs(ev.consensus_score) < 0.30 and ev.directional_recommendation == "NEUTRAL"
+
+
+def test_proven_and_disproven_scorecards_set_the_weight():
+    from app.analysis.consensus_engine import evaluate_multi_agent_consensus
+
+    evidence = {"news_event_analyst": {"status": "PROVEN", "hit_rate": 0.62},
+                "global_macro_analyst": {"status": "NO_EDGE_YET", "hit_rate": 0.51}}
+    s = evaluate_multi_agent_consensus(_today_outputs(), provenance_verified=True, evidence=evidence).specialist_scores
+    assert s["news_event_analyst"]["evidence_status"] == "PROVEN_FORWARD"
+    assert s["news_event_analyst"]["confidence"] == pytest.approx(0.24)  # skill 2 x 0.62 - 1
+    assert s["global_macro_analyst"]["evidence_status"] == "NO_EDGE_YET"
+    assert s["global_macro_analyst"]["effective_weight"] == 0.0
+
+
+def test_decision_node_weights_by_the_live_scorecard(monkeypatch):
+    from app.analysis import agent_nodes
+
+    monkeypatch.setattr(agent_nodes, "_agent_evidence", lambda: {})  # nothing scored yet
+    state = {"instruments": ["NIFTY"], "agent_outputs": _today_outputs(), "evidence": [], "missing": [],
+             "quality": {"status": "GOOD"}, "report": {}, "created_at": "2026-10-23T09:53:00+00:00"}
+    report = agent_nodes.final_decision_agent_node(state)["report"]
+    scores = report["consensus"]["specialist_scores"]
+    assert scores["news_event_analyst"]["evidence_status"] == "UNMEASURED"
+    assert scores["technical_analyst"]["evidence_status"] == "MEASURED_HISTORY"
+    assert report["consensus"]["directional_recommendation"] == "NEUTRAL"
+    assert report["decision"] == "NO_TRADE"
+
+
+def test_evidence_by_agent_reads_the_scorecard(tmp_path):
+    path = tmp_path / "calls.jsonl"
+    rows = [{"agent": "news_event_analyst", "bias": "BULLISH", "made_at": f"2026-01-{i % 28 + 1:02d}T12:00:00+05:30",
+             "outcome": {"rest_of_day_return": 0.01 if i % 10 else -0.01, "next_session_return": None}} for i in range(60)]
+    sc._write(path, rows)
+    ev = sc.evidence_by_agent(path)
+    assert ev["news_event_analyst"]["status"] == "PROVEN" and ev["news_event_analyst"]["hit_rate"] == pytest.approx(0.9)
+    assert sc.evidence_by_agent(tmp_path / "missing.jsonl") == {}
+
+
 def _report(bias: str) -> dict:
     return {"analysis_id": f"a-{bias}", "agent_outputs": {
         "technical_analyst": {"status": "SUCCESS", "directional_bias": bias, "confidence": 0.548},

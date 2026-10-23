@@ -4,6 +4,15 @@ import { useEffect, useState } from "react";
 import { useMarketData } from "./MarketDataContext";
 import { csrfToken } from "./session";
 
+// How an agent's track record set its consensus weight (consensus specialist_scores[].evidence_status)
+const TRACK_RECORD_LABEL = {
+  MEASURED_HISTORY: { text: "Track record: replayed history", bg: "rgba(16, 185, 129, 0.12)", color: "#34d399" },
+  PROVEN_FORWARD: { text: "Track record: PROVEN", bg: "rgba(16, 185, 129, 0.18)", color: "#34d399" },
+  UNMEASURED: { text: "Track record: none yet · 10% weight", bg: "rgba(245, 158, 11, 0.12)", color: "#fbbf24" },
+  NO_EDGE_YET: { text: "Track record: no edge · no weight", bg: "rgba(244, 63, 94, 0.12)", color: "#fb7185" },
+  WORSE_THAN_CHANCE: { text: "Track record: worse than chance · no weight", bg: "rgba(244, 63, 94, 0.15)", color: "#fb7185" },
+};
+
 // Distinctly catalog 8 implemented LangGraph agents vs 4 research/catalog reference desks
 const AGENT_CATALOG = [
   // 8 Implemented LangGraph Specialist Agents
@@ -816,11 +825,20 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
                     </span>
                     {isZeroWeight ? (
                       <span style={{ fontSize: "0.58rem", padding: "1px 4px", borderRadius: "3px", background: "rgba(244, 63, 94, 0.15)", color: "#fb7185", fontWeight: 700 }} title="Zero effective weight in consensus aggregation">
-                        W_eff: 0.0 (Fallback)
+                        W_eff: 0.0 ({["NO_EDGE_YET", "WORSE_THAN_CHANCE"].includes(specScore.evidence_status) ? "no proven edge" : "Fallback"})
                       </span>
                     ) : effectiveWeight !== null ? (
                       <span style={{ fontSize: "0.58rem", padding: "1px 4px", borderRadius: "3px", background: "rgba(255, 255, 255, 0.05)", color: "#94a3b8" }} title="Effective quality-weighted consensus weight">
                         W_eff: {effectiveWeight.toFixed(2)}
+                      </span>
+                    ) : null}
+                    {TRACK_RECORD_LABEL[specScore.evidence_status] ? (
+                      <span
+                        data-testid={`track-record-${agent.id}`}
+                        style={{ fontSize: "0.58rem", padding: "1px 4px", borderRadius: "3px", background: TRACK_RECORD_LABEL[specScore.evidence_status].bg, color: TRACK_RECORD_LABEL[specScore.evidence_status].color, fontWeight: 700 }}
+                        title="How this agent's track record set its consensus weight"
+                      >
+                        {TRACK_RECORD_LABEL[specScore.evidence_status].text}
                       </span>
                     ) : null}
                   </div>

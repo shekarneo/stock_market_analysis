@@ -35,6 +35,15 @@ from app.analysis.graph import build_graph
 from app.analysis.state import AnalysisState
 
 
+@pytest.fixture(autouse=True)
+def _stated_weights(monkeypatch):
+    """These scenarios test veto mechanics with the agents' stated weights. Track-record
+    weighting (unmeasured agents keep 10%) is tested in test_agent_track_records.py."""
+    from app.analysis import agent_nodes
+
+    monkeypatch.setattr(agent_nodes, "_agent_evidence", lambda: None)
+
+
 def _make_base_state(
     *,
     prices: list[float] | None = None,
