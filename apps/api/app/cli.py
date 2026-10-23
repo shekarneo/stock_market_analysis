@@ -8,6 +8,7 @@ Provides unified operational, quantitative, and administrative control commands:
 5. `attribution`: Executes statistical factor attribution & feature explainability benchmark.
 6. `kill-switch`: Queries, trips, or clears the emergency operational kill switch.
 7. `health`: Checks database connectivity, seed configuration, and safety invariant flags.
+8. `fetch-history` / `research-daily`: multi-year Groww history and honest daily/half-day research.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ from app.execution.paper_simulation_harness import run_nifty_swing_paper_simulat
 from app.forecasting.m41_factor_attribution import run_m41_factor_attribution_benchmark
 from app.monitoring.drift_detector import run_nifty_benchmark_drift_audit
 from app.research.paper_readiness_audit import audit_paper_trading_readiness
-from app.risk.ledger import read_kill_switch, set_kill_switch
+from app.risk.ledger import set_kill_switch
 from app.settings import REPO_ROOT, get_settings
 
 
@@ -429,6 +430,143 @@ def cmd_refresh_expiries(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_fetch_history(args: argparse.Namespace) -> int:
+    """Download multi-year candles from the Groww Historical Data API (2020 onwards).
+
+    Saved under var/datasets/history/. Failed windows are logged in each file and
+    never filled; re-running merges new candles into the saved series.
+    """
+    from app.db import get_session_factory
+    from app.instrument_specs import strike_step_for
+    from app.integrations.groww import read_contracts, read_expiries, read_historical_candles
+    from app.integrations.http import HttpxCaller
+    from app.integrations.service import groww_read_token
+    from app.market import history_loader as hl
+    from app.market.instrument_master import expiries_from_api_payload
+
+    session = get_session_factory()()
+    try:
+        token = groww_read_token(session, get_settings())
+    finally:
+        session.close()
+    caller = HttpxCaller()
+    start = datetime.fromisoformat(args.start).replace(tzinfo=hl.IST)
+    end = datetime.fromisoformat(args.end).replace(tzinfo=hl.IST) if args.end else datetime.now(hl.IST)
+    symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    unknown = [s for s in symbols if s not in hl.DEFAULT_SERIES]
+    if unknown:
+        print(f"Unknown symbols {unknown}; choose from {sorted(hl.DEFAULT_SERIES)}")
+        return 2
+    failures = 0
+    for interval in [i.strip() for i in args.interval.split(",") if i.strip()]:
+        for name in symbols:
+            exchange, segment, groww_symbol = hl.DEFAULT_SERIES[name]
+            fetch = hl.groww_window_fetcher(caller, token, exchange=exchange, segment=segment,
+                                            groww_symbol=groww_symbol, interval=interval)
+            doc = hl.fetch_series(fetch, exchange=exchange, segment=segment, groww_symbol=groww_symbol,
+                                  interval=interval, start=start, end=end)
+            failures += doc["failed_windows"]
+            print(f"{name:10s} {interval:9s}: {doc['candle_count']} candles {doc['first']} .. {doc['last']}"
+                  f" (failed windows {doc['failed_windows']}, rejected rows {doc['rejected_rows']})")
+
+    if args.options:
+        from app.market.options_history import build_pcr_history
+
+        nifty = hl.load_series("NSE-NIFTY", "1day")
+        if not nifty or not nifty.get("candles"):
+            print("Options PCR needs NIFTY 1day history first (fetch it with --interval 1day).")
+            return 1
+        closes = {row[0][:10]: row[4] for row in nifty["candles"]}
+
+        def list_expiries(year: int) -> list[str]:
+            result = read_expiries(caller, token, exchange="NSE", underlying_symbol="NIFTY", year=year)
+            return expiries_from_api_payload(result.body) if result.status_code == 200 else []
+
+        def list_contracts(expiry: str) -> list[str]:
+            result = read_contracts(caller, token, exchange="NSE", underlying_symbol="NIFTY", expiry_date=expiry)
+            if result.status_code != 200:
+                raise RuntimeError(f"HTTP {result.status_code}")
+            payload = result.body.get("payload") if isinstance(result.body, dict) else None
+            return list((payload or {}).get("contracts") or [])
+
+        def fetch_candles(symbol: str, window: hl.Window) -> dict:
+            result = read_historical_candles(caller, token, {
+                "exchange": "NSE", "segment": "FNO", "groww_symbol": symbol,
+                "start_time": window.start.strftime("%Y-%m-%d %H:%M:%S"),
+                "end_time": window.end.strftime("%Y-%m-%d %H:%M:%S"),
+                "candle_interval": "1day",
+            })
+            if result.status_code != 200:
+                raise RuntimeError(f"HTTP {result.status_code}")
+            return result.body
+
+        doc = build_pcr_history(list_expiries=list_expiries, list_contracts=list_contracts, fetch_candles=fetch_candles,
+                                reference_closes=closes, start=start.date(), end=end.date(),
+                                strike_step=strike_step_for("NIFTY"), band_strikes=args.band_strikes)
+        print(f"PCR: {doc['days']} days from {doc['expiries']} expiries; skipped {len(doc['skipped'])}")
+    return 0 if failures == 0 else 1
+
+
+def cmd_research_daily(args: argparse.Namespace) -> int:
+    """Walk-forward research on daily / half-day direction and next-day volatility."""
+    from app.market import history_loader as hl
+    from app.market.options_history import load_pcr
+    from app.research import daily_research as dr
+
+    def series(symbol: str, interval: str) -> list | None:
+        doc = hl.load_series(symbol, interval)
+        return doc["candles"] if doc and doc.get("candles") else None
+
+    daily = series("NSE-NIFTY", "1day")
+    intraday = series("NSE-NIFTY", "15minute")
+    if daily is None and intraday is None:
+        print("No NIFTY history. Run: python -m app.cli fetch-history --symbols NIFTY,INDIAVIX --interval 1day")
+        return 1
+    nifty_daily = dr.daily_bars(daily) if daily else dr.daily_from_intraday(intraday)
+    as_bars = lambda rows: dr.daily_bars(rows) if rows else None  # noqa: E731
+    report = dr.run_research(
+        nifty_daily=nifty_daily,
+        nifty_half_day=dr.half_day_bars(intraday) if intraday else None,
+        vix=as_bars(series("NSE-INDIAVIX", "1day")),
+        banknifty=as_bars(series("NSE-BANKNIFTY", "1day")),
+        sensex=as_bars(series("BSE-SENSEX", "1day")),
+        pcr=load_pcr() if args.with_pcr else None,
+        cfg=dr.WalkForwardConfig(initial_train=args.initial_train, step=args.step),
+    )
+    out = Path(args.output) if args.output else REPO_ROOT / "var" / "datasets" / "research_daily_report.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+
+    print(f"Inputs: {report['inputs']}")
+    for r in report["direction"]:
+        if r["status"] != "EVALUATED":
+            print(f"  {r['horizon']:13s} {r['feature_set']:20s} {r['status']} ({r['rows']} rows)")
+            continue
+        dev, hold = r["development"], r["holdout"]
+        acc = hold["directional_accuracy"]
+        print(f"  {r['horizon']:13s} {r['feature_set']:20s} {r['model']:15s}"
+              f" dev DSR {_fmt(dev.get('deflated_sharpe'))} | holdout ret {_fmt(hold.get('total_return_pct'))}%"
+              f" acc {_fmt(acc['accuracy'])} (n={acc['n']}, p={_fmt(acc['p_value_vs_50pct'])})")
+    vol = report["volatility"]
+    if vol.get("status") == "EVALUATED":
+        for model, entry in vol["models"].items():
+            h = entry.get("holdout") or {}
+            dm = h.get("dm_vs_naive_rv1") or {}
+            print(f"  vol {model:12s} holdout QLIKE {_fmt(h.get('qlike'))} MZ R2 {_fmt(h.get('mincer_zarnowitz_r2'))}"
+                  f" DM vs naive p={_fmt(dm.get('p_value'))}")
+    else:
+        print(f"  volatility: {vol.get('status')}")
+    summary = report["summary"]
+    print(f"Direction edge supported: {summary['direction_edge_supported']} ({summary['direction_trials']} trials)")
+    print(f"Volatility: {summary['volatility']}")
+    print(f"Report: {out}")
+    return 0
+
+
+def _fmt(value: Any) -> str:
+    return "n/a" if value is None else f"{value:.3f}"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="imm-cli",
@@ -487,6 +625,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_halt.add_argument("action", choices=["status", "trip", "clear"], help="Halt action")
     p_halt.add_argument("--reason", default="", help="Reason written into the halt file")
     p_halt.set_defaults(func=cmd_halt)
+
+    # fetch-history
+    p_fh = subparsers.add_parser("fetch-history", help="Download multi-year Groww candles (2020 onwards) for research")
+    p_fh.add_argument("--symbols", default="NIFTY,BANKNIFTY,INDIAVIX,SENSEX", help="Comma list: NIFTY,BANKNIFTY,INDIAVIX,SENSEX")
+    p_fh.add_argument("--from", dest="start", default="2020-01-01", help="Start date (YYYY-MM-DD)")
+    p_fh.add_argument("--to", dest="end", default=None, help="End date (default: now)")
+    p_fh.add_argument("--interval", default="1day", help="Comma list of candle intervals, e.g. 1day,15minute")
+    p_fh.add_argument("--options", action="store_true", help="Also build the daily NIFTY put/call OI ratio (thousands of requests)")
+    p_fh.add_argument("--band-strikes", type=int, default=5, help="Strikes either side of spot used for the PCR")
+    p_fh.set_defaults(func=cmd_fetch_history)
+
+    # research-daily
+    p_rd = subparsers.add_parser("research-daily", help="Walk-forward daily/half-day direction and volatility research")
+    p_rd.add_argument("--with-pcr", action="store_true", help="Include the options PCR feature set")
+    p_rd.add_argument("--initial-train", type=int, default=500, help="Rows in the first training window")
+    p_rd.add_argument("--step", type=int, default=20, help="Rows per walk-forward test window")
+    p_rd.add_argument("--output", default=None, help="Report path (default var/datasets/research_daily_report.json)")
+    p_rd.set_defaults(func=cmd_research_daily)
 
     # health
     p_health = subparsers.add_parser("health", help="Check operational health and invariants")

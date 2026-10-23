@@ -10,6 +10,7 @@ import base64
 import hashlib
 import hmac
 from datetime import datetime, timezone
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from urllib.parse import urlencode
@@ -314,6 +315,18 @@ def read_expiries(
     return caller.send(
         "GET",
         expiries_url(exchange, underlying_symbol, year, month),
+        headers=_read_headers(access_token),
+        json_body=None,
+        timeout=15.0,
+    )
+
+
+def read_contracts(caller, access_token: str, *, exchange: str, underlying_symbol: str, expiry_date: str) -> HttpResult:
+    """GET Groww symbols of all FNO contracts for one expiry (Groww Contracts API, NSE/BSE)."""
+    params = {"exchange": exchange, "underlying_symbol": underlying_symbol, "expiry_date": expiry_date}
+    return caller.send(
+        "GET",
+        f"{GROWW_ORIGIN}/v1/historical/contracts?" + urlencode(params),
         headers=_read_headers(access_token),
         json_body=None,
         timeout=15.0,

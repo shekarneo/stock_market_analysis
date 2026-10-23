@@ -267,3 +267,61 @@ Still open:
 1. `python -m app.cli refresh-expiries --download --api`
 2. `python -m app.cli retrain-live --dataset-id <NIFTY history dataset>`
 3. Check the lot-size mismatch output (for example, NIFTY 65).
+
+## Research phase (2026-10-23): multi-year daily / half-day research
+
+**Why**
+- The 15-minute direction model trained on about one year of data is close to a coin flip. This phase tests whether longer horizons, more history, cross-asset inputs or a volatility target hold up under the same honest evaluation.
+- It is research only. It does not change the live model, the gates or any trading path.
+
+**Data loader** (`app/market/history_loader.py`)
+- Uses `GET /v1/historical/candles` from 2020 onwards. Requests are split to stay within the per-request limits: 30 days for 1–5 minute candles, 90 days for 10–30 minute candles, 180 days for 1 hour and longer.
+- Rows with bad OHLC geometry are rejected and counted. Missing volume or OI stays `null`.
+- Failed windows are logged in the series file and never filled. Re-running merges new candles into the saved series.
+- Output: `var/datasets/history/<groww_symbol>_<interval>.json`, with every request logged.
+- Default series: `NSE-NIFTY`, `NSE-BANKNIFTY`, `NSE-INDIAVIX`, `BSE-SENSEX`. Verify these symbols against the instrument CSV if any of them returns no candles.
+
+**Options positioning** (`app/market/options_history.py`, optional)
+- For each NIFTY expiry, contracts come from the Expiries and Contracts APIs. Daily CE and PE candles (which carry OI) are fetched for strikes within ±N steps of spot.
+- Spot for the strike band is the last close at least 12 days before expiry, so contract selection never uses prices from after the PCR window.
+- The feature is the PE/CE OI ratio of the nearest unexpired expiry. A day appears only when both sides report OI.
+- Cost: several thousand requests. Results are cached per contract, so the job can be resumed.
+
+**Research** (`app/research/daily_research.py`)
+- **Horizons:**
+  - next-day close-to-close direction;
+  - next half-day direction, using AM (before 12:15) and PM bars built from 15-minute candles, with incomplete halves dropped;
+  - next-day realized volatility, measured as Parkinson variance.
+- **Features** (all known at the close of day t):
+  - returns over 1, 5 and 20 days;
+  - overnight gap;
+  - log Parkinson variance over 1, 5 and 20 days;
+  - India VIX level and its change;
+  - the variance risk premium (VIX-implied variance minus 5-day realized variance);
+  - BANKNIFTY and SENSEX returns relative to NIFTY;
+  - PCR level and its change.
+  
+  A row with any missing input is dropped, never filled.
+- **Walk-forward:** expanding window with a one-row embargo. The last 20% of folds are the holdout. Selection uses the development period only.
+- **Direction scoring:**
+  - Models are the empirical prior, L2 logistic regression and a shallow LightGBM, for each feature set.
+  - Positions use a deadband (long above 0.55, short below 0.45). Index-futures costs come from `FuturesCostModel`.
+  - Each feature set and model combination is one trial. The deflated Sharpe ratio is computed over all trials.
+  - "Edge supported" requires a development DSR of at least 0.95 and a holdout PSR of at least 0.9.
+- **Volatility scoring:**
+  - Models are naive (today's realized variance), HAR-RV, VIX-implied (bias-corrected on the training window) and HAR plus VIX.
+  - Scored on QLIKE and MSE of log variance, with Mincer–Zarnowitz R².
+  - Diebold–Mariano tests (Newey–West, lag 5) compare each model with the naive and VIX forecasts.
+- **Tests** (`tests/test_research_multiyear.py`):
+  - On a GARCH series, HAR beats naive with a significant DM result, and no direction edge is claimed on the random-walk returns.
+  - A predictable AR(1) series is detected as an edge, which is the positive control.
+
+**Not available, therefore not used:** MCX crude and USD/INR history (Groww's historical API serves only NSE and BSE), and FII/DII flows.
+
+**Run**
+1. `python -m app.cli fetch-history --symbols NIFTY,BANKNIFTY,INDIAVIX,SENSEX --from 2020-01-01 --interval 1day`
+2. `python -m app.cli fetch-history --symbols NIFTY --from 2020-01-01 --interval 15minute` (for the half-day horizon)
+3. Optional: `python -m app.cli fetch-history --symbols NIFTY --interval 1day --options` (the NIFTY daily PCR)
+4. `python -m app.cli research-daily [--with-pcr]` writes `var/datasets/research_daily_report.json` and prints every trial.
+
+**Results:** not yet run. This environment has no Groww token. Until the report exists, no edge claim is made.
