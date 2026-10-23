@@ -199,7 +199,8 @@ def test_daily_loss_uses_ist_session_day(db):
         # 2026-10-16 20:00 UTC is 2026-10-17 01:30 IST: belongs to the 17th, not the 16th
         late = datetime(2026, 10, 16, 20, 0, tzinfo=timezone.utc)
         session.add(PaperAccountEvent(
-            event_id="sim-exit-ist-1", event_type="EXIT", occurred_at=late, intent_id="ist-1", source="SIMULATION",
+            # Exits are journaled as FILL events whose id starts with "sim-exit-" (the table allows no EXIT type)
+            event_id="sim-exit-ist-1", event_type="FILL", occurred_at=late, intent_id="ist-1", source="SIMULATION",
             body_hash="0" * 64, opening_cash_inr=Decimal("1000000"), quantity=Decimal("65"), price=Decimal("100"),
             charges_inr=Decimal("0"), payload={"net_realized_pnl_inr": -5000.0}, effect={},
             ledger_applied=False, broker_confirmed=False,

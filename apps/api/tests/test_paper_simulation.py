@@ -567,6 +567,8 @@ def test_populated_simulation_clears_only_the_gates_with_inputs(db):
         "MISSING_RISK_CAPITAL",
         "SESSION_PNL_UNAVAILABLE",
         "LIQUIDITY_FLOORS_NOT_CONFIGURED",
+        # The client's expected_net="1" is not trusted; the server's own EV is unavailable
+        "EXPECTED_NET_UNAVAILABLE",
         "RECONCILIATION_UNAVAILABLE",
     ]
     assert result["simulated_fill"] is None

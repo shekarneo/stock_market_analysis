@@ -316,16 +316,26 @@ def _experimental_paper_portfolio_state(session: Session, session_date_str: str 
     return open_count, daily_realized_pnl
 
 
+def _missing_virtual_controls(risk: RiskConfig) -> list[str]:
+    missing = []
+    if risk.risk_capital_inr is None or float(risk.risk_capital_inr) <= 0:
+        missing.append("MISSING_RISK_CAPITAL")
+    if risk.max_open_positions is None or risk.max_open_positions <= 0:
+        missing.append("MISSING_POSITION_LIMIT")
+    if risk.daily_loss_fraction is None or risk.daily_loss_fraction <= 0:
+        missing.append("MISSING_DAILY_LOSS_LIMIT")
+    return missing
+
+
 def _position_gate(intent: dict, session: Session | None, risk: RiskConfig, reasons: list[str], *, apply: bool, is_experimental: bool = False) -> dict:
     if not apply:
         return _observed(_gate("position_limits", "NOT_APPLICABLE", False, "EXIT_SKIPS_ENTRY_GATE"), _position_observation({"status": "not_read", "state": None, "session_date": None}))
+    if not is_experimental and intent.get("experimental_requested") is True:
+        # Experimental was requested but the server refused the grant: name the missing controls
+        # so the operator knows what to configure. The non-experimental gates below still apply.
+        reasons.extend(code for code in _missing_virtual_controls(risk) if code not in reasons)
     if is_experimental:
-        if risk.risk_capital_inr is None or float(risk.risk_capital_inr) <= 0:
-            reasons.append("MISSING_RISK_CAPITAL")
-        if risk.max_open_positions is None or risk.max_open_positions <= 0:
-            reasons.append("MISSING_POSITION_LIMIT")
-        if risk.daily_loss_fraction is None or risk.daily_loss_fraction <= 0:
-            reasons.append("MISSING_DAILY_LOSS_LIMIT")
+        reasons.extend(_missing_virtual_controls(risk))
         if session is not None and isinstance(intent.get("session_date"), str):
             seen = _read_ledger(session, intent.get("session_date"))
             if seen["state"] is not None and seen["state"].get("lockout_active"):

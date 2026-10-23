@@ -26,6 +26,22 @@ from app.settings import get_settings
 
 
 @pytest.fixture(scope="session", autouse=True)
+def keep_real_quarantine_clean():
+    """Some tests write fixture chunks into the real var/history/quarantine. Remove only the
+    files created during this test session so the operator's real chunks are never mixed
+    with fixtures; files that existed before the session are never touched."""
+    from app.settings import REPO_ROOT
+
+    folder = REPO_ROOT / "var" / "history" / "quarantine"
+    before = {path.name for path in folder.glob("*")} if folder.is_dir() else set()
+    yield
+    if folder.is_dir():
+        for path in folder.glob("*"):
+            if path.name not in before and path.is_file():
+                path.unlink()
+
+
+@pytest.fixture(scope="session", autouse=True)
 def migrated_database():
     get_settings.cache_clear()
     reset_engine()
