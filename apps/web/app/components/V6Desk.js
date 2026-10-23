@@ -2251,6 +2251,7 @@ function InstrumentDecisions({ selected, report }) {
                 </div>
               </div>
 
+              {(() => {
                   const consensusVetoes = Array.isArray(report?.consensus?.vetoes) ? report.consensus.vetoes : [];
                   const isRiskVetoed = data.risk_veto?.vetoed || consensusVetoes.length > 0 || report?.decision === "NO_TRADE";
                   const signalText = !session.isOpen
