@@ -9,6 +9,7 @@ Provides unified operational, quantitative, and administrative control commands:
 6. `kill-switch`: Queries, trips, or clears the emergency operational kill switch.
 7. `health`: Checks database connectivity, seed configuration, and safety invariant flags.
 8. `fetch-history` / `research-daily`: multi-year Groww history and honest daily/half-day research.
+9. `fetch-macro`: official FII/DII, USD/INR and US 10Y releases for the macro agents.
 """
 
 from __future__ import annotations
@@ -504,6 +505,20 @@ def _fmt(value: Any) -> str:
     return "n/a" if value is None else f"{value:.3f}"
 
 
+def cmd_fetch_macro(args: argparse.Namespace) -> int:
+    """Fetch NSE FII/DII flows, the FBIL USD/INR reference rate and the US 10Y yield."""
+    from app.market.macro_fetch import refresh_macro_series
+    from app.market.macro_series import MACRO_SERIES_PATH, get_macro_observations
+
+    path = Path(args.output) if args.output else MACRO_SERIES_PATH
+    doc = refresh_macro_series(path=path)
+    for obs in get_macro_observations(path):
+        flag = "STALE" if obs.get("stale") else "fresh"
+        print(f"  {obs['instrument']:14s} {flag:5s} {obs['directional_implication']:8s} {obs['claim']}")
+    print(f"Saved to {path}")
+    return 1 if doc["errors"] else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="imm-cli",
@@ -580,6 +595,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_rd.add_argument("--step", type=int, default=20, help="Rows per walk-forward test window")
     p_rd.add_argument("--output", default=None, help="Report path (default var/datasets/research_daily_report.json)")
     p_rd.set_defaults(func=cmd_research_daily)
+
+    # fetch-macro
+    p_macro = subparsers.add_parser("fetch-macro", help="Fetch NSE FII/DII, FBIL USD/INR and US 10Y releases")
+    p_macro.add_argument("--output", default=None, help="Path (default var/market/macro_series.json)")
+    p_macro.set_defaults(func=cmd_fetch_macro)
 
     # health
     p_health = subparsers.add_parser("health", help="Check operational health and invariants")

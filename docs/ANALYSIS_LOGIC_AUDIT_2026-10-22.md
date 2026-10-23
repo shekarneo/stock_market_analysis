@@ -343,4 +343,14 @@ Still open:
   - Stale inputs are excluded from the vote and named in its findings.
   - With no fresh directional factor it returns UNKNOWN with null confidence; it used to return NEUTRAL at 0.60.
   - The latest daily release still counts during market hours, even though it is hours old.
-- **Still open:** nothing in the app fetches these releases. Until a real NSE/FBIL/Treasury fetcher fills `var/market/macro_series.json`, the macro stage reports these series as missing.
+- **Real fetcher** (`app/market/macro_fetch.py`, `python -m app.cli fetch-macro`):
+  - **Sources**, all public unauthenticated reads with TLS verified (no CAPTCHA involved):
+    - NSE `api/fiidiiTradeReact`. The NSE home page is requested first because the API needs its cookies.
+    - FBIL `wasdm/refrates/fetchfiltered`, the endpoint behind FBIL's public reference-rate table.
+    - The US Treasury daily par yield CSV, `10 Yr` column.
+  - **Failures:** a failed source keeps its previous entry, which then turns stale by its own date. The error is recorded in the file's `errors`. Nothing is filled in.
+  - **First live run (2026-10-23):**
+    - FII −3,458.7 Cr and DII +2,891.3 Cr on 22 Oct, so BEARISH.
+    - US10Y 4.96% on 22 Oct.
+    - FBIL's latest USD/INR was dated 15 Oct, so it was STALE and did not vote.
+  - Run it once a day after 17:30 IST, before analysis runs.
