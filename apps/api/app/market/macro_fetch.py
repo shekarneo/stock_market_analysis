@@ -6,6 +6,8 @@ Sources (public, unauthenticated reads; no CAPTCHA is involved or bypassed):
 2. FBIL USD/INR reference rate: GET https://www.fbil.org.in/wasdm/refrates/fetchfiltered
    ?fromDate=YYYY-MM-DD&toDate=YYYY-MM-DD&authenticated=false (the endpoint behind FBIL's
    public reference-rate table).
+   When FBIL's public table lags, the ECB daily euro reference rates give the USD/INR cross
+   (https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml); the fresher release is kept.
 3. US Treasury daily par yield curve CSV (10 Yr column):
    https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/<year>/all
 
@@ -28,6 +30,7 @@ from app.market.macro_series import MACRO_SERIES_PATH, load_macro_series, save_m
 NSE_HOME = "https://www.nseindia.com/"
 NSE_FIIDII_URL = "https://www.nseindia.com/api/fiidiiTradeReact"
 FBIL_REFRATES_URL = "https://www.fbil.org.in/wasdm/refrates/fetchfiltered"
+ECB_RATES_URL = "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml"
 TREASURY_CSV_URL = "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/daily-treasury-rates.csv/{year}/all"
 
 BROWSER_HEADERS = {
@@ -124,6 +127,38 @@ def parse_fbil_usdinr(body: Any) -> dict:
     }
 
 
+def parse_ecb_usdinr(text: str) -> dict:
+    """USD/INR from the ECB daily euro reference rates: (INR per EUR) / (USD per EUR), latest day."""
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as exc:
+        raise MacroFetchError(f"ECB reference rates are not XML: {exc}") from exc
+    days = []
+    for cube in root.iter():
+        if not cube.tag.endswith("Cube") or "time" not in cube.attrib:
+            continue
+        rates = {c.attrib.get("currency"): _num(c.attrib.get("rate")) for c in cube}
+        try:
+            day = date.fromisoformat(cube.attrib["time"])
+        except ValueError:
+            continue
+        if rates.get("USD") and rates.get("INR"):
+            days.append((day, rates["INR"] / rates["USD"]))
+    if not days:
+        raise MacroFetchError("ECB reference rates have no day with both USD and INR.")
+    day, rate = max(days)
+    return {
+        "instrument": "USDINR_REF",
+        "rate": round(rate, 4),
+        "as_of_date": day.isoformat(),
+        "source": "ECB euro reference rates (USD/INR cross: INR per EUR / USD per EUR)",
+        "source_url": ECB_RATES_URL,
+        "verification_status": VERIFICATION,
+    }
+
+
 def parse_treasury_10y(text: str) -> dict:
     """Most recent dated row with a numeric "10 Yr" value from the par yield CSV."""
     reader = csv.DictReader(io.StringIO(text))
@@ -191,9 +226,31 @@ def fetch_fii_dii(get: Getter) -> dict:
 
 
 def fetch_usdinr(get: Getter, today: date) -> dict:
-    params = {"fromDate": (today - timedelta(days=14)).isoformat(), "toDate": today.isoformat(), "authenticated": "false"}
-    resp = get(FBIL_REFRATES_URL, params, {"accept": "application/json", "referer": "https://www.fbil.org.in/"})
-    return parse_fbil_usdinr(_json(resp, "FBIL reference rates"))
+    """FBIL first; the ECB cross rate when FBIL's public table is older or unavailable.
+
+    FBIL's public endpoint can lag by several sessions (on 23-Oct-2026 its newest row was
+    16-Oct), so the fresher official release wins; on the same day FBIL is kept.
+    """
+    candidates, errors = [], []
+    try:
+        params = {"fromDate": (today - timedelta(days=14)).isoformat(), "toDate": today.isoformat(), "authenticated": "false"}
+        resp = get(FBIL_REFRATES_URL, params, {"accept": "application/json", "referer": "https://www.fbil.org.in/"})
+        candidates.append(parse_fbil_usdinr(_json(resp, "FBIL reference rates")))
+    except Exception as exc:  # noqa: BLE001 - the ECB release may still be available
+        errors.append(f"FBIL: {exc}")
+    try:
+        resp = get(ECB_RATES_URL, None, {"accept": "application/xml"})
+        if resp.status_code != 200:
+            raise MacroFetchError(f"ECB reference rates returned HTTP {resp.status_code}.")
+        candidates.append(parse_ecb_usdinr(resp.text))
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"ECB: {exc}")
+    if not candidates:
+        raise MacroFetchError("; ".join(errors))
+    best = max(candidates, key=lambda c: (c["as_of_date"], c["source"].startswith("FBIL")))
+    if errors:
+        best["source_errors"] = errors
+    return best
 
 
 def fetch_us10y(get: Getter, today: date) -> dict:

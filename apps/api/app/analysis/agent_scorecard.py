@@ -97,42 +97,71 @@ def record_agent_calls(report: dict, *, spot: float | None, at: datetime | None 
     return calls
 
 
-def score_pending(closes: dict[str, float], *, path: Path | None = None) -> dict:
-    """Score records whose session (rest of day) and next session have closed.
+def _target_session(r: dict) -> str:
+    """The session a call is about: today's when made in (or before) the session, else the next weekday's."""
+    when = datetime.fromisoformat(r["made_at"]).astimezone(IST)
+    day = when.date()
+    if r.get("in_session") or (when.weekday() < 5 and when.strftime("%H:%M") < "09:15"):
+        return day.isoformat()
+    day += timedelta(days=1)
+    while day.weekday() >= 5:
+        day += timedelta(days=1)
+    return day.isoformat()
 
-    closes maps completed session day (YYYY-MM-DD) -> close. A call made after the close
-    is about the next session only.
+
+def counted_calls(calls: list[dict]) -> list[dict]:
+    """At most one call per agent per session: the first in-session call and the first off-hours call.
+
+    Re-running the analysis within a session repeats one market view; counting every run would let
+    a busy afternoon reach the verdict threshold on what is really a single call.
+    """
+    seen, out = set(), []
+    for c in sorted(calls, key=lambda c: c["made_at"]):
+        key = (c["agent"], bool(c.get("in_session")), _target_session(c))
+        if key not in seen:
+            seen.add(key)
+            out.append(c)
+    return out
+
+
+def _fully_scored(r: dict) -> bool:
+    return bool(r.get("outcome")) and r["outcome"].get("next_session_return") is not None
+
+
+def score_pending(closes: dict[str, float], *, path: Path | None = None) -> dict:
+    """Score each horizon as soon as its close exists.
+
+    closes maps completed session day (YYYY-MM-DD) -> close. An in-session call gets its
+    rest-of-day result at that session's close and its next-session result a session later.
+    A call made outside the session is about the next session only (a pre-open call: today's).
     """
     target = path or SCORECARD_PATH
     rows = _read(target)
     days = sorted(closes)
     changed = 0
     for r in rows:
-        if r.get("outcome") is not None:
+        if _fully_scored(r):
             continue
-        day = r["session_day"]
-        later = [d for d in days if d > day]
-        # A call made outside the session concerns the next session; inside, the rest of today
-        if r.get("in_session"):
-            if day not in closes or not later:
-                continue
-            rest_close, next_close = closes[day], closes[later[0]]
-        else:
-            if not later:
-                continue
-            rest_close, next_close = None, closes[later[0]]
+        outcome = dict(r.get("outcome") or {})
         spot = r["spot"]
-        r["outcome"] = {
-            "rest_of_day_return": None if rest_close is None else math.log(rest_close / spot),
-            "next_session_return": math.log(next_close / spot),
-            "next_session_day": later[0],
-            "scored_at": datetime.now(timezone.utc).isoformat(),
-        }
-        changed += 1
+        if r.get("in_session"):
+            day = r["session_day"]
+            if outcome.get("rest_of_day_return") is None and day in closes:
+                outcome["rest_of_day_return"] = math.log(closes[day] / spot)
+            later = [d for d in days if d > day]
+        else:
+            later = [d for d in days if d >= _target_session(r)]
+        if later:
+            outcome["next_session_return"] = math.log(closes[later[0]] / spot)
+            outcome["next_session_day"] = later[0]
+        if outcome != (r.get("outcome") or {}):
+            outcome["scored_at"] = datetime.now(timezone.utc).isoformat()
+            r["outcome"] = outcome
+            changed += 1
     if changed:
         _write(target, rows)
     return {"records": len(rows), "newly_scored": changed,
-            "pending": sum(1 for r in rows if r.get("outcome") is None)}
+            "pending": sum(1 for r in rows if not _fully_scored(r))}
 
 
 def _stats(calls: list[dict], key: str) -> dict:
@@ -152,7 +181,8 @@ def summarize(path: Path | None = None) -> dict:
     for r in rows:
         agents.setdefault(r["agent"], []).append(r)
     table = {}
-    for agent, calls in sorted(agents.items()):
+    for agent, recorded in sorted(agents.items()):
+        calls = counted_calls(recorded)
         rest, nxt = _stats(calls, "rest_of_day_return"), _stats(calls, "next_session_return")
         best = max((rest, nxt), key=lambda s: s.get("n", 0))
         if best.get("n", 0) < MIN_SCORED_FOR_VERDICT:
@@ -164,13 +194,15 @@ def summarize(path: Path | None = None) -> dict:
         else:
             status = "NO_EDGE_YET"
         table[agent] = {
-            "calls": len(calls),
+            "recorded_calls": len(recorded),
+            "calls": len(calls),  # counted: one per agent per session
             "directional_calls": sum(1 for c in calls if c["bias"] in DIRECTIONAL),
-            "pending": sum(1 for c in calls if c.get("outcome") is None),
+            "pending": sum(1 for c in calls if not _fully_scored(c)),
             "rest_of_day": rest, "next_session": nxt, "status": status,
-            "last_call": max(c["made_at"] for c in calls),
+            "last_call": max(c["made_at"] for c in recorded),
         }
     return {"schema": "agent-scorecard-1", "min_scored_for_verdict": MIN_SCORED_FOR_VERDICT,
+            "counting": "one call per agent per session (the first in-session and the first off-hours call)",
             "first_call": min((r["made_at"] for r in rows), default=None), "agents": table}
 
 

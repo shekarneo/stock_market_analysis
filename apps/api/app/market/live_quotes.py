@@ -18,6 +18,7 @@ from app.security.redact import redact_text
 from app.settings import REPO_ROOT
 
 READ_PATH = REPO_ROOT / "var" / "market" / "live_reads" / "latest.json"
+PRICE_EPSILON = 0.01  # float rounding only; a quote outside the day's high/low is rejected
 
 
 def stored_observations(path: Path | None = None) -> list[dict]:
@@ -231,7 +232,9 @@ def _persist(base, code, message, path, *, secrets, calls) -> dict:
             if key in existing and key not in record:
                 record[key] = existing[key]
         if "observations" in existing and "observations" in record:
+            # An instrument whose read failed is not filled in from the previous read
             insts = {o.get("instrument") for o in record["observations"]}
+            insts |= {e.get("instrument") for e in base.get("errors") or []}
             for o in existing["observations"]:
                 if o.get("instrument") and o["instrument"] not in insts:
                     insts.add(o["instrument"])
@@ -258,6 +261,13 @@ def _normalize_quote(result, retrieved_at: datetime) -> dict:
         event = retrieved_at.astimezone(timezone.utc).isoformat()
         time_limitation = "last_trade_time was null; retrieved_at timestamp used as quote time."
     ohlc, notes = _ohlc(payload.get("ohlc"))
+    if ohlc is not None and not ohlc["low"] - PRICE_EPSILON <= price <= ohlc["high"] + PRICE_EPSILON:
+        # A print outside the day's own high/low is not a trade that happened (seen at the
+        # 23-Oct-2026 close: 22795.15 against a day high of 22787.25); it is not stored.
+        return {"ok": False, "code": "QUOTE_OUT_OF_RANGE",
+                "message": f"The NIFTY quote {price} is outside the day's low {ohlc['low']} / high {ohlc['high']}; it was rejected."}
+    if ohlc is None:
+        notes.append("The day's high/low was unavailable, so the price could not be range-checked.")
     return {
         "ok": True,
         "quote": {

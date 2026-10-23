@@ -114,6 +114,37 @@ def test_documented_read_stores_unverified_prices_and_skips_text_ohlc(session, t
     assert "historical/candles" not in " ".join(caller.urls)
 
 
+def test_quote_outside_the_days_range_is_rejected_and_not_carried_forward(session, tmp_path):
+    _prepare(session)
+    path = tmp_path / "latest.json"
+    good = Caller([
+        HttpResult(200, _quote_body({"open": 24400, "high": 24600, "low": 24300, "close": 24450}), ""),
+        HttpResult(200, _ltp_body(), ""),
+    ])
+    assert run_live_read(session, get_settings(), caller=good, retrieved_at=NOW, path=path)["status"] == "READ"
+    # 24500.5 above a day high of 24480: a print that did not happen (23-Oct-2026 close pattern)
+    bad = Caller([
+        HttpResult(200, _quote_body({"open": 24400, "high": 24480, "low": 24300, "close": 24450}), ""),
+        HttpResult(200, _ltp_body(), ""),
+    ])
+    result = run_live_read(session, get_settings(), caller=bad, retrieved_at=NOW, path=path)
+    assert result["status"] == "PARTIAL"
+    assert result["errors"][0]["instrument"] == "NIFTY"
+    assert result["errors"][0]["code"] == "QUOTE_OUT_OF_RANGE"
+    stored = json.loads(path.read_text())
+    instruments = [o["instrument"] for o in stored["observations"]]
+    assert instruments == ["SENSEX"]  # the earlier NIFTY price is not filled back in
+
+
+def test_quote_without_a_day_range_is_kept_with_a_limitation(session, tmp_path):
+    _prepare(session)
+    caller = Caller([HttpResult(200, _quote_body(None), ""), HttpResult(200, _ltp_body(), "")])
+    result = run_live_read(session, get_settings(), caller=caller, retrieved_at=NOW, path=tmp_path / "latest.json")
+    nifty = result["quotes"][0]
+    assert nifty["last_price"] == 24500.5
+    assert any("could not be range-checked" in note for note in nifty["limitations"])
+
+
 def test_disabled_or_rejected_credentials_do_not_send(session, tmp_path):
     _prepare(session, enabled=False)
     caller = Caller([])

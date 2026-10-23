@@ -200,9 +200,7 @@ def test_decision_node_weights_by_the_live_scorecard(monkeypatch):
 
 def test_evidence_by_agent_reads_the_scorecard(tmp_path):
     path = tmp_path / "calls.jsonl"
-    rows = [{"agent": "news_event_analyst", "bias": "BULLISH", "made_at": f"2026-01-{i % 28 + 1:02d}T12:00:00+05:30",
-             "outcome": {"rest_of_day_return": 0.01 if i % 10 else -0.01, "next_session_return": None}} for i in range(60)]
-    sc._write(path, rows)
+    sc._write(path, _daily_calls(60, next_session_return=None))
     ev = sc.evidence_by_agent(path)
     assert ev["news_event_analyst"]["status"] == "PROVEN" and ev["news_event_analyst"]["hit_rate"] == pytest.approx(0.9)
     assert sc.evidence_by_agent(tmp_path / "missing.jsonl") == {}
@@ -225,24 +223,57 @@ def test_scorecard_records_scores_and_judges(tmp_path):
     assert sc.record_agent_calls(_report("BULLISH"), spot=None, path=path) == []
 
     first = sc.score_pending({"2026-10-22": 22687.65}, path=path)  # next session not closed yet
-    assert first["newly_scored"] == 0
+    assert first["newly_scored"] == 2 and first["pending"] == 4  # rest-of-day scored at the close
+    noon_now = next(r for r in sc._read(path) if r["agent"] == "technical_analyst" and r["in_session"])
+    assert noon_now["outcome"]["rest_of_day_return"] > 0 and "next_session_return" not in noon_now["outcome"]
     done = sc.score_pending({"2026-10-22": 22687.65, "2026-10-23": 22450.0}, path=path)
     assert done["newly_scored"] == 4 and done["pending"] == 0
     rows = sc._read(path)
     noon_call = next(r for r in rows if r["agent"] == "technical_analyst" and r["in_session"])
     assert noon_call["outcome"]["rest_of_day_return"] > 0  # BEARISH at 22600, closed 22687.65: wrong
     evening_call = next(r for r in rows if r["agent"] == "technical_analyst" and not r["in_session"])
-    assert evening_call["outcome"]["rest_of_day_return"] is None  # made after the close: next session only
+    assert evening_call["outcome"].get("rest_of_day_return") is None  # made after the close: next session only
 
     summary = sc.summarize(path)["agents"]["technical_analyst"]
     assert summary["status"] == "COLLECTING" and summary["rest_of_day"]["n"] == 1
     assert summary["rest_of_day"]["hit_rate"] == 0.0 and summary["next_session"]["hit_rate"] == 0.5
 
 
+def _daily_calls(n: int, **outcome_extra) -> list[dict]:
+    """One in-session call per day for n days; 9 in 10 are right."""
+    start = date(2026, 1, 1)
+    return [{"agent": "news_event_analyst", "bias": "BULLISH", "in_session": True,
+             "made_at": f"{start + timedelta(days=i)}T12:00:00+05:30",
+             "outcome": {"rest_of_day_return": 0.01 if i % 10 else -0.01, **outcome_extra}} for i in range(n)]
+
+
+def test_repeat_calls_in_one_session_count_once(tmp_path):
+    path = tmp_path / "calls.jsonl"
+    # 40 runs in one afternoon: still a single market view
+    same_day = [{"agent": "news_event_analyst", "bias": "BEARISH", "in_session": True,
+                 "made_at": f"2026-10-23T14:{m:02d}:00+05:30", "outcome": {"rest_of_day_return": -0.01}} for m in range(10, 50)]
+    sc._write(path, same_day)
+    row = sc.summarize(path)["agents"]["news_event_analyst"]
+    assert row["recorded_calls"] == 40 and row["calls"] == 1
+    assert row["rest_of_day"]["n"] == 1 and row["status"] == "COLLECTING"
+    # An evening call and a pre-open call the next morning are both about the next session: one counts
+    evening = {"agent": "news_event_analyst", "bias": "BULLISH", "in_session": False, "made_at": "2026-10-23T19:00:00+05:30"}
+    pre_open = {**evening, "made_at": "2026-10-26T08:30:00+05:30"}  # Monday, before the open
+    assert len(sc.counted_calls([evening, pre_open])) == 1
+
+
+def test_pre_open_call_is_scored_on_the_same_days_close(tmp_path):
+    path = tmp_path / "calls.jsonl"
+    sc._write(path, [{"agent": "macro", "bias": "BULLISH", "in_session": False, "spot": 22600.0,
+                      "session_day": "2026-10-26", "made_at": "2026-10-26T08:30:00+05:30", "outcome": None}])
+    sc.score_pending({"2026-10-23": 22600.0, "2026-10-26": 22700.0, "2026-10-27": 22800.0}, path=path)
+    outcome = sc._read(path)[0]["outcome"]
+    assert outcome["next_session_day"] == "2026-10-26"  # the session it was made before, not the one after
+
+
 def test_scorecard_verdicts(tmp_path):
     path = tmp_path / "calls.jsonl"
-    rows = [{"agent": "news_event_analyst", "bias": "BULLISH", "made_at": f"2026-01-{i % 28 + 1:02d}T12:00:00+05:30",
-             "outcome": {"rest_of_day_return": 0.01 if i % 10 else -0.01, "next_session_return": 0.01}} for i in range(60)]
+    rows = _daily_calls(60, next_session_return=0.01)
     sc._write(path, rows)
     assert sc.summarize(path)["agents"]["news_event_analyst"]["status"] == "PROVEN"
     sc._write(path, [{**r, "bias": "BEARISH"} for r in rows])

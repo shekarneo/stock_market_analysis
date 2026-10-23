@@ -479,8 +479,13 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
       - Horizons: `Rest of day` (session close vs the price at the call) and `Next session` (the next close vs that price).
       - Columns: `Right (all years, 95% CI)` with the number of calls; `p vs 50%`; `Right (unseen period)` (the last 20% of sessions); `Net per call after costs` (green if positive); `Stated vs actual confidence` (the confidence the old formula stated, against the hit rate it actually had).
     - **Forward scorecard table**: every agent's NIFTY call from live analyses (and the consensus).
-      - Columns: `Status`, `Right: rest of day`, `Right: next session` (hit rate of n, p-value), `Calls (directional / pending)` and `Last call`.
-      - Calls are scored with the saved Groww closes once the session (and the next one) has closed.
+      - Columns: `Status`, `Right: rest of day`, `Right: next session` (hit rate of n, p-value), `Counted calls (directional / pending) · recorded` and `Last call`.
+        - **Counted calls**: only one call per agent per session counts: the first in-session call, plus the first call made outside market hours (which is about the next session). Re-running the analysis repeats the same market view, so later runs in that session do not add evidence.
+        - **Directional**: counted calls that were BULLISH or BEARISH (only these are scored right or wrong).
+        - **Pending**: counted calls still waiting for the next session's close.
+        - **Recorded**: every call the analysis runs saved, including repeats (kept for the audit trail).
+      - The note above the table repeats the one-call-per-session rule.
+      - Scoring: the `Rest of day` result is scored at that session's close, and the `Next session` result after the next close. Both use the saved Groww daily closes, and every history fetch that includes NIFTY 1day scores pending calls straight away. A call made before 09:15 IST is scored on that same day's close.
       - Status values:
         - `COLLECTING`: fewer than 30 scored calls.
         - `PROVEN`: better than 50% with p < 0.05.

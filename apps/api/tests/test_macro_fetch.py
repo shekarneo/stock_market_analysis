@@ -59,9 +59,53 @@ def test_parse_treasury_latest_10y():
         mf.parse_treasury_10y("Date,1 Mo\n10/22/2026,4.1\n")
 
 
+def _ecb_xml(day: str, usd: str = "1.1205", inr: str = "106.2490") -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" '
+        'xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref">'
+        f"<Cube><Cube time='{day}'><Cube currency='USD' rate='{usd}'/><Cube currency='JPY' rate='170.1'/>"
+        f"<Cube currency='INR' rate='{inr}'/></Cube></Cube></gesmes:Envelope>"
+    )
+
+
+def test_parse_ecb_usdinr_cross_rate():
+    entry = mf.parse_ecb_usdinr(_ecb_xml("2026-10-22"))
+    assert entry["rate"] == pytest.approx(106.249 / 1.1205, abs=1e-4)  # INR per USD
+    assert entry["as_of_date"] == "2026-10-22" and entry["source"].startswith("ECB")
+    with pytest.raises(mf.MacroFetchError):
+        mf.parse_ecb_usdinr(_ecb_xml("2026-10-22").replace("currency='INR'", "currency='XXX'"))
+    with pytest.raises(mf.MacroFetchError):
+        mf.parse_ecb_usdinr("not xml")
+
+
+LAGGING_FBIL = [FBIL_BODY[0]]  # newest FBIL row 2026-10-14, as FBIL's public table lagged on 23-Oct-2026
+
+
+@pytest.mark.parametrize(("fbil", "ecb_day", "fail", "source", "as_of"), [
+    (LAGGING_FBIL, "2026-10-22", (), "ECB", "2026-10-22"),     # FBIL lags: the fresher ECB release wins
+    (FBIL_BODY, "2026-10-22", (), "FBIL", "2026-10-22"),       # same day: FBIL is kept
+    (FBIL_BODY, "2026-10-22", ("fbil",), "ECB", "2026-10-22"),  # FBIL down: ECB alone
+])
+def test_usdinr_keeps_the_freshest_official_release(fbil, ecb_day, fail, source, as_of):
+    web = FakeWeb(fail=fail, fbil=fbil, ecb=_ecb_xml(ecb_day))
+    entry = mf.fetch_usdinr(web, NOW.date())
+    assert entry["source"].startswith(source) and entry["as_of_date"] == as_of
+
+
+def test_ecb_usdinr_observation_names_its_source(tmp_path):
+    path = tmp_path / "macro_series.json"
+    mf.refresh_macro_series(get=FakeWeb(fbil=LAGGING_FBIL, ecb=_ecb_xml("2026-10-22")), path=path, now=NOW, log=lambda m: None)
+    fx = next(o for o in get_macro_observations(path, now=NOW) if o["instrument"] == "USDINR_REF")
+    assert fx["claim"].startswith("ECB USD/INR cross rate for 2026-10-22")
+    assert fx["source_name"].startswith("ECB") and fx["stale"] is False
+
+
 class FakeWeb:
-    def __init__(self, fail=()):
+    def __init__(self, fail=(), fbil=None, ecb=None):
         self.fail = set(fail)
+        self.fbil = FBIL_BODY if fbil is None else fbil
+        self.ecb = ecb
         self.calls = []
 
     def __call__(self, url, params=None, headers=None):
@@ -71,7 +115,9 @@ class FakeWeb:
         if url == mf.NSE_FIIDII_URL:
             return mf.Response(503, "") if "nse" in self.fail else mf.Response(200, json.dumps(NSE_BODY))
         if url == mf.FBIL_REFRATES_URL:
-            return mf.Response(500, "{}") if "fbil" in self.fail else mf.Response(200, json.dumps(FBIL_BODY))
+            return mf.Response(500, "{}") if "fbil" in self.fail else mf.Response(200, json.dumps(self.fbil))
+        if url == mf.ECB_RATES_URL and self.ecb is not None:
+            return mf.Response(200, self.ecb)
         if "treasury.gov" in url:
             return mf.Response(200, TREASURY_CSV)
         return mf.Response(404, "")

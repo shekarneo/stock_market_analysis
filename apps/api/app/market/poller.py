@@ -86,7 +86,10 @@ def perform_live_sync(session: Session, settings: Settings, caller: Any = None) 
         stored_rec["sectoral_indices"] = sectoral_indices
         stored_rec["quotes"] = quotes_list
 
-        base_obs = result.get("observations") or stored_rec.get("observations") or []
+        # A failed or rejected instrument is not carried forward from an earlier read
+        failed = {e.get("instrument") for e in result.get("errors") or []}
+        base_obs = result.get("observations") or [
+            o for o in stored_rec.get("observations") or [] if o.get("instrument") not in failed]
         extra_obs = build_groww_market_observations(commodities, global_indices, sectoral_indices)
         seen_inst = set()
         merged_obs = []

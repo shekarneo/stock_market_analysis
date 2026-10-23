@@ -199,9 +199,16 @@ def start_fetch(
         # Include the whole end day, but never ask for the future
         end_dt = min(datetime.combine(end, datetime.min.time(), svc.hl.IST) + timedelta(days=1), datetime.now(svc.hl.IST))
         log(f"Fetching {', '.join(body.symbols)} [{', '.join(body.intervals)}] {body.start} .. {end}")
-        return svc.fetch_history(token=token, caller=HttpxCaller(), symbols=list(body.symbols),
-                                 start=start_dt, end=end_dt, intervals=list(body.intervals),
-                                 options=body.options, band_strikes=body.band_strikes, log=log)
+        result = svc.fetch_history(token=token, caller=HttpxCaller(), symbols=list(body.symbols),
+                                   start=start_dt, end=end_dt, intervals=list(body.intervals),
+                                   options=body.options, band_strikes=body.band_strikes, log=log)
+        if "NIFTY" in body.symbols and "1day" in body.intervals:
+            # A newly saved close scores the agents' pending calls right away
+            from app.analysis.agent_scorecard import score_from_saved_history
+
+            result["scorecard_scoring"] = score_from_saved_history()
+            log(f"Agent scorecard: {result['scorecard_scoring']}")
+        return result
 
     job = _start("fetch", params, work)
     _audit(session, principal, "research.multiyear.fetch", params)

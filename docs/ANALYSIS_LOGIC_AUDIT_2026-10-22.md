@@ -420,3 +420,20 @@ Still open:
 - **Unchanged:** direct engine calls without evidence keep the stated weights. Each specialist score now carries `evidence_status` and `evidence_factor`.
 
 **Result in the UI (15:30 IST):** news 0.33 → 0.03, macro 0.24 → 0.02, technical 0.07 (now the largest). The total proven weight was 0.13, so the verdict stayed at stand aside.
+
+## Data integrity (2026-10-23): bad quotes, repeat calls, stale USD/INR
+
+**Findings after the close (checked against Groww 1-minute candles):**
+- **A quote that never traded.** At 15:23 IST the Groww quote gave NIFTY 22795.15, but the day's high was 22786.95 (09:17), and the 15:15 bar never rose above 22600. So the "NIFTY above the previous close" in the section above came from this bad print, and the technical agent's BULLISH call was made on it. The 1-minute candles were also flat at 22516.40 from 15:15 to 15:27, then printed exactly 22600.00 at 15:28.
+- **Repeat runs counted as evidence.** Six analysis runs within 40 minutes gave six "calls" per agent. Thirty clicks in one afternoon could have marked an agent PROVEN.
+- **Slow scoring.** Every call waited for the next session's close, even its rest-of-day result.
+- **Stale USD/INR.** FBIL's public table had no row after 16-Oct (it returned nothing for 20–23 Oct), so the macro input was a week old.
+- **US 10Y missing in WSL.** The corporate proxy intercepts home.treasury.gov (and api.openai.com) with its own root CA ("Cloud Services Root CA", Blue Coat), which Windows trusts but WSL does not.
+
+**Changes:**
+- **Quote range check** (`live_quotes._normalize_quote`): a NIFTY quote outside the day's own low/high (the quote's `ohlc`) is rejected as `QUOTE_OUT_OF_RANGE` and not stored. A quote without a day range is kept with the limitation "could not be range-checked".
+- **No carry-forward:** an instrument whose read failed or was rejected is not filled back in from the previous read (`_persist`, `poller.perform_live_sync`). Without a fresh NIFTY price the analysis has no spot, and the scorecard records nothing.
+- **Scorecard counting** (`agent_scorecard.counted_calls`): one call per agent per session: the first in-session call, plus the first off-hours call (which is about the next session). Every call is still recorded; the summary reports `recorded_calls` and the counted `calls`.
+- **Scoring at the close** (`score_pending`): the rest-of-day result is scored as soon as that session's close is saved, and the next-session result a session later. A pre-open call is scored on that day's close (before, it was scored on the day after). Each NIFTY 1day history fetch now scores pending calls.
+- **USD/INR** (`macro_fetch.fetch_usdinr`): the ECB daily euro reference rates give the USD/INR cross (INR per EUR ÷ USD per EUR). The fresher of FBIL and ECB is kept, FBIL on a tie, and the source is named in the entry. On 22-Oct ECB gave 94.82 (FBIL 16-Oct: 95.02).
+- **US 10Y:** no code change; the fetcher already verifies TLS. It works on Windows. In WSL, the proxy root CA must be added to the system trust store (an operator step). With that CA, both home.treasury.gov and api.openai.com verified (`openssl s_client -CAfile`).

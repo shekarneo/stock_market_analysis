@@ -217,13 +217,17 @@ def get_macro_observations(path: Path | None = None, now: datetime | None = None
     if isinstance(fx_data, dict):
         spec = MACRO_SERIES_SPECS["USDINR_REF"]
         rate = _num(fx_data.get("rate"))
-        as_of, behind, stale = _freshness(fx_data.get("as_of_date"), now, time(13, 30))
+        # FBIL publishes at 13:30 IST; the ECB fallback around 16:00 CET (20:30 IST, the later bound)
+        from_ecb = str(fx_data.get("source") or "").startswith("ECB")
+        release = time(20, 30) if from_ecb else time(13, 30)
+        label = "ECB USD/INR cross rate" if from_ecb else "FBIL/RBI USD/INR reference rate"
+        as_of, behind, stale = _freshness(fx_data.get("as_of_date"), now, release)
         if rate is not None and as_of is not None:
-            obs_time = f"{as_of}T13:30:00+05:30"
+            obs_time = f"{as_of}T{release.strftime('%H:%M')}:00+05:30"
             observations.append({
                 "instrument": "USDINR_REF",
                 "category": "MACRO",
-                "claim": f"FBIL/RBI USD/INR reference rate for {as_of}: {rate:.2f}." + (" (stale)" if stale else ""),
+                "claim": f"{label} for {as_of}: {rate:.2f}." + (" (stale)" if stale else ""),
                 "claim_type": "OBSERVATION",
                 "source_name": fx_data.get("source") or spec["source"],
                 "provenance": "PROVIDER",

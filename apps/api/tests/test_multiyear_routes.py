@@ -32,6 +32,10 @@ class _Session:
 def api(tmp_path, monkeypatch):
     monkeypatch.setattr(hl, "HISTORY_DIR", tmp_path / "history")
     monkeypatch.setattr(svc, "REPORT_PATH", tmp_path / "report.json")
+    # Jobs also write the forecast, the agent backtest and the scorecard: keep them out of var/
+    monkeypatch.setattr(svc, "FORECAST_PATH", tmp_path / "forecast.json")
+    monkeypatch.setattr("app.analysis.track_record.BACKTEST_PATH", tmp_path / "agent_backtest.json")
+    monkeypatch.setattr("app.analysis.agent_scorecard.SCORECARD_PATH", tmp_path / "agent_calls.jsonl")
     monkeypatch.setattr("app.market.options_history.OPTIONS_DIR", tmp_path / "history" / "options")
     monkeypatch.setattr(routes, "read_session", lambda request, settings: {"username": "op"})
     monkeypatch.setattr(routes, "require_csrf", lambda request, settings: {"username": "op"})
@@ -102,7 +106,9 @@ def test_fetch_job_uses_service_and_validates(api, monkeypatch):
     body = {"symbols": ["NIFTY", "INDIAVIX"], "intervals": ["1day"], "start": "2020-01-01", "end": "2021-01-01"}
     assert api.post("/api/research/multiyear/fetch", json=body).status_code == 200
     job = api.get("/api/research/multiyear").json()["job"]
-    assert job["status"] == "SUCCEEDED" and job["log"][-1] == "fetched"
+    assert job["status"] == "SUCCEEDED" and "fetched" in job["log"]
+    assert job["log"][-1].startswith("Agent scorecard:")  # a NIFTY 1day fetch scores pending calls
+    assert job["result"]["scorecard_scoring"] == {"records": 0, "newly_scored": 0, "pending": 0}
     assert calls["token"] == "tok" and calls["symbols"] == ["NIFTY", "INDIAVIX"]
     assert api.session_stub.added[-1].action == "research.multiyear.fetch"
 

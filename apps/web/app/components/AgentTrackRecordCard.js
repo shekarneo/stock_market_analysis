@@ -107,10 +107,16 @@ export default function AgentTrackRecordCard() {
       <h3 style={{ marginTop: "18px" }}>Forward scorecard (every agent, from live analyses)</h3>
       {Object.keys(scorecard).length === 0 ? (
         <p className="v6-section-desc">
-          No calls recorded yet. Each NIFTY analysis run records every agent's call; calls are scored after the session
-          (and the next one) closes. A verdict needs at least {data.scorecard?.min_scored_for_verdict ?? 30} scored calls.
+          No calls recorded yet. Each NIFTY analysis run records every agent's call; the rest-of-day result is scored
+          at that session's close and the next-session result a session later. A verdict needs at least{" "}
+          {data.scorecard?.min_scored_for_verdict ?? 30} scored calls.
         </p>
       ) : (
+        <>
+        <p className="v6-section-desc">
+          Only one call per agent per session counts (the first in-session call, plus the first call made outside market
+          hours): re-running the analysis repeats the same market view and does not add evidence.
+        </p>
         <table className="v6-data-table" data-testid="agent-scorecard-table">
           <thead>
             <tr>
@@ -118,7 +124,7 @@ export default function AgentTrackRecordCard() {
               <th>Status</th>
               <th>Right: rest of day</th>
               <th>Right: next session</th>
-              <th>Calls (directional / pending)</th>
+              <th>Counted calls (directional / pending) · recorded</th>
               <th>Last call</th>
             </tr>
           </thead>
@@ -132,13 +138,14 @@ export default function AgentTrackRecordCard() {
                   <td><span className={`v6-pill ${st.cls}`}>{st.text}</span></td>
                   <td>{cell(row.rest_of_day)}</td>
                   <td>{cell(row.next_session)}</td>
-                  <td>{row.calls} ({row.directional_calls} / {row.pending})</td>
+                  <td>{row.calls} ({row.directional_calls} / {row.pending}) · {row.recorded_calls ?? row.calls}</td>
                   <td>{row.last_call ? row.last_call.slice(0, 16).replace("T", " ") : "—"}</td>
                 </tr>
               );
             })}
           </tbody>
         </table>
+        </>
       )}
     </div>
   );
