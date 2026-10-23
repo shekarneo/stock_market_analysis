@@ -150,9 +150,10 @@ def exchange_token(caller, secrets: dict, *, method: str, now: datetime) -> tupl
             json_body=body,
             timeout=TIMEOUT,
         )
-        # Handle clock skew (up to +/- 30s) if the current step is rejected
-        if result.status_code in {401, 403} or (isinstance(result.body, dict) and result.body.get("status") == "FAILURE"):
-            for offset in (-30, 30):
+        # Handle clock skew (up to +/- 90s) if the current step is rejected. Groww answers a
+        # wrong code with 400 "Invalid credentials", so 400 is retried too.
+        if result.status_code in {400, 401, 403} or (isinstance(result.body, dict) and result.body.get("status") == "FAILURE"):
+            for offset in (30, -30, 60, -60, 90, -90):
                 drift_body = {"key_type": "totp", "totp": totp_code(secrets["totp_secret"], timestamp=t_now + offset)}
                 drift_res = caller.send(
                     "POST",
@@ -254,8 +255,8 @@ def read_margin(caller, access_token: str) -> HttpResult:
 def _token_from_response(result: HttpResult) -> tuple[dict, str | None]:
     if result.status_code == 429:
         raise GrowwCallError("RATE_LIMITED", "Groww rate-limited the token request. It was not retried.")
-    if result.status_code in {401, 403}:
-        raise GrowwCallError("AUTHENTICATION_FAILED", "Groww rejected the credentials.")
+    if result.status_code in {400, 401, 403}:
+        raise GrowwCallError("AUTHENTICATION_FAILED", "Groww rejected the credentials (for TOTP, check the system clock).")
     body = result.body or {}
     if body.get("status") == "FAILURE":
         raise GrowwCallError("AUTHENTICATION_FAILED", "Groww rejected the credentials.")

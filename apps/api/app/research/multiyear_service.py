@@ -7,7 +7,7 @@ var/datasets/history/; run_daily_research builds the daily / half-day report.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -123,6 +123,18 @@ def fetch_history(
     return {"series": results, "failed_windows": failures, "pcr": pcr_summary}
 
 
+SESSION_CLOSE_BUFFER = time(15, 45)
+
+
+def completed_sessions(rows: list[list], now: datetime | None = None) -> list[list]:
+    """Drop today's rows until the session has closed: a forming candle is not a result."""
+    now = (now or datetime.now(hl.IST)).astimezone(hl.IST)
+    if now.time() >= SESSION_CLOSE_BUFFER:
+        return rows
+    today = now.date().isoformat()
+    return [r for r in rows if str(r[0])[:10] != today]
+
+
 def run_daily_research(
     *,
     with_pcr: bool = False,
@@ -136,7 +148,8 @@ def run_daily_research(
 
     def series(symbol: str, interval: str) -> list | None:
         doc = hl.load_series(symbol, interval)
-        return doc["candles"] if doc and doc.get("candles") else None
+        rows = completed_sessions(doc["candles"]) if doc and doc.get("candles") else None
+        return rows or None
 
     daily = series("NSE-NIFTY", "1day")
     intraday = series("NSE-NIFTY", "15minute")

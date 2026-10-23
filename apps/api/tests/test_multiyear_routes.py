@@ -120,3 +120,13 @@ def test_only_one_job_at_a_time(api, monkeypatch):
 
 def test_non_finite_metrics_are_served_as_null():
     assert routes._finite({"a": float("nan"), "b": [float("inf"), 1.5], "c": "x"}) == {"a": None, "b": [None, 1.5], "c": "x"}
+
+
+def test_forming_session_is_excluded_until_close():
+    from datetime import datetime
+
+    rows = [["2026-10-22T00:00:00+05:30", 1, 1, 1, 1], ["2026-10-23T00:00:00+05:30", 1, 1, 1, 1]]
+    midday = datetime(2026, 10, 23, 12, 5, tzinfo=hl.IST)
+    after_close = datetime(2026, 10, 23, 16, 0, tzinfo=hl.IST)
+    assert [r[0][:10] for r in svc.completed_sessions(rows, midday)] == ["2026-10-22"]
+    assert len(svc.completed_sessions(rows, after_close)) == 2
