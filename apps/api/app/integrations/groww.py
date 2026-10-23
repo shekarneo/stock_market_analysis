@@ -22,6 +22,7 @@ from app.integrations.http import (
     GROWW_ORIGIN,
     GROWW_QUOTE_URL,
     GROWW_TOKEN_URL,
+    INDEX_QUOTE_PARAMS,
     LTP_PARAMS,
     QUOTE_PARAMS,
     HttpResult,
@@ -183,6 +184,17 @@ def read_documented_quote(caller, access_token: str) -> HttpResult:
     return caller.send(
         "GET",
         GROWW_QUOTE_URL + "?" + urlencode(QUOTE_PARAMS),
+        headers=_read_headers(access_token),
+        json_body=None,
+        timeout=TIMEOUT,
+    )
+
+
+def read_index_quote(caller, access_token: str, instrument: str) -> HttpResult:
+    """GET the cash quote of one allowlisted index (NIFTY, BANKNIFTY, SENSEX). Read-only."""
+    return caller.send(
+        "GET",
+        GROWW_QUOTE_URL + "?" + urlencode(INDEX_QUOTE_PARAMS[instrument]),
         headers=_read_headers(access_token),
         json_body=None,
         timeout=TIMEOUT,

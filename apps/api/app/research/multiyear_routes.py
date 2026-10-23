@@ -159,6 +159,17 @@ def read_forecast(request: Request, settings: Settings = Depends(_settings)) -> 
     return _finite(forecast)
 
 
+@router.get("/api/research/intraday-range")
+def read_intraday_range(
+    request: Request,
+    instrument: Literal["NIFTY", "BANKNIFTY", "SENSEX"] = "NIFTY",
+    settings: Settings = Depends(_settings),
+) -> dict:
+    """Rest-of-day range of one index from the latest stored Groww quote (no provider call is made here)."""
+    read_session(request, settings)
+    return _finite(svc.live_intraday_forecast(instrument))
+
+
 @router.get("/api/research/agents")
 def read_agent_track_records(request: Request, settings: Settings = Depends(_settings)) -> dict:
     """Historical backtest of the price-based agents and the forward scorecard of every agent."""
@@ -232,6 +243,7 @@ def start_research(
         log(f"Report written to {path.name}")
         forecast, fpath = svc.run_realistic_forecast(log=log)
         log(f"Forecast for {forecast.get('for_session')} written to {fpath.name}")
+        intraday = svc.run_intraday_ranges(log=log)  # an index without 15m history is reported, not fatal
         agents = None
         try:
             agents = svc.run_agent_evaluation(log=log)
@@ -239,6 +251,7 @@ def start_research(
             log(f"Agent backtest skipped: {exc}")
         return {"summary": report["summary"], "generated_at": report.get("generated_at"),
                 "forecast_for": forecast.get("for_session"),
+                "intraday_range": {k: v["status"] for k, v in intraday.items()},
                 "agent_backtest_sessions": None if agents is None else agents["backtest"]["sessions"]}
 
     job = _start("research", params, work)

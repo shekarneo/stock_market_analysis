@@ -12,6 +12,7 @@ Provides unified operational, quantitative, and administrative control commands:
 9. `fetch-macro`: official FII/DII, USD/INR and US 10Y releases for the macro agents.
 10. `forecast-daily`: tuned next-session NIFTY forecast (expected range, honest direction).
 11. `agent-backtest`: measured track record of the agents (history replay + forward scorecard).
+12. `intraday-range`: rest-of-day NIFTY range model (walk-forward, per 15-minute checkpoint).
 """
 
 from __future__ import annotations
@@ -552,6 +553,35 @@ def cmd_forecast_daily(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_intraday_range(args: argparse.Namespace) -> int:
+    """Walk-forward evaluation of the rest-of-day range model per index on saved 15m + daily history."""
+    from app.research.multiyear_service import INTRADAY_INSTRUMENTS, run_intraday_range
+
+    instruments = list(INTRADAY_INSTRUMENTS) if args.instrument == "all" else [args.instrument]
+    failed = False
+    for instrument in instruments:
+        try:
+            model, out = run_intraday_range(instrument, log=print)
+        except FileNotFoundError as exc:
+            print(exc)
+            failed = True
+            continue
+        if model.get("status") != "EVALUATED":
+            print(f"{instrument} intraday range model: {model.get('status')} ({model.get('sessions')} sessions)")
+            failed = True
+            continue
+        sel, cov = model["selected_on_development"], model["holdout_coverage_mean"]
+        print(f"\n{instrument} rest-of-day range model over {model['sessions']} sessions (holdout from {model['holdout_from']}): {sel}")
+        for ref, pct in model["holdout_mse_improvement_pct"].items():
+            dm = model["dm_holdout"][ref]
+            print(f"  vs {ref:15s}: error {pct:.1f}% lower on the holdout (DM p={_fmt(dm.get('p_value'))})")
+        print(f"  Holdout coverage: range 68% band {cov['range_band68'] * 100:.0f}%, 90% band {cov['range_band90'] * 100:.0f}%; "
+              f"high within p90 {cov['high_within_p90'] * 100:.0f}%, low {cov['low_within_p90'] * 100:.0f}%; "
+              f"close 90% band {cov['close_band90'] * 100:.0f}%")
+        print(f"Saved to {out}")
+    return 1 if failed else 0
+
+
 def cmd_agent_backtest(args: argparse.Namespace) -> int:
     """Replay the price-based agents on saved 15m history; score the forward agent scorecard."""
     from app.research.multiyear_service import run_agent_evaluation
@@ -666,6 +696,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_fd = subparsers.add_parser("forecast-daily", help="Tune on saved history and publish the next-session NIFTY forecast")
     p_fd.add_argument("--output", default=None, help="Path (default var/datasets/realistic_forecast.json)")
     p_fd.set_defaults(func=cmd_forecast_daily)
+
+    # intraday-range
+    p_ir = subparsers.add_parser("intraday-range", help="Evaluate and save the rest-of-day range model per index")
+    p_ir.add_argument("--instrument", choices=["NIFTY", "BANKNIFTY", "SENSEX", "all"], default="all")
+    p_ir.set_defaults(func=cmd_intraday_range)
 
     # agent-backtest
     p_ab = subparsers.add_parser("agent-backtest", help="Replay price-based agents on history and score the agent scorecard")

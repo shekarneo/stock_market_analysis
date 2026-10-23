@@ -11,7 +11,7 @@ from app.execution.paper import PAPER_TRADING_ACTIVE
 from app.integrations.crypto import encrypt_secrets
 from app.integrations.http import GROWW_LTP_URL, GROWW_QUOTE_URL, HttpResult, UrlRejected, assert_allowed
 from app.integrations.service import save_groww
-from app.market.live_quotes import run_live_read
+from app.market.live_quotes import read_index_quotes, run_live_read
 from app.market.timestamp_contract import contract
 import pytest
 
@@ -72,8 +72,13 @@ def _prepare(session, *, enabled=True, token="test-access-token", expiry=EXPIRY)
 def test_allowlist_accepts_only_the_documented_queries():
     assert_allowed("GET", GROWW_QUOTE_URL + "?exchange=NSE&segment=CASH&trading_symbol=NIFTY")
     assert_allowed("GET", GROWW_LTP_URL + "?segment=CASH&exchange_symbols=BSE_SENSEX")
+    # The three index quotes are allowed exactly; any other symbol or exchange is not
+    assert_allowed("GET", GROWW_QUOTE_URL + "?exchange=NSE&segment=CASH&trading_symbol=BANKNIFTY")
+    assert_allowed("GET", GROWW_QUOTE_URL + "?exchange=BSE&segment=CASH&trading_symbol=SENSEX")
     for url in (
-        GROWW_QUOTE_URL + "?exchange=NSE&segment=CASH&trading_symbol=BANKNIFTY",
+        GROWW_QUOTE_URL + "?exchange=NSE&segment=CASH&trading_symbol=RELIANCE",
+        GROWW_QUOTE_URL + "?exchange=NSE&segment=CASH&trading_symbol=SENSEX",
+        GROWW_QUOTE_URL + "?exchange=BSE&segment=CASH&trading_symbol=SENSEX&extra=1",
         GROWW_LTP_URL + "?segment=CASH&exchange_symbols=NSE_NIFTY",
         "https://api.groww.in/v1/order/create",
     ):
@@ -143,6 +148,55 @@ def test_quote_without_a_day_range_is_kept_with_a_limitation(session, tmp_path):
     nifty = result["quotes"][0]
     assert nifty["last_price"] == 24500.5
     assert any("could not be range-checked" in note for note in nifty["limitations"])
+
+
+def _index_body(price, ohlc):
+    return {"status": "SUCCESS", "payload": {"last_price": price, "last_trade_time": None, "ohlc": ohlc}}
+
+
+def test_index_quotes_for_banknifty_and_sensex_are_range_checked(session):
+    _prepare(session)
+    caller = Caller([
+        HttpResult(200, _index_body(54287.35, {"open": 54965.75, "high": 54990.5, "low": 53942.35, "close": 54925.7}), ""),
+        HttpResult(200, _index_body(73900.0, {"open": 73665.64, "high": 73766.51, "low": 72452.37, "close": 73249.39}), ""),
+    ])
+    out = read_index_quotes(session, get_settings(), caller=caller, retrieved_at=NOW)
+    assert [q["instrument"] for q in out["quotes"]] == ["BANKNIFTY"]
+    assert out["quotes"][0]["ohlc"]["high"] == 54990.5
+    assert out["quotes"][0]["query"] == "exchange=NSE&segment=CASH&trading_symbol=BANKNIFTY"
+    assert out["errors"] == [{"instrument": "SENSEX", "code": "QUOTE_OUT_OF_RANGE",
+                              "message": "The SENSEX quote 73900.0 is outside the day's low 72452.37 / high 73766.51; it was rejected."}]
+    assert "exchange=BSE&segment=CASH&trading_symbol=SENSEX" in caller.urls[1]
+    assert [o["instrument"] for o in out["observations"]] == ["BANKNIFTY"]
+
+
+def test_live_sync_adds_index_quotes_and_drops_a_rejected_ltp(monkeypatch, tmp_path):
+    from contextlib import nullcontext
+
+    from app.market import poller
+
+    nifty = {"instrument": "NIFTY", "last_price": 22600.0, "ohlc": {"open": 1, "high": 2, "low": 1, "close": 1}}
+    sensex_ltp = {"instrument": "SENSEX", "last_price": 73123.83, "ohlc": None}
+    bank = {"instrument": "BANKNIFTY", "last_price": 54287.35, "ohlc": {"open": 1, "high": 2, "low": 1, "close": 1}}
+    monkeypatch.setattr(poller, "run_live_read", lambda *a, **k: {
+        "status": "READ", "quotes": [nifty, sensex_ltp], "errors": [],
+        "observations": [{"instrument": "NIFTY", "last_price": 22600.0}, {"instrument": "SENSEX", "last_price": 73123.83}]})
+    monkeypatch.setattr(poller, "read_index_quotes", lambda *a, **k: {
+        "quotes": [bank], "observations": [{"instrument": "BANKNIFTY", "last_price": 54287.35}],
+        "errors": [{"instrument": "SENSEX", "code": "QUOTE_OUT_OF_RANGE", "message": "rejected"}]})
+    monkeypatch.setattr("app.market.groww_options.fetch_groww_option_chain", lambda *a, **k: None)
+    for name in ("parse_mcx_commodities", "parse_global_indices", "parse_sectoral_indices"):
+        monkeypatch.setattr(poller, name, lambda: [])
+    saved = {}
+    monkeypatch.setattr(poller, "load_read", lambda: {})
+    monkeypatch.setattr(poller, "save_read", lambda rec: saved.update(rec))
+    monkeypatch.setattr(poller, "stored_observations", lambda: [])
+    monkeypatch.setattr(poller, "evaluate_open", lambda s, obs: [])
+    fake_session = type("S", (), {"begin_nested": lambda self: nullcontext()})()
+    result = poller.perform_live_sync(fake_session, get_settings(), caller=object())
+    assert [q["instrument"] for q in result["quotes"]] == ["NIFTY", "BANKNIFTY"]  # SENSEX's unchecked LTP dropped too
+    assert [o["instrument"] for o in saved["observations"]] == ["NIFTY", "BANKNIFTY"]
+    assert result["index_quote_errors"][0]["code"] == "QUOTE_OUT_OF_RANGE"
 
 
 def test_disabled_or_rejected_credentials_do_not_send(session, tmp_path):

@@ -244,7 +244,37 @@ def _persist(base, code, message, path, *, secrets, calls) -> dict:
     return _done(base, code, message, secrets=secrets, calls=calls)
 
 
-def _normalize_quote(result, retrieved_at: datetime) -> dict:
+EXTRA_INDEX_QUOTES = ("BANKNIFTY", "SENSEX")
+
+
+def read_index_quotes(session, settings, *, caller, retrieved_at: datetime) -> dict:
+    """Read-only BANKNIFTY and SENSEX quotes with the day's OHLC, range-checked like NIFTY.
+
+    Called after a successful NIFTY read, so the stored token is already valid. A failed or
+    rejected instrument is reported, never filled in.
+    """
+    from app.integrations.groww import read_index_quote
+    from app.integrations.service import groww_read_token
+
+    token = groww_read_token(session, settings, caller=caller)
+    quotes, errors = [], []
+    for instrument in EXTRA_INDEX_QUOTES:
+        try:
+            quote = _normalize_quote(read_index_quote(caller, token, instrument), retrieved_at, instrument=instrument)
+        except Exception as exc:  # noqa: BLE001 - one instrument failing does not stop the others
+            quote = {"ok": False, "code": "PROVIDER_ERROR", "message": exc.__class__.__name__}
+        if quote.get("ok"):
+            quotes.append(quote["quote"])
+        else:
+            errors.append({"instrument": instrument, "code": quote["code"], "message": quote["message"]})
+    return {"quotes": quotes, "observations": [_observation(q) for q in quotes], "errors": errors}
+
+
+def _normalize_quote(result, retrieved_at: datetime, *, instrument: str = "NIFTY") -> dict:
+    from urllib.parse import urlencode
+
+    from app.integrations.http import INDEX_QUOTE_PARAMS
+
     failed = _http_failure(result, "quote")
     if failed:
         return failed
@@ -265,19 +295,19 @@ def _normalize_quote(result, retrieved_at: datetime) -> dict:
         # A print outside the day's own high/low is not a trade that happened (seen at the
         # 23-Oct-2026 close: 22795.15 against a day high of 22787.25); it is not stored.
         return {"ok": False, "code": "QUOTE_OUT_OF_RANGE",
-                "message": f"The NIFTY quote {price} is outside the day's low {ohlc['low']} / high {ohlc['high']}; it was rejected."}
+                "message": f"The {instrument} quote {price} is outside the day's low {ohlc['low']} / high {ohlc['high']}; it was rejected."}
     if ohlc is None:
         notes.append("The day's high/low was unavailable, so the price could not be range-checked.")
     return {
         "ok": True,
         "quote": {
-            "instrument": "NIFTY",
+            "instrument": instrument,
             "last_price": price,
             "ohlc": ohlc,
             "event_timestamp": event,
             "retrieved_at": retrieved_at.astimezone(timezone.utc).isoformat(),
             "source": "GET /v1/live-data/quote",
-            "query": "exchange=NSE&segment=CASH&trading_symbol=NIFTY",
+            "query": urlencode(INDEX_QUOTE_PARAMS[instrument]),
             "data_class": "UNVERIFIED_PROVIDER_DATA",
             "verification_status": "UNVERIFIED",
             "limitations": [

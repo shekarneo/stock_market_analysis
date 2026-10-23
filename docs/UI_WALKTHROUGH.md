@@ -230,6 +230,8 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
      - `Collapsible Feed Provenance & Compliance Archive`: Expandable `<details>` drawer cleanly archiving raw tick inspection tables, provider readiness metadata, and synthetic fixtures for compliance auditing without cluttering the executive view.
   7. **Diagnostics Grid (`<LiveQuotes />` & `<Quarantine />`)**:
      - **Live Quotes Reader (`<LiveQuotes />`)**: Direct inspection of raw quotes retrieved from Groww with domestic indices, MCX commodities, global benchmarks, and sectoral/volatility prints, plus `Read Groww quotes` button.
+       - **Domestic index rows**: NIFTY, BANKNIFTY and SENSEX, each a Groww quote with the day's open/high/low (shown as `O · H · L`). SENSEX falls back to its last-price-only read (`Verified LTP`) when its quote is unavailable.
+       - **Rejected quotes**: a quote whose price is outside that day's own low/high is rejected (`QUOTE_OUT_OF_RANGE`) and the row is absent, rather than showing a print that did not trade. For SENSEX, the last-price-only read is dropped as well.
      - **Quarantine Ledger (`<Quarantine />`)**: Table of any candle files quarantined due to invalid timestamp formatting, clock drift, or empty payloads.
 
 - **Detailed Analysis Desk View Components (`viewMode === "detailed"`)**:
@@ -458,6 +460,46 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
 ### 4.5 Multi-Horizon Forecast Desk (`/forecast`)
 - **Purpose**: Quantitative multi-horizon forecasting, directional probabilities, and empirical out-of-sample calibration tracking.
 - **Components & Controls**:
+  - **Rest of Today: Index Range Card (`<IntradayRangeCard />`)**, the first card on the page:
+    - **Purpose**: during the session, how far the selected index is likely to travel between now and the close, and the high, low and close levels that implies (`GET /api/research/intraday-range?instrument=NIFTY|BANKNIFTY|SENSEX`, refreshed every 60 seconds). It describes the size of the move, not its direction. It is not a trade signal and never places or proposes orders.
+    - **Instrument toggles** (`NIFTY`, `BANKNIFTY`, `SENSEX`, top right): switch the index.
+      - Each index has its own model, trained and tested on its own history: NIFTY and BANKNIFTY since 2020, SENSEX since September 2022 (Groww's SENSEX history starts there).
+      - Switching clears the card and loads that index's forecast.
+      - MCX crude is not offered: Groww's historical API does not serve MCX, so a crude model could not be tested.
+    - **Inputs**:
+      - the stored Groww quote for that index (last price plus the day's open, high and low so far; the poller refreshes it every 15 s);
+      - the previous close;
+      - the previous sessions' daily ranges of that index;
+      - the previous India VIX close (NSE's volatility index, used for all three).
+      Nothing missing is filled in, and one index's quote is never used for another.
+    - **Model**: one model per 15-minute checkpoint (09:30, 09:45 … 15:15 IST). A time between checkpoints uses the last one passed; for example, 12:20 uses the 12:15 model. Each is chosen on the development years and checked once on unseen sessions.
+    - **Header**:
+      - Subtitle: the source and how many sessions the selected index's model was checked on.
+      - `AS OF <time> IST` pill: the checkpoint being used.
+      - When there is no forecast, a status pill instead:
+        - `Market closed` (weekend or after 15:30).
+        - `Before the first bar` (before 09:30).
+        - `No session today` (Groww's quote repeats the last session, which means an exchange holiday).
+        - Amber `NO LIVE QUOTE` / `STALE QUOTE` (the feed has not updated for 3 minutes).
+        - Amber `HISTORY BEHIND` / `HISTORY MISSING` (the saved daily history does not end at Groww's previous close, or the VIX history is a session behind).
+        - Amber `MODEL MISSING` (run the research first).
+    - **`Update daily history` button**: shown only for `HISTORY BEHIND` / `HISTORY MISSING`. It fetches the last 14 days of the selected index's and INDIAVIX daily candles from Groww (read-only market data), waits for the job, then reloads the card. Errors are shown under the button.
+    - **Metric tiles** (only when a forecast is shown):
+      - `Still to travel by the close`: expected rest-of-day range (from now to the close, including the current price) in % and points, with its 90% band.
+      - `High from now to the close`: the level the rest-of-day high stays under on 68% of days; the 90% level is in the subtitle.
+      - `Low from now to the close`: the level the rest-of-day low stays above on 68% of days; the 90% level is in the subtitle.
+      - `Close band`: the 68% band for the close (90% band in the subtitle).
+    - **Coverage table**: how often each 90% band held at this checkpoint on unseen sessions (n shown in the header). Rows: range, high, low, close; target 90%. A value below 85% is amber.
+    - **Amber warning**: appears when any 90% band at this time of day held less than 85% of the time on unseen sessions (typically near 15:15, the closing period). Treat those bands as narrower than stated.
+    - **Evidence line**: the error reduction against two simple rules on unseen sessions, each with its Diebold–Mariano p-value:
+      - "yesterday's range scaled to the time left";
+      - "today's range so far, scaled".
+      It also gives the average 90% and 68% band coverage across all checkpoints.
+    - **Footnotes**:
+      - Size of the move only, not its direction.
+      - The quote time and the day's open, high and low so far.
+      - Statistical expectations, not trade signals.
+    - **Training**: all three models are rebuilt by Backtest → Multi-Year Research → `Run research`, or by `python -m app.cli intraday-range [--instrument NIFTY|BANKNIFTY|SENSEX|all]`. An index without saved 15-minute history is reported as `NO_HISTORY`. An index that fails evaluation shows `MODEL MISSING` with the reason.
   - **Next-Session NIFTY Forecast Card (`<RealisticForecastCard />`)**:
     - **Purpose**: the app's realistic forecast for the next NIFTY session, from models tuned on daily Groww history since 2020 and checked on data they never saw (`GET /api/research/multiyear/forecast`). It describes expected movement; it is not a trade signal and never places or proposes orders.
     - **Heading**: `NIFTY Forecast for <date>` with the last completed close it is based on. The date is the next weekday; exchange holidays are not checked.

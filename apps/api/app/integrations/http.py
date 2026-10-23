@@ -14,6 +14,12 @@ GROWW_CANDLES_URL = f"{GROWW_ORIGIN}/v1/historical/candles"
 GROWW_QUOTE_URL = f"{GROWW_ORIGIN}/v1/live-data/quote"
 GROWW_LTP_URL = f"{GROWW_ORIGIN}/v1/live-data/ltp"
 QUOTE_PARAMS = {"exchange": "NSE", "segment": "CASH", "trading_symbol": "NIFTY"}
+# Read-only index quotes (with the day's OHLC); each query is fixed, callers pick only the instrument
+INDEX_QUOTE_PARAMS = {
+    "NIFTY": QUOTE_PARAMS,
+    "BANKNIFTY": {"exchange": "NSE", "segment": "CASH", "trading_symbol": "BANKNIFTY"},
+    "SENSEX": {"exchange": "BSE", "segment": "CASH", "trading_symbol": "SENSEX"},
+}
 LTP_PARAMS = {"segment": "CASH", "exchange_symbols": "BSE_SENSEX"}
 OPENAI_MODELS_URL = "https://api.openai.com/v1/models/"
 OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
@@ -38,7 +44,7 @@ def assert_allowed(method: str, url: str) -> None:
         return
     if method == "GET" and _historical_candles_url(url):
         return
-    if method == "GET" and _exact_groww(url, "/v1/live-data/quote", QUOTE_PARAMS):
+    if method == "GET" and any(_exact_groww(url, "/v1/live-data/quote", p) for p in INDEX_QUOTE_PARAMS.values()):
         return
     if method == "GET" and _exact_groww(url, "/v1/live-data/ltp", LTP_PARAMS):
         return

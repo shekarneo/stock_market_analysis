@@ -671,7 +671,7 @@ def live_quotes(request: Request, settings: Settings = Depends(_settings)) -> di
         except Exception:
             pass
 
-    quotes_list = [q for q in (stored.get("quotes") or []) if q.get("instrument") in ("NIFTY", "SENSEX")]
+    quotes_list = [q for q in (stored.get("quotes") or []) if q.get("instrument") in ("NIFTY", "BANKNIFTY", "SENSEX")]
     if not quotes_list:
         snapshot_nifty = next((s for s in sectoral_indices if s.get("instrument") == "NIFTY"), None)
         snapshot_sensex = next((s for s in sectoral_indices if s.get("instrument") == "SENSEX"), None)

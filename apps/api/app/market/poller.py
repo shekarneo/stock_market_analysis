@@ -21,7 +21,7 @@ from app.market.groww_market_snapshot import (
     parse_mcx_commodities,
     parse_sectoral_indices,
 )
-from app.market.live_quotes import load_read, run_live_read, save_read, stored_observations
+from app.market.live_quotes import load_read, read_index_quotes, run_live_read, save_read, stored_observations
 from app.market.schemas import IST
 from app.settings import Settings, get_settings
 from app.watchlist.service import evaluate_open
@@ -60,6 +60,20 @@ def perform_live_sync(session: Session, settings: Settings, caller: Any = None) 
     now_ist = datetime.now(IST)
     result = run_live_read(session, settings, caller=caller, retrieved_at=now_ist)
 
+    # BANKNIFTY and SENSEX quotes with the day's OHLC (SENSEX's quote replaces its LTP-only read)
+    if result.get("status") in ("READ", "PARTIAL"):
+        try:
+            extra = read_index_quotes(session, settings, caller=caller, retrieved_at=now_ist)
+            replaced = {q["instrument"] for q in extra["quotes"]}
+            # A quote rejected as out of range also drops that instrument's unchecked LTP
+            replaced |= {e["instrument"] for e in extra["errors"] if e["code"] == "QUOTE_OUT_OF_RANGE"}
+            result["quotes"] = [q for q in result.get("quotes") or [] if q.get("instrument") not in replaced] + extra["quotes"]
+            result["observations"] = [o for o in result.get("observations") or []
+                                      if o.get("instrument") not in replaced] + extra["observations"]
+            result["index_quote_errors"] = extra["errors"]
+        except Exception as exc:
+            logger.warning("Index quote read failed during live sync: %s", exc)
+
     # Fetch fresh live option chain for NIFTY from Groww official API
     try:
         from app.market.groww_options import fetch_groww_option_chain
@@ -76,7 +90,7 @@ def perform_live_sync(session: Session, settings: Settings, caller: Any = None) 
         result["global_indices"] = global_indices
         result["sectoral_indices"] = sectoral_indices
 
-        quotes_list = [q for q in (result.get("quotes") or []) if q.get("instrument") in ("NIFTY", "SENSEX")]
+        quotes_list = [q for q in (result.get("quotes") or []) if q.get("instrument") in ("NIFTY", "BANKNIFTY", "SENSEX")]
         result["quotes"] = quotes_list
 
         stored_rec = load_read() or {}

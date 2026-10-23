@@ -34,6 +34,7 @@ def api(tmp_path, monkeypatch):
     monkeypatch.setattr(svc, "REPORT_PATH", tmp_path / "report.json")
     # Jobs also write the forecast, the agent backtest and the scorecard: keep them out of var/
     monkeypatch.setattr(svc, "FORECAST_PATH", tmp_path / "forecast.json")
+    monkeypatch.setattr(svc, "INTRADAY_MODEL_DIR", tmp_path / "intraday_range")
     monkeypatch.setattr("app.analysis.track_record.BACKTEST_PATH", tmp_path / "agent_backtest.json")
     monkeypatch.setattr("app.analysis.agent_scorecard.SCORECARD_PATH", tmp_path / "agent_calls.jsonl")
     monkeypatch.setattr("app.market.options_history.OPTIONS_DIR", tmp_path / "history" / "options")

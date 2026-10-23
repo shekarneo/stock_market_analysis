@@ -437,3 +437,54 @@ Still open:
 - **Scoring at the close** (`score_pending`): the rest-of-day result is scored as soon as that session's close is saved, and the next-session result a session later. A pre-open call is scored on that day's close (before, it was scored on the day after). Each NIFTY 1day history fetch now scores pending calls.
 - **USD/INR** (`macro_fetch.fetch_usdinr`): the ECB daily euro reference rates give the USD/INR cross (INR per EUR ÷ USD per EUR). The fresher of FBIL and ECB is kept, FBIL on a tie, and the source is named in the entry. On 22-Oct ECB gave 94.82 (FBIL 16-Oct: 95.02).
 - **US 10Y:** no code change; the fetcher already verifies TLS. It works on Windows. In WSL, the proxy root CA must be added to the system trust store (an operator step). With that CA, both home.treasury.gov and api.openai.com verified (`openssl s_client -CAfile`).
+
+## Rest-of-day range from the live quote (2026-10-23)
+
+**Question:** with the live Groww quote, can the app forecast what is left of today? Direction was already tested on the same live inputs (technical agent replay: 53–59% right, not profitable after costs). Size is different: volatility persists, both from day to day and within a day.
+
+**Model** (`app/research/intraday_range.py`; trained by `run_intraday_range` / `cli intraday-range`; served by `GET /api/research/intraday-range`):
+- **Target**, at each checkpoint (09:30 … 15:15, after k of the 25 regular 15-minute bars): the log of the rest-of-day range including the current price. It also gives the rest-of-day high above the price, the low below it, and the close relative to it.
+- **Inputs** (only what the live quote and saved history supply):
+  - previous daily log ranges (1 / 5 / 22-day);
+  - today's range so far;
+  - |gap| and |move from the previous close|;
+  - the previous India VIX close.
+- **Candidates**:
+  - `naive_prev_day`: yesterday's range scaled to the time left;
+  - `so_far_scaled`: today's range so far, scaled;
+  - `har_intraday`, `har_intraday_vix`: OLS per checkpoint.
+- **Evaluation**: walk-forward by session, selection on the development period, holdout reported once. The Diebold–Mariano test uses per-session mean loss, because the 24 rows of one session are not independent. Bands are quantiles of development errors.
+- **Live refusals** (no forecast is shown):
+  - `MARKET_CLOSED`, `PRE_OPEN`, `NO_SESSION_TODAY` (the quote repeats the last session);
+  - `NO_LIVE_QUOTE`, `STALE_QUOTE` (> 180 s);
+  - `HISTORY_BEHIND` (saved last close ≠ Groww's previous close by > 0.05%, or the VIX history is behind), `HISTORY_MISSING`;
+  - `MODEL_MISSING`.
+
+**Result** (1,656 complete sessions 2020-01-31 → 2026-10-23; holdout 235 sessions from 2025-11-11):
+- **Selected:** `har_intraday_vix`. Holdout MSE of the log range was 0.187, against 0.799 for `naive_prev_day` (−77%, DM p < 0.001) and 0.245 for `so_far_scaled` (−23%, DM p < 0.001).
+- **Holdout coverage**, averaged over checkpoints:
+  - range: 68% band 69%, 90% band 91%;
+  - rest-of-day high under its 90% level: 89%; low above its 90% level: 87%;
+  - close 90% band: 87%.
+- **Weak spot:** the last checkpoint (15:15) under-covers; the close 90% band held 78%. This is the closing period, and the card flags any 90% band below 85% at the current checkpoint.
+- **Replay of 23-Oct-2026** (day-so-far inputs from the 15-minute bars):
+
+  | Time | Forecast | Actual |
+  |---|---|---|
+  | 10:15 | 1.02% | 1.02% |
+  | 12:15 | 0.82% | 1.02% |
+  | 14:15 | 0.51% | 0.65% |
+
+  At all three times the rest-of-day high and low stayed inside the 90% levels.
+
+**Extended to BANKNIFTY and SENSEX (2026-10-23):** each index has its own model, trained only on its own history, and India VIX is the volatility input for all three. The live quotes come from two new read-only allowlist entries, `NSE/CASH/BANKNIFTY` and `BSE/CASH/SENSEX` (`INDEX_QUOTE_PARAMS`). They are range-checked like NIFTY. A rejected SENSEX quote also drops its unchecked LTP.
+
+| Index | Sessions | Holdout | Error vs yesterday-scaled | vs so-far-scaled | 90% range band held | High / low within p90 | Close 90% |
+|---|---|---|---|---|---|---|---|
+| NIFTY | 1,656 | 235 (from 2025-11-11) | −77% (p<0.001) | −23% (p<0.001) | 91% | 89% / 87% | 87% |
+| BANKNIFTY | 1,655 | 234 (from 2025-11-12) | −54% (p<0.001) | −25% (p<0.001) | 91% | 91% / 91% | 90% |
+| SENSEX | 986 | 85 (from 2026-06-22) | −68% (p<0.001) | −27% (p<0.001) | 90% | 95% / 88% | 88% |
+
+- **SENSEX:** Groww's history starts in Sep-2022, so its holdout is only 85 sessions and its coverage numbers are less certain.
+- **MCX crude:** no model. Groww's historical API does not serve MCX, so a crude model cannot be tested.
+- **Replay of 23-Oct** at 10:15, 12:15 and 14:15: the rest-of-day high and low of all three indices stayed inside the 90% levels at every checkpoint.
