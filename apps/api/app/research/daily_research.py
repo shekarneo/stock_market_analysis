@@ -124,14 +124,51 @@ def build_rows(
     min_history: int = 20,
 ) -> list[dict]:
     """Feature rows for each bar t with targets from bar t+1. Missing inputs -> key absent."""
-    vix_d, bn_d, sx_d = _by_day(vix), _by_day(banknifty), _by_day(sensex)
-    pv = [parkinson_var(b) for b in bars]
+    ctx = _FeatureContext(bars, vix, banknifty, sensex, pcr, min_history)
     rows = []
     for t in range(min_history, len(bars) - 1):
-        b, prev, nxt = bars[t], bars[t - 1], bars[t + 1]
-        window = pv[t - min_history + 1:t + 1]
-        if any(v is None for v in window) or pv[t + 1] is None:
+        f = ctx.features(t)
+        if f is None or ctx.pv[t + 1] is None:
             continue
+        ret_next = math.log(bars[t + 1].close / bars[t].close)
+        rows.append({
+            "key": bars[t].key, "day": bars[t].day, "features": f,
+            "ret_next": ret_next, "dir_next": 1 if ret_next > 0 else 0,
+            "log_var_next": math.log(ctx.pv[t + 1]),
+        })
+    return rows
+
+
+def latest_features(
+    bars: list[Bar],
+    *,
+    vix: list[Bar] | None = None,
+    banknifty: list[Bar] | None = None,
+    sensex: list[Bar] | None = None,
+    pcr: dict[str, dict] | None = None,
+    min_history: int = 20,
+) -> dict | None:
+    """Features of the last bar (no target yet): the input for the next-bar forecast."""
+    if len(bars) <= min_history:
+        return None
+    f = _FeatureContext(bars, vix, banknifty, sensex, pcr, min_history).features(len(bars) - 1)
+    return None if f is None else {"key": bars[-1].key, "day": bars[-1].day, "close": bars[-1].close, "features": f}
+
+
+class _FeatureContext:
+    """Per-bar features known at the close of bar t. Missing inputs leave keys absent."""
+
+    def __init__(self, bars, vix, banknifty, sensex, pcr, min_history):
+        self.bars, self.pcr, self.min_history = bars, pcr, min_history
+        self.vix_d, self.bn_d, self.sx_d = _by_day(vix), _by_day(banknifty), _by_day(sensex)
+        self.pv = [parkinson_var(b) for b in bars]
+
+    def features(self, t: int) -> dict[str, float] | None:
+        bars, pv = self.bars, self.pv
+        b, prev = bars[t], bars[t - 1]
+        window = pv[t - self.min_history + 1:t + 1]
+        if any(v is None for v in window):
+            return None
         f: dict[str, float] = {
             "r1": math.log(b.close / prev.close),
             "r5": math.log(b.close / bars[t - 5].close),
@@ -142,30 +179,24 @@ def build_rows(
             "log_rv20": math.log(float(np.mean(window))),
         }
         # Cross-asset inputs are taken from the same session date only (no look-ahead).
-        v, v_prev = vix_d.get(b.day), vix_d.get(prev.day)
+        v, v_prev = self.vix_d.get(b.day), self.vix_d.get(prev.day)
         if v is not None and v_prev is not None and v.close > 0 and v_prev.close > 0:
             daily_implied_var = (v.close / 100.0) ** 2 / TRADING_DAYS
             f["vix_lvl"] = v.close / 100.0
             f["vix_chg"] = math.log(v.close / v_prev.close)
             f["vrp"] = math.log(daily_implied_var) - f["log_rv5"]
             f["log_vix_var"] = math.log(daily_implied_var)
-        for name, src in (("bn_rel", bn_d), ("sx_rel", sx_d)):
+        for name, src in (("bn_rel", self.bn_d), ("sx_rel", self.sx_d)):
             x, x_prev = src.get(b.day), src.get(prev.day)
             if x is not None and x_prev is not None and x_prev.close > 0:
                 f[name] = math.log(x.close / x_prev.close) - f["r1"]
-        if pcr:
-            p, p_prev = pcr.get(b.day), pcr.get(prev.day)
+        if self.pcr:
+            p, p_prev = self.pcr.get(b.day), self.pcr.get(prev.day)
             if p is not None and p.get("pcr_oi"):
                 f["pcr"] = math.log(p["pcr_oi"])
                 if p_prev is not None and p_prev.get("pcr_oi"):
                     f["pcr_chg"] = math.log(p["pcr_oi"] / p_prev["pcr_oi"])
-        ret_next = math.log(nxt.close / b.close)
-        rows.append({
-            "key": b.key, "day": b.day, "features": f,
-            "ret_next": ret_next, "dir_next": 1 if ret_next > 0 else 0,
-            "log_var_next": math.log(pv[t + 1]),
-        })
-    return rows
+        return f
 
 
 def usable(rows: list[dict], names: tuple[str, ...]) -> list[dict]:
@@ -226,8 +257,12 @@ def _lightgbm(train_x, train_y, test_x) -> np.ndarray | None:
     model = lgb.LGBMClassifier(n_estimators=100, learning_rate=0.03, num_leaves=4, max_depth=2,
                                min_child_samples=50, subsample=0.8, subsample_freq=1,
                                colsample_bytree=0.8, reg_lambda=5.0, verbose=-1, random_state=7)
-    model.fit(train_x, train_y)
-    return model.predict_proba(test_x)[:, 1]
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message=".*feature names.*")  # plain arrays, by design
+        model.fit(train_x, train_y)
+        return model.predict_proba(test_x)[:, 1]
 
 
 def _ols(train_x, train_y, test_x, *, ridge: float = 1e-6) -> np.ndarray:

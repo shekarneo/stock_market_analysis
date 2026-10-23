@@ -5,6 +5,7 @@ import Link from "next/link";
 
 import MultiInstrumentOverviewCard from "../components/MultiInstrumentOverviewCard";
 import PredictedTrendChart from "../components/PredictedTrendChart";
+import RealisticForecastCard from "../components/RealisticForecastCard";
 import VisualAgentDecisionCard from "../components/VisualAgentDecisionCard";
 import ResearchBoard, { BlockerList } from "../components/ResearchBoard";
 import ReadState from "../components/ReadState";
@@ -44,7 +45,7 @@ export default function DashboardPage() {
   return (
     <ResearchBoard
       title="Trade desk"
-      lede="Executive single-pane cockpit: live candlestick forecasts, visual 12-agent consensus decisions, multi-instrument tape, and order ticket."
+      lede="Executive single-pane cockpit: next-session forecast, 8-agent consensus with measured track records, multi-instrument tape, and order ticket."
     >
       {({ status }) => (
         <>
@@ -114,7 +115,7 @@ export default function DashboardPage() {
                   transition: "all 0.15s ease",
                 }}
               >
-                <span>🔬 Detailed Analysis Desk (12 Agents)</span>
+                <span>🔬 Detailed Analysis Desk (8 Agents)</span>
               </button>
             </div>
 
@@ -186,6 +187,7 @@ export default function DashboardPage() {
           {/* Mode 1: Compact View (Default) */}
           {viewMode === "compact" && (
             <>
+              <RealisticForecastCard compact />
               <MultiInstrumentOverviewCard />
               <PredictedTrendChart />
               <VisualAgentDecisionCard onExpandDetailed={() => switchView("detailed")} />

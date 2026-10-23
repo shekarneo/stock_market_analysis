@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 import threading
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Literal
 
 from fastapi import APIRouter, Depends, Request
@@ -149,6 +149,23 @@ def read_report(request: Request, settings: Settings = Depends(_settings)) -> di
     return _finite(report)
 
 
+@router.get("/api/research/multiyear/forecast")
+def read_forecast(request: Request, settings: Settings = Depends(_settings)) -> dict:
+    """The latest tuned next-session forecast (expected range and honest direction)."""
+    read_session(request, settings)
+    forecast = svc.load_forecast()
+    if forecast is None:
+        raise AppError("FORECAST_MISSING", "No forecast yet. Fetch history, then run the research.", 404)
+    return _finite(forecast)
+
+
+@router.get("/api/research/agents")
+def read_agent_track_records(request: Request, settings: Settings = Depends(_settings)) -> dict:
+    """Historical backtest of the price-based agents and the forward scorecard of every agent."""
+    read_session(request, settings)
+    return _finite(svc.agent_evaluation_state())
+
+
 @router.post("/api/research/multiyear/fetch")
 def start_fetch(
     body: FetchBody,
@@ -158,11 +175,12 @@ def start_fetch(
 ) -> dict:
     """Start a Groww history download (read-only market data; no orders)."""
     principal = require_csrf(request, settings)
-    end = body.end or datetime.now(svc.hl.IST).date()
+    now = datetime.now(svc.hl.IST)
+    end = body.end or now.date()  # the end date is inclusive; empty means up to now
     if body.start < EARLIEST:
         raise AppError("INVALID_RANGE", "Groww historical data starts in 2020.", 422)
-    if body.start >= end:
-        raise AppError("INVALID_RANGE", "Start must be before end.", 422)
+    if body.start > end:
+        raise AppError("INVALID_RANGE", "Start must not be after end.", 422)
     if body.options and ("NIFTY" not in body.symbols or "1day" not in body.intervals):
         if svc.hl.load_series("NSE-NIFTY", "1day") is None:
             raise AppError("PCR_NEEDS_NIFTY_DAILY", "The options PCR needs NIFTY 1day history; include it.", 422)
@@ -178,7 +196,8 @@ def start_fetch(
         finally:
             db.close()
         start_dt = datetime.combine(body.start, datetime.min.time(), svc.hl.IST)
-        end_dt = datetime.combine(end, datetime.min.time(), svc.hl.IST)
+        # Include the whole end day, but never ask for the future
+        end_dt = min(datetime.combine(end, datetime.min.time(), svc.hl.IST) + timedelta(days=1), datetime.now(svc.hl.IST))
         log(f"Fetching {', '.join(body.symbols)} [{', '.join(body.intervals)}] {body.start} .. {end}")
         return svc.fetch_history(token=token, caller=HttpxCaller(), symbols=list(body.symbols),
                                  start=start_dt, end=end_dt, intervals=list(body.intervals),
@@ -204,7 +223,16 @@ def start_research(
         log("Running walk-forward research")
         report, path = svc.run_daily_research(with_pcr=body.with_pcr, initial_train=body.initial_train, step=body.step)
         log(f"Report written to {path.name}")
-        return {"summary": report["summary"], "generated_at": report.get("generated_at")}
+        forecast, fpath = svc.run_realistic_forecast(log=log)
+        log(f"Forecast for {forecast.get('for_session')} written to {fpath.name}")
+        agents = None
+        try:
+            agents = svc.run_agent_evaluation(log=log)
+        except FileNotFoundError as exc:  # 15m history is optional; the daily research still stands
+            log(f"Agent backtest skipped: {exc}")
+        return {"summary": report["summary"], "generated_at": report.get("generated_at"),
+                "forecast_for": forecast.get("for_session"),
+                "agent_backtest_sessions": None if agents is None else agents["backtest"]["sessions"]}
 
     job = _start("research", params, work)
     _audit(session, principal, "research.multiyear.run", params)

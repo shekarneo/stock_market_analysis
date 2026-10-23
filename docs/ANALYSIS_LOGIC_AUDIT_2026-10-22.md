@@ -354,3 +354,57 @@ Still open:
     - US10Y 4.96% on 22 Oct.
     - FBIL's latest USD/INR was dated 15 Oct, so it was STALE and did not vote.
   - Run it once a day after 17:30 IST, before analysis runs.
+
+## Realistic forecast (2026-10-23): fresh data, tuned models, honest output
+
+**Fresh data:** the WSL test install's old `var/` was archived, not deleted. Groww daily and 15-minute history since 2020 was then re-fetched for NIFTY, BANKNIFTY, India VIX and SENSEX, with 0 failed windows and 0 rejected rows. Macro data and news were refreshed too.
+
+**Tuning** (`app/research/realistic_forecast.py`, `python -m app.cli forecast-daily`; the research job on `/backtest` runs it too):
+- **Direction:** feature sets × (L2 logistic C ∈ {0.01, 0.1, 1}, shallow LightGBM in 3 settings) × deadbands {0.45/0.55, 0.40/0.60}, plus the prior, gives 38 trials on 1,690 sessions.
+  - Selection uses the development period only; the deflated Sharpe counts every trial.
+  - A model probability is published only when development DSR ≥ 0.95 and holdout PSR ≥ 0.9. Otherwise the historical up-day rate is shown as `NO_RELIABLE_EDGE`.
+- **Range:** naive, HAR, HAR+VIX, HAR+VIX+leverage and HAR+VIX+leverage+gap, chosen on development QLIKE.
+  - The bands come from development out-of-sample errors, and their coverage is checked on the holdout.
+  - The close-to-close move is the empirical ratio of |return| to forecast volatility.
+
+**First result (as of the 22 Oct close, for 23 Oct):**
+- **Range:** HAR was selected. Expected range 2.05% (~465 pts), 90% band 0.99–4.40%. The 90% band held on **exactly 90%** of unseen sessions, and the forecast was 38% better than "same as yesterday" (DM p < 0.001).
+- **Typical close-to-close move:** 0.90% (~204 pts); 9 sessions in 10 stay within 2.60%.
+- **Direction, next session:** NO_RELIABLE_EDGE. The best of 38 trials reached 57.7% holdout accuracy, p = 0.56.
+- **Direction, next half-day:** NO_RELIABLE_EDGE, at 49.5%.
+
+**The 15-minute live model:**
+- **Training data:** the registry's model was trained on 6 months of real NIFTY data (origin PROVIDER).
+- **Its own evaluation:** model selection picked `majority_class` over it, so it never beat the baseline.
+- **Status:** it is refused after the scale-free feature change and shows NO_FITTED_MODEL.
+- **Why it can't simply be retrained on the new data:** the M15 feature pipeline's validator accepts only one unbroken run of 15-minute bars, so multi-day real history cannot pass without redesigning the validator. Given the evidence of no edge at intraday horizons, it stays retired.
+- **Tests:** the live-forecast plumbing tests now use a fixture registry (`tests/live_model_fixture.py`), not the operator's registry.
+
+**Benchmark honesty:** the original M37 benchmark filled in a base-rate prediction under the name of a model whose library (CatBoost, PyTorch) was not installed. Since Phase 3 such models are skipped. `/api/forecasting/multi-benchmark` now lists them in `unavailable_models`.
+
+## Agent accuracy (2026-10-23): measured track records, locked calls, forward scorecard
+
+**Technical Analyst replay** (`app/research/agent_backtest.py`, `python -m app.cli agent-backtest`):
+- The real node was replayed with the LLM off on 1,679 completed sessions of fresh Groww 15-minute data.
+- Calls were made at 10:15, 12:00 and 14:00 IST, with the live-shaped evidence: the latest price and the previous close.
+
+| Call at | About | Right, all years | Right, unseen period (Jun 2025 →) | Net per call after costs |
+|---|---|---|---|---|
+| 10:15 | rest of day | 53.0% (p = 0.026) | 58.7% (p = 0.004) | −0.045% |
+| 12:00 | rest of day | 54.8% (p < 0.001) | 56.3% (p = 0.035) | −0.018% |
+| 14:00 | rest of day | 52.4% (p = 0.066) | 52.8% | −0.024% |
+| 12:00 | next session | 54.7% (p < 0.001) | 53.1% | +0.041% (not significant) |
+
+- **Momentum effect:** the intraday effect is small but real.
+- **No tradeable edge:** nothing makes money with index futures after costs.
+- **Overstated confidence:** the formula claimed 0.60–0.80, but actual hit rates were 0.44–0.64, with no consistent ordering.
+
+**Changes:**
+- **Measured confidence:** the technical agent's confidence is now its measured hit rate for that time of day (`MEASURED_HIT_RATE`, calibrated). The finding states n and the CI; the limitations say it lost money after costs.
+- **Consensus weighting:** a measured agent is weighted by its skill, 2 × hit − 1. So 54.8% is worth 0.096, where the old stated 0.8 was worth eight times more.
+- **Locked calls:** the technical, macro, news and options agents keep their rule's bias and confidence (`lock_bias`). Before, an LLM could replace both, so what users saw could not be measured.
+- **Forward scorecard** (`app/analysis/agent_scorecard.py`):
+  - Every NIFTY analysis records each agent's call and the spot price.
+  - Calls are scored against the session close and the next close from saved Groww history.
+  - Status: COLLECTING (fewer than 30 scored), then PROVEN, NO_EDGE_YET or WORSE_THAN_CHANCE.
+  - This is the only honest test for the news, macro and LLM-assisted agents, because a historical replay would leak the future.

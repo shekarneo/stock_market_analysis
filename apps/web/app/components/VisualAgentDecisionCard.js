@@ -7,14 +7,14 @@ import { csrfToken } from "./session";
 // Distinctly catalog 8 implemented LangGraph agents vs 4 research/catalog reference desks
 const AGENT_CATALOG = [
   // 8 Implemented LangGraph Specialist Agents
-  { id: "news_events", legacyKey: "news_event_analyst", name: "News Sentiment", icon: "📰", role: "Real-time Wire Sentiment", isImplemented: true },
-  { id: "global_macro", legacyKey: "global_macro_analyst", name: "Global Macro", icon: "🌐", role: "Yields, FX USD/INR & DOW", isImplemented: true },
-  { id: "order_flow", legacyKey: "market_data_analyst", name: "Order Flow", icon: "📊", role: "Microstructure & Volumes", isImplemented: true },
-  { id: "options_greeks", legacyKey: "options_analyst", name: "Options & Greeks", icon: "⚡", role: "Black-76, IV & PCR Skew", isImplemented: true },
-  { id: "trend_momentum", legacyKey: "technical_analyst", name: "Trend & Momentum", icon: "📈", role: "EMA 20/50 & Supertrend", isImplemented: true },
-  { id: "quant_forecast", legacyKey: "quant_forecast_analyst", name: "Quant ML Model", icon: "🔬", role: "19-Fold Walk-Forward Prob", isImplemented: true },
-  { id: "bayesian_gate", legacyKey: "risk_uncertainty_analyst", name: "Bayesian Epistemic Gate", icon: "🛡️", role: "Dispersion Gating (0.45 Cutoff)", isImplemented: true },
-  { id: "final_arbiter", legacyKey: "final_decision_agent", name: "Consensus Arbiter", icon: "⚖️", role: "LangGraph Consensus Engine", isImplemented: true },
+  { id: "news_events", legacyKey: "news_event_analyst", name: "News Sentiment", icon: "📰", role: "Headline tone for the instrument", isImplemented: true },
+  { id: "global_macro", legacyKey: "global_macro_analyst", name: "Global Macro", icon: "🌐", role: "FII/DII flows, yields, FX (fresh releases only)", isImplemented: true },
+  { id: "order_flow", legacyKey: "market_data_analyst", name: "Data Quality", icon: "📊", role: "Feed coverage & provenance", isImplemented: true },
+  { id: "options_greeks", legacyKey: "options_analyst", name: "Options & Greeks", icon: "⚡", role: "Option chain (when a verified feed exists)", isImplemented: true },
+  { id: "trend_momentum", legacyKey: "technical_analyst", name: "Trend & Momentum", icon: "📈", role: "Move vs previous close (scored on 6y history)", isImplemented: true },
+  { id: "quant_forecast", legacyKey: "quant_forecast_analyst", name: "Quant ML Model", icon: "🔬", role: "Registered 15m model (if any)", isImplemented: true },
+  { id: "bayesian_gate", legacyKey: "risk_uncertainty_analyst", name: "Risk & Uncertainty", icon: "🛡️", role: "Disagreement gate (0.45 cutoff)", isImplemented: true },
+  { id: "final_arbiter", legacyKey: "final_decision_agent", name: "Final Decision", icon: "⚖️", role: "Weighted consensus + safety vetoes", isImplemented: true },
 
   // 4 Research & Catalog Reference Desks (No standalone LangGraph agent node)
   { id: "commodities", legacyKey: "crude_cross_asset", name: "Intermarket & MCX", icon: "🛢️", role: "Crude Oil & Gold Flows", isImplemented: false, catalogType: "Catalog Reference" },
@@ -743,15 +743,19 @@ export default function VisualAgentDecisionCard({ onExpandDetailed }) {
                 semanticPillText = "Uncalibrated ML Prob";
                 semanticPillBg = "rgba(168, 85, 247, 0.12)";
                 semanticPillColor = "#c084fc";
+              } else if (semanticType === "MEASURED_HIT_RATE") {
+                semanticPillText = "Measured Hit Rate";
+                semanticPillBg = "rgba(16, 185, 129, 0.12)";
+                semanticPillColor = "#34d399";
               } else if (semanticType === "HEURISTIC_SIGNAL_STRENGTH") {
-                semanticPillText = "Heuristic Signal";
+                semanticPillText = "Unmeasured Heuristic";
                 semanticPillBg = "rgba(56, 189, 248, 0.12)";
                 semanticPillColor = "#38bdf8";
               } else if (semanticType === "STATIC_DEFAULT") {
                 semanticPillText = "Static Default";
                 semanticPillBg = "rgba(148, 163, 184, 0.12)";
                 semanticPillColor = "#94a3b8";
-              } else {
+              } else if (semanticType && semanticType !== "UNKNOWN") {
                 semanticPillText = semanticType;
               }
             }

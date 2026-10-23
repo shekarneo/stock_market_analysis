@@ -10,6 +10,8 @@ Provides unified operational, quantitative, and administrative control commands:
 7. `health`: Checks database connectivity, seed configuration, and safety invariant flags.
 8. `fetch-history` / `research-daily`: multi-year Groww history and honest daily/half-day research.
 9. `fetch-macro`: official FII/DII, USD/INR and US 10Y releases for the macro agents.
+10. `forecast-daily`: tuned next-session NIFTY forecast (expected range, honest direction).
+11. `agent-backtest`: measured track record of the agents (history replay + forward scorecard).
 """
 
 from __future__ import annotations
@@ -519,6 +521,65 @@ def cmd_fetch_macro(args: argparse.Namespace) -> int:
     return 1 if doc["errors"] else 0
 
 
+def cmd_forecast_daily(args: argparse.Namespace) -> int:
+    """Tune on saved history and publish the next-session NIFTY forecast."""
+    from app.research.multiyear_service import run_realistic_forecast
+
+    try:
+        f, out = run_realistic_forecast(output=Path(args.output) if args.output else None, log=print)
+    except FileNotFoundError as exc:
+        print(f"{exc} Run: python -m app.cli fetch-history --symbols NIFTY,INDIAVIX,BANKNIFTY,SENSEX --interval 1day,15minute")
+        return 1
+    rng, d, h = f["range"], f["direction_next_session"], f["direction_next_half_day"]
+    print(f"\nNIFTY forecast for {f['for_session']} (as of close {f['as_of_session']}: {_fmt(f['last_close'])})")
+    if rng.get("status") == "OK":
+        print(f"  Expected high-low range : {rng['expected_range_pct']:.2f}% (~{rng['expected_range_points']:.0f} pts), "
+              f"90% band {rng['range_band90_pct'][0]:.2f}%..{rng['range_band90_pct'][1]:.2f}% [{rng['model']}]")
+        print(f"  Typical close-to-close  : {rng['typical_close_move_pct']:.2f}% (~{rng['typical_close_move_points']:.0f} pts); "
+              f"9 in 10 sessions within {rng['close_move_p90_pct']:.2f}%")
+        cov = rng["holdout_band_coverage"]
+        print(f"  Holdout check           : 90% band held {cov['band90'] * 100:.0f}% of sessions; "
+              f"QLIKE {rng['holdout_qlike_improvement_vs_naive_pct']:.1f}% better than naive")
+    else:
+        print(f"  Range: {rng.get('status')}")
+    for label, item in (("Direction (next session)", d), ("Direction (next half-day)", h)):
+        if item.get("probability_up") is None:
+            print(f"  {label}: {item.get('status')}")
+            continue
+        print(f"  {label}: {item['status']} - P(up) {item['probability_up'] * 100:.1f}%; "
+              f"best of {item['trials']} trials holdout accuracy {_fmt(item.get('holdout_accuracy'))} (p={_fmt(item.get('holdout_accuracy_p'))})")
+    print(f"Saved to {out}")
+    return 0
+
+
+def cmd_agent_backtest(args: argparse.Namespace) -> int:
+    """Replay the price-based agents on saved 15m history; score the forward agent scorecard."""
+    from app.research.multiyear_service import run_agent_evaluation
+
+    try:
+        result = run_agent_evaluation(log=print)
+    except FileNotFoundError as exc:
+        print(exc)
+        return 1
+    tech = result["backtest"]["agents"]["technical_analyst"]
+    print(f"\nTechnical Analyst over {result['backtest']['sessions']} sessions: edge supported = {tech['verdict']['edge_supported']}")
+    for cp, r in tech["checkpoints"].items():
+        for horizon in ("rest_of_day", "next_session"):
+            a, h = r[horizon]["all"], r[horizon]["holdout"]
+            if a.get("n_calls"):
+                print(f"  {cp} {horizon:12s}: right {a['hit_rate'] * 100:.1f}% (n={a['n_calls']}, p={_fmt(a['p_value_vs_50pct'])}); "
+                      f"holdout {_fmt(h.get('hit_rate'))}; net/call after costs {a['mean_net_return_pct_per_call']:+.3f}%")
+    print("\nForward scorecard:")
+    agents = result["scorecard"]["agents"]
+    if not agents:
+        print("  no calls recorded yet (run analyses on the dashboard; calls are scored after the close)")
+    for name, row in agents.items():
+        best = max((row["rest_of_day"], row["next_session"]), key=lambda s: s.get("n", 0))
+        rate = f"{best['hit_rate'] * 100:.1f}% of {best['n']}" if best.get("n") else "nothing scored yet"
+        print(f"  {name:28s} {row['status']:18s} {rate} ({row['pending']} pending)")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="imm-cli",
@@ -600,6 +661,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_macro = subparsers.add_parser("fetch-macro", help="Fetch NSE FII/DII, FBIL USD/INR and US 10Y releases")
     p_macro.add_argument("--output", default=None, help="Path (default var/market/macro_series.json)")
     p_macro.set_defaults(func=cmd_fetch_macro)
+
+    # forecast-daily
+    p_fd = subparsers.add_parser("forecast-daily", help="Tune on saved history and publish the next-session NIFTY forecast")
+    p_fd.add_argument("--output", default=None, help="Path (default var/datasets/realistic_forecast.json)")
+    p_fd.set_defaults(func=cmd_forecast_daily)
+
+    # agent-backtest
+    p_ab = subparsers.add_parser("agent-backtest", help="Replay price-based agents on history and score the agent scorecard")
+    p_ab.set_defaults(func=cmd_agent_backtest)
 
     # health
     p_health = subparsers.add_parser("health", help="Check operational health and invariants")

@@ -312,7 +312,10 @@ def test_multi_benchmark_endpoint(client: TestClient):
     assert res_full.status_code == 200
     body_full = res_full.json()
     assert body_full["ok"] is True
-    assert len(body_full["leaderboard"]) == 54  # 2 instruments * 9 models * 3 modes = 54
+    # 2 instruments * 3 modes * each model that could run (54 with every library installed).
+    # A model whose library is missing is listed as unavailable, never filled with a stand-in.
+    runnable = 9 - len(body_full["unavailable_models"])
+    assert len(body_full["leaderboard"]) == 2 * 3 * runnable
     assert body_full["instruments_evaluated"] == ["NIFTY", "SENSEX"] or set(body_full["instruments_evaluated"]) == {"NIFTY", "SENSEX"}
 
     # Second call should be a cache hit and return immediately

@@ -88,6 +88,7 @@ def create_analysis(
             return public
         return commentary(HttpxCaller(), api_key=prepared["api_key"], model=prepared["model"], evidence=report.get("evidence") or [])
 
+    observations = [*stored_observations(), *stored_news_observations()]
     report = assemble_analysis(
         instruments=body.instruments,
         horizon=body.horizon,
@@ -97,10 +98,20 @@ def create_analysis(
         include_inference=body.include_inference,
         include_forecast=body.include_forecast,
         enable_agent_llm=body.enable_agent_llm,
-        observations=[*stored_observations(), *stored_news_observations()],
+        observations=observations,
         idempotency_key=body.idempotency_key,
         inference_factory=inference_factory,
     )
+    if report.get("status") != "FAILED" and "NIFTY" in body.instruments:
+        # Every agent's call goes on the forward scorecard; recording never fails the analysis
+        try:
+            from app.analysis.agent_scorecard import latest_spot, record_agent_calls
+
+            record_agent_calls(report, spot=latest_spot(observations))
+        except Exception as exc:  # noqa: BLE001
+            import logging
+
+            logging.getLogger("imm.agent_scorecard").warning("Could not record agent calls: %s", exc)
     session.add(
         AuditEvent(
             actor=principal.get("sub", "operator"),

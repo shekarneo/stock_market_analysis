@@ -28,7 +28,9 @@ export default function PredictedTrendChart() {
         const modeParam = selectedStrategyMode || "regime_gated";
         const res = await fetch(`/api/forecasting/live-trend-chart?instrument=${instrument}&bars=${barsCount}&model=${mParam}&strategy_mode=${modeParam}`);
         if (!res.ok) {
-          throw new Error(`Failed to load live trend data for ${instrument} (${res.status})`);
+          const body = await res.json().catch(() => ({}));
+          const reason = body.message || body.code;
+          throw new Error(`Live trend data for ${instrument} is unavailable${reason ? `: ${reason}` : ` (${res.status})`}`);
         }
         const data = await res.json();
         if (!cancelled) {

@@ -416,6 +416,34 @@ def market_data_analyst_node(state: AnalysisState) -> dict:
 # ==============================================================================
 # 2. TECHNICAL ANALYST
 # ==============================================================================
+_HISTORY_SYMBOLS = {"NIFTY": "NSE-NIFTY", "BANKNIFTY": "NSE-BANKNIFTY", "SENSEX": "BSE-SENSEX"}
+
+
+def _previous_session_close(instrument: str | None, state: AnalysisState) -> tuple[float | None, str | None]:
+    """Close of the last completed session before the analysis day, from saved Groww daily history."""
+    symbol = _HISTORY_SYMBOLS.get(str(instrument or "").upper())
+    if symbol is None:
+        return None, None
+    try:
+        from app.market import history_loader as hl
+
+        doc = hl.load_series(symbol, "1day")
+        created = state.get("created_at")
+        when = datetime.fromisoformat(str(created).replace("Z", "+00:00")) if created else datetime.now(timezone.utc)
+        today = when.astimezone(hl.IST).date().isoformat()
+        rows = [r for r in (doc or {}).get("candles") or [] if str(r[0])[:10] < today]
+        if not rows:
+            return None, None
+        return float(rows[-1][4]), str(rows[-1][0])[:10]
+    except Exception:  # noqa: BLE001 - a missing fallback leaves the call unmeasured, never invented
+        return None, None
+
+
+def technical_stated_confidence(ret: float) -> float:
+    """The rule's own (unfitted) confidence for a move of `ret`; replaced by the measured hit rate when available."""
+    return min(0.80, 0.60 + abs(ret) * 10)
+
+
 def technical_analyst_node(state: AnalysisState) -> dict:
     """Analyze validated technical features (trend, momentum, realized vol, ATR, returns).
 
@@ -464,9 +492,15 @@ def technical_analyst_node(state: AnalysisState) -> dict:
         latest = tech_evidence[-1] if tech_evidence else None
         last_price = prices[-1] if prices else None
         ref_close = _safe_float(latest["ohlc"].get("close")) if latest and isinstance(latest.get("ohlc"), dict) else None
+        ref_source = "quote"
+        if ref_close is None and last_price is not None:
+            # The live quote carried no OHLC: use the previous completed session's close from saved Groww history
+            ref_close, ref_day = _previous_session_close(target_inst, state)
+            ref_source = f"saved Groww daily close of {ref_day}" if ref_close is not None else ref_source
         if last_price is not None and ref_close is not None and ref_close > 0:
             ret = (last_price - ref_close) / ref_close
-            findings.append(f"{target_inst} intraday change vs reference close {ref_close:,.2f}: {ret * 100:+.2f}%.")
+            findings.append(f"{target_inst} intraday change vs reference close {ref_close:,.2f}: {ret * 100:+.2f}%"
+                            + (f" (reference: {ref_source})." if ref_source != "quote" else "."))
         else:
             findings.append(f"{target_inst}: fewer than two observations and no reference close; trend cannot be measured.")
             missing.append(f"{target_inst}_price_series")
@@ -478,12 +512,43 @@ def technical_analyst_node(state: AnalysisState) -> dict:
             findings.append("Market regime: SIDEWAYS_CONSOLIDATION. Price action is range-bound (move within ±0.10%).")
         elif ret > 0:
             directional_bias = "BULLISH"
-            confidence = min(0.80, 0.60 + abs(ret) * 10)
+            confidence = technical_stated_confidence(ret)
             findings.append("Market regime: TRENDING_BULL. Short-term momentum indicates upward price continuation.")
         else:
             directional_bias = "BEARISH"
-            confidence = min(0.80, 0.60 + abs(ret) * 10)
+            confidence = technical_stated_confidence(ret)
             findings.append("Market regime: TRENDING_BEAR. Short-term momentum indicates downward price continuation.")
+
+    # Replace the stated confidence with this rule's measured hit rate for this time of day
+    semantic_type = "HEURISTIC_SIGNAL_STRENGTH"
+    is_calibrated = False
+    limitations = ["Simple return over the target's own observations; no multi-bar indicators (RSI/ADX) are computed here."]
+    if directional_bias in {"BULLISH", "BEARISH"}:
+        from app.analysis.track_record import technical_track_record
+
+        when = None
+        if state.get("created_at"):
+            try:
+                when = datetime.fromisoformat(str(state["created_at"]).replace("Z", "+00:00"))
+            except ValueError:
+                when = None
+        record = technical_track_record(when)
+        if record:
+            confidence = record["hit_rate"]
+            semantic_type = "MEASURED_HIT_RATE"
+            is_calibrated = True
+            ci = record.get("hit_rate_ci95") or (None, None)
+            horizon = "the rest of the day" if record["horizon"] == "rest_of_day" else "the next session"
+            findings.append(
+                f"Measured track record: this call at ~{record['checkpoint']} IST was right about {horizon} "
+                f"{record['hit_rate'] * 100:.1f}% of the time (n={record['n_calls']}, 95% CI "
+                f"{(ci[0] or 0) * 100:.1f}-{(ci[1] or 0) * 100:.1f}%) over {record.get('sessions')} sessions."
+            )
+            net = record.get("mean_net_return_pct_per_call")
+            if net is not None and net <= 0:
+                limitations.append("Following this call with index futures lost money after costs in the backtest.")
+        else:
+            limitations.append("Confidence is a heuristic, not measured: run `python -m app.cli agent-backtest`.")
 
     out = _finalize_agent_output(
         role_name=role_name,
@@ -493,14 +558,15 @@ def technical_analyst_node(state: AnalysisState) -> dict:
         t0=t0,
         findings=findings,
         directional_bias=directional_bias,
-        confidence=round(confidence, 2) if confidence is not None else None,
+        confidence=round(confidence, 3) if confidence is not None else None,
         evidence_references=[e.get("evidence_id") for e in tech_evidence if e.get("evidence_id")],
         missing_evidence=missing,
-        limitations=["Simple return over the target's own observations; no multi-bar indicators (RSI/ADX) are computed here."],
-        semantic_type="HEURISTIC_SIGNAL_STRENGTH",
+        limitations=limitations,
+        semantic_type=semantic_type,
         is_probability=False,
-        is_calibrated=False,
+        is_calibrated=is_calibrated,
         provenance_verified=False,
+        lock_bias=True,  # the LLM may explain the call but not change the measured rule's bias or confidence
     )
     agent_outputs[role_name] = out.model_dump()
     return {"agent_outputs": agent_outputs}
@@ -607,6 +673,7 @@ def global_macro_analyst_node(state: AnalysisState) -> dict:
         is_probability=False,
         is_calibrated=False,
         provenance_verified=False,
+        lock_bias=True,  # LLM may explain; the scored rule decides the bias
     )
     agent_outputs[role_name] = out.model_dump()
     return {"agent_outputs": agent_outputs}
@@ -698,6 +765,7 @@ def news_event_analyst_node(state: AnalysisState) -> dict:
         is_probability=False,
         is_calibrated=False,
         provenance_verified=False,
+        lock_bias=True,  # LLM may explain; the scored rule decides the bias
     )
     agent_outputs[role_name] = out.model_dump()
     return {"agent_outputs": agent_outputs}
@@ -795,6 +863,7 @@ def options_analyst_node(state: AnalysisState) -> dict:
             is_probability=False,
             is_calibrated=False,
             provenance_verified=False,
+            lock_bias=True,  # LLM may explain; the scored rule decides the bias
         )
 
     agent_outputs[role_name] = out.model_dump()

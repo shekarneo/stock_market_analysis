@@ -434,7 +434,7 @@ def test_auto_reroute_to_available_models_on_quota_exhaustion():
         AIProviderRegistry._providers.clear()
 
 
-def test_leak_free_registry_and_historical_feature_provenance(db):
+def test_leak_free_registry_and_historical_feature_provenance(db, tmp_path):
     """Verify var/registry/registry.json passes checksum verification, uses leak-free out-of-sample split, and resolves live DB candles when available."""
     from datetime import datetime, timedelta, timezone
     from decimal import Decimal
@@ -483,8 +483,13 @@ def test_leak_free_registry_and_historical_feature_provenance(db):
         session.commit()
 
         last_bar_end = base_dt + timedelta(minutes=15 * 12)
+        from tests.live_model_fixture import write_fixture_registry
+
+        # Plumbing check with a fixture model on the current feature set (not the operator's registry)
+        fixture_registry = write_fixture_registry(tmp_path)
         f_live = compute_live_forecast_for_instrument(
-            "NIFTY", {"instrument": "NIFTY", "last_price": 23165.0}, current_time=last_bar_end + timedelta(minutes=5)
+            "NIFTY", {"instrument": "NIFTY", "last_price": 23165.0}, current_time=last_bar_end + timedelta(minutes=5),
+            registry_path=fixture_registry,
         )
         assert f_live["status"] == "ACTIVE"
         assert f_live["feature_source"] == "LIVE_DB_MARKET_CANDLES"

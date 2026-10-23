@@ -138,11 +138,11 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
 ## 4. Primary Trading Desk Pages
 
 ### 4.1 Overview & Analysis Cockpit (`/dashboard`)
-- **Purpose**: The unified single-pane trading cockpit combining a high-level visual market overview with an expandable, deep institutional 12-agent analysis desk. Eliminates disjoint navigation by integrating compact visual meters with full audit dossiers on a single screen.
+- **Purpose**: The unified single-pane trading cockpit combining a high-level visual market overview with an expandable, deep institutional 8-agent analysis desk. Eliminates disjoint navigation by integrating compact visual meters with full audit dossiers on a single screen.
 - **Unified Cockpit Mode Switcher Bar**:
   - Located at the top of the desk to seamlessly toggle between visual summary and institutional depth:
     1. `Mode: ⚡ Compact Cockpit` (Default): Streamlined single-pane view featuring multi-instrument tape, live candlestick forward trajectory forecasts, visual 12-agent consensus meters, order ticket, and market snapshots without dense text walls.
-    2. `Mode: 🔬 Detailed Analysis Desk (12 Agents)`: Full institutional workstation (merged from the previous `/analysis` page) with sub-tabs for `🤖 Multi-Agent Decision Desk & Signals` (`V6Desk`) and `🧠 Institutional Intelligence Hub & Greeks` (`V6IntelligenceHub`).
+    2. `Mode: 🔬 Detailed Analysis Desk (8 Agents)`: Full institutional workstation (merged from the previous `/analysis` page) with sub-tabs for `🤖 Multi-Agent Decision Desk & Signals` (`V6Desk`) and `🧠 Institutional Intelligence Hub & Greeks` (`V6IntelligenceHub`).
   - **URL State Synchronization**: Supports `?view=detailed` and `?view=compact` query parameters; navigating to `/analysis` automatically forwards to `/dashboard?view=detailed`.
   - **Quick Action Links**: Direct links to `⚡ Live Trading →` (`/live`), `🎯 Watchlist →` (`/watchlist`), `📈 Forecast Tools →` (`/forecast`), and `Options →` (`/options`).
 
@@ -188,11 +188,23 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
        - `● Cycle: [id] (HH:MM:SS IST)`: Confirms the exact cycle timestamp to rule out stale or mixed-cycle telemetry.
      - **8 Implemented Specialists & 4 Research Desks Grid**:
        - Header: Displays `👥 8 Specialist Agents · 4 Research Desks` and dynamic online counter (`X/8 Implemented Online` or `0/8 Online · Awaiting Run`).
-       - `Implemented Specialist Agents (8)`: News Sentiment 📰 (`Specialist Agent`), Global Macro 🌐 (`Specialist Agent`), Order Flow 📊 (`Specialist Agent`), Options & Greeks ⚡ (`Specialist Agent`), Trend & Momentum 📈 (`Specialist Agent`), Quant ML Forecaster 🔬 (`Specialist Agent`), Bayesian Gate 🛡️ (`Specialist Agent`), Consensus Arbiter ⚖️ (`Specialist Agent`).
+       - `Implemented Specialist Agents (8)`: News Sentiment 📰 (`Specialist Agent`), Global Macro 🌐 (`Specialist Agent`), Data Quality 📊 (`Specialist Agent`), Options & Greeks ⚡ (`Specialist Agent`), Trend & Momentum 📈 (`Specialist Agent`), Quant ML Forecaster 🔬 (`Specialist Agent`), Bayesian Gate 🛡️ (`Specialist Agent`), Final Decision ⚖️ (`Specialist Agent`).
+- **Agent card subtitles** (each says what the agent actually does):
+  - News Sentiment: headline tone for the instrument.
+  - Global Macro: FII/DII flows, yields and FX (fresh releases only).
+  - Data Quality: feed coverage and provenance.
+  - Options & Greeks: the option chain, when a verified feed exists.
+  - Trend & Momentum: the move vs the previous close, scored on 6 years of history.
+  - Quant ML Model: the registered 15-minute model, if any.
+  - Risk & Uncertainty: the disagreement gate (0.45 cutoff).
+  - Final Decision: weighted consensus plus safety vetoes.
+- **Trend & Momentum reference close**: when the live quote has no OHLC, the previous session's close comes from the saved Groww daily history, and the finding names that date.
+- **`⚡ Run Live Analysis`**: a full run with LLM agents can take over a minute. The web proxy allows up to 3 minutes (`proxyTimeout` in `apps/web/next.config.js`); before, runs longer than 30 s showed `Analysis failed (500)`.
        - `Research & Catalog Reference Desks (4)`: Intermarket & MCX 🛢️ (`Catalog Ref`), Mean Reversion 🔄 (`Catalog Ref`), HTF Resampling ⏱ (`Catalog Ref`), Expected Net Payoff 💰 (`Payoff Model`).
        - `Specialist Semantic Metadata & Weight Badges`:
          - `Uncalibrated ML Prob` (Purple badge): Displays for `quant_forecast_analyst`, explicitly designating walk-forward tree probabilities as uncalibrated. Never labeled as calibrated.
-         - `Heuristic Signal` (Cyan badge): Displays for rule-based heuristics (`technical_analyst`, `global_macro_analyst`, `news_event_analyst`).
+         - `Unmeasured Heuristic` (Cyan badge): a rule-based confidence that has not been scored against outcomes yet (`global_macro_analyst`, `news_event_analyst`; any agent without a measured record). Treat it as an opinion until the Agent Track Records scorecard shows it as PROVEN.
+         - `Measured Hit Rate` (Green badge): the agent's confidence is the hit rate its call actually had at this time of day, replayed on years of NIFTY data (`technical_analyst`). The consensus weights it by its skill over a coin flip.
          - `Static Default` (Slate badge): Displays for specialists reporting static/fallback catalog defaults.
          - `W_eff: 0.0 (Fallback)` (Crimson badge): Displays when options chain data is unavailable, confirming zero effective weight in consensus aggregation.
          - `W_eff: X.XX` (Slate badge): Displays exact quality-weighted effective specialist weight.
@@ -310,6 +322,8 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   - Displays instant visual feedback toasts when feeds are enabled/disabled, added, deleted, reset, or when scraping fails.
 
 ---
+
+- **Compact Cockpit, first card**: the Next-Session NIFTY Forecast Card in compact view (see §4.5).
 
 ### 4.3 Live & Auto Trading Desk (`/live`)
 - **Purpose**: Autonomous algorithmic execution desk, automated trade suggestions, live paper/broker order management, and active risk monitoring.
@@ -438,6 +452,36 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
 ### 4.5 Multi-Horizon Forecast Desk (`/forecast`)
 - **Purpose**: Quantitative multi-horizon forecasting, directional probabilities, and empirical out-of-sample calibration tracking.
 - **Components & Controls**:
+  - **Next-Session NIFTY Forecast Card (`<RealisticForecastCard />`)**:
+    - **Purpose**: the app's realistic forecast for the next NIFTY session, from models tuned on daily Groww history since 2020 and checked on data they never saw (`GET /api/research/multiyear/forecast`). It describes expected movement; it is not a trade signal and never places or proposes orders.
+    - **Heading**: `NIFTY Forecast for <date>` with the last completed close it is based on. The date is the next weekday; exchange holidays are not checked.
+    - **Pills**:
+      - `RANGE: RELIABLE`: the range model beat the naive forecast significantly on the holdout.
+      - `DIRECTION: EDGE SUPPORTED` (green) or `NO RELIABLE EDGE` (amber). Supported needs a development deflated Sharpe of at least 0.95 across every tuned trial and a holdout PSR of at least 0.9.
+    - **Tiles**:
+      - `Expected high–low range`: the session's expected high-to-low range in % and points, with the 90% band (about 1 session in 10 falls outside it).
+      - `Typical close-to-close move`: the median absolute move in % and points, and the size that 9 sessions in 10 stay within.
+      - `Direction (next session)`: P(up). With no supported edge it is the historical up-day rate, not a model output. The sub-line gives the best trial's holdout accuracy and binomial p-value, and the number of trials tried.
+      - `Track record of the range (holdout)` (full view only): the share of unseen sessions inside the 90% band, the improvement over "same as yesterday", and the Diebold–Mariano p-value.
+    - **Full view only**: the next half-day direction, the raw model output labelled unreliable when there is no edge, the caveats, and when the forecast was generated.
+    - **Compact view** (dashboard): the first three tiles and a `Details →` link to `/forecast`.
+    - **No forecast yet**: a note says how to create one (Backtest → Multi-Year Research → Fetch history, then Run research; or `python -m app.cli forecast-daily`).
+  - **Agent Track Records Card (`<AgentTrackRecordCard />`)** (`GET /api/research/agents`):
+    - **Purpose**: shows how often each agent's calls were actually right, so its suggestions can be weighed by evidence. Agent calls are locked to their scored rule: the LLM may add an explanation but cannot change a call's direction or confidence.
+    - **Header pill**: `TECHNICAL: TRADEABLE EDGE` (green) or `NO TRADEABLE EDGE` (amber). A tradeable edge needs the unseen period to beat 50% and the same-bias baseline (p < 0.05), and to make money after index-futures costs.
+    - **Technical Analyst replay table**: the real agent code replayed (LLM off) on every completed session since 2020 at 10:15, 12:00 and 14:00 IST, with the latest price and the previous close as inputs. One row per time and horizon.
+      - Horizons: `Rest of day` (session close vs the price at the call) and `Next session` (the next close vs that price).
+      - Columns: `Right (all years, 95% CI)` with the number of calls; `p vs 50%`; `Right (unseen period)` (the last 20% of sessions); `Net per call after costs` (green if positive); `Stated vs actual confidence` (the confidence the old formula stated, against the hit rate it actually had).
+    - **Forward scorecard table**: every agent's NIFTY call from live analyses (and the consensus).
+      - Columns: `Status`, `Right: rest of day`, `Right: next session` (hit rate of n, p-value), `Calls (directional / pending)` and `Last call`.
+      - Calls are scored with the saved Groww closes once the session (and the next one) has closed.
+      - Status values:
+        - `COLLECTING`: fewer than 30 scored calls.
+        - `PROVEN`: better than 50% with p < 0.05.
+        - `NO EDGE YET`: not distinguishable from chance.
+        - `WORSE THAN CHANCE`: significantly below 50%.
+    - **How it feeds the consensus**: a measured agent's confidence is its historical hit rate at that time of day, and the consensus weights it by its skill over a coin flip (2 × hit rate − 1; an agent right 50% of the time carries no weight).
+    - Refreshed by the research job on `/backtest` (it also re-runs the replay and scores pending calls), or by `python -m app.cli agent-backtest`.
   - **Live Candlestick & Forward Projected Trend Chart (`<PredictedTrendChart />`)**:
     - **Purpose**: Combines verified historical candlesticks, live market spot price action, and ML forward projected trajectory with dynamic confidence cones ($\pm 1\sigma$ volatility corridors), target spot, and stop-loss levels.
     - **Header Controls & State**:
@@ -734,7 +778,7 @@ Accessible via the collapsible `Tools Show (7) ▾` toggle in the left navigatio
   - **2. Run the research**:
     - `First training window (days)` (default 500, range 100–5000) and `Test window (days)` (default 20, range 5–250): the walk-forward settings. The half-day horizon uses 1000 and 40 half-day bars.
     - `Include put/call ratio features` checkbox: adds the PCR feature set; disabled until a PCR has been built.
-    - `Run research` button (`POST /api/research/multiyear/run`): runs in the background and writes `var/datasets/research_daily_report.json`. It is disabled while a job runs or when nothing has been fetched (a note then says to fetch NIFTY daily history first). The request is audited.
+    - `Run research` button (`POST /api/research/multiyear/run`): runs in the background and writes `var/datasets/research_daily_report.json`, then tunes the models and publishes the next-session forecast (`var/datasets/realistic_forecast.json`) shown on `/forecast` and the dashboard. It is disabled while a job runs or when nothing has been fetched (a note then says to fetch NIFTY daily history first). The request is audited.
   - **Last job**: the job's kind, start time (UTC), status, its error (if it failed) and its log. The card polls `GET /api/research/multiyear` every 3 seconds while a job runs.
   - **3. Results** (from `GET /api/research/multiyear/report`):
     - **Note line**: when the report was generated, the bars used per input and the cost per side.

@@ -183,3 +183,73 @@ def load_report(path: Path | None = None) -> dict | None:
     if not p.is_file():
         return None
     return json.loads(p.read_text(encoding="utf-8"))
+
+
+FORECAST_PATH = REPO_ROOT / "var" / "datasets" / "realistic_forecast.json"
+
+
+def run_realistic_forecast(*, output: Path | None = None, log: Callable[[str], None] = print) -> tuple[dict, Path]:
+    """Tune on the saved history and publish the next-session forecast (completed sessions only)."""
+    from app.research import daily_research as dr
+    from app.research.realistic_forecast import build_forecast
+
+    def series(symbol: str, interval: str) -> list | None:
+        doc = hl.load_series(symbol, interval)
+        rows = completed_sessions(doc["candles"]) if doc and doc.get("candles") else None
+        return rows or None
+
+    daily = series("NSE-NIFTY", "1day")
+    if daily is None:
+        raise FileNotFoundError("No NIFTY daily history saved. Fetch NIFTY and INDIAVIX 1day history first.")
+    intraday = series("NSE-NIFTY", "15minute")
+
+    def as_bars(rows):
+        return dr.daily_bars(rows) if rows else None
+
+    report = build_forecast(
+        nifty_daily=dr.daily_bars(daily),
+        nifty_half_day=dr.half_day_bars(intraday) if intraday else None,
+        vix=as_bars(series("NSE-INDIAVIX", "1day")),
+        banknifty=as_bars(series("NSE-BANKNIFTY", "1day")),
+        sensex=as_bars(series("BSE-SENSEX", "1day")),
+        log=log,
+    )
+    report["generated_at"] = datetime.now().astimezone().isoformat()
+    out = output or FORECAST_PATH
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(".tmp")
+    tmp.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+    tmp.replace(out)
+    return report, out
+
+
+def load_forecast(path: Path | None = None) -> dict | None:
+    p = path or FORECAST_PATH
+    return json.loads(p.read_text(encoding="utf-8")) if p.is_file() else None
+
+
+def run_agent_evaluation(*, log: Callable[[str], None] = print) -> dict:
+    """Replay the price-based agents on saved 15m history and score pending forward calls."""
+    from app.analysis.agent_scorecard import score_from_saved_history, summarize
+    from app.analysis.track_record import BACKTEST_PATH
+    from app.research.agent_backtest import run_agent_backtest
+
+    doc = hl.load_series("NSE-NIFTY", "15minute")
+    if not doc or not doc.get("candles"):
+        raise FileNotFoundError("No NIFTY 15minute history saved. Fetch NIFTY with the 15minute interval first.")
+    report = run_agent_backtest(completed_sessions(doc["candles"]), log=log)
+    BACKTEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = BACKTEST_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+    tmp.replace(BACKTEST_PATH)
+    scored = score_from_saved_history()
+    log(f"Agent backtest over {report['sessions']} sessions; scorecard: {scored}")
+    return {"backtest": report, "scorecard_scoring": scored, "scorecard": summarize()}
+
+
+def agent_evaluation_state() -> dict:
+    from app.analysis.agent_scorecard import summarize
+    from app.analysis.track_record import BACKTEST_PATH
+
+    backtest = json.loads(BACKTEST_PATH.read_text(encoding="utf-8")) if BACKTEST_PATH.is_file() else None
+    return {"backtest": backtest, "scorecard": summarize()}

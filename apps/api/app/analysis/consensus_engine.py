@@ -128,6 +128,9 @@ def compute_specialist_confidence(output: dict[str, Any]) -> float | None:
         val = float(raw_conf)
     except (ValueError, TypeError):
         return None
+    if output.get("semantic_type") == "MEASURED_HIT_RATE" and output.get("is_calibrated"):
+        # A measured hit rate weighs by its skill over a coin flip: 50% carries no weight
+        return max(0.0, min(1.0, 2.0 * val - 1.0))
     return max(0.10, min(1.0, val))
 
 

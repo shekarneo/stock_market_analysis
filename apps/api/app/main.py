@@ -1205,6 +1205,7 @@ def multi_instrument_model_benchmark(
 
     leaderboard = []
     top_by_instrument = {}
+    unavailable_models: set[str] = set()  # models whose library is not installed: skipped, never imitated
 
     import concurrent.futures
 
@@ -1258,7 +1259,7 @@ def multi_instrument_model_benchmark(
 
             if instrument_strategies:
                 top_inst = max(instrument_strategies, key=_dev_rank_key)
-                result = (inst.upper(), instrument_strategies, top_inst)
+                result = (inst.upper(), instrument_strategies, top_inst, list(report.unavailable_models))
                 _BENCHMARK_REPORT_CACHE[cache_key] = result
                 return result
         except Exception as exc:
@@ -1273,9 +1274,10 @@ def multi_instrument_model_benchmark(
         for future in concurrent.futures.as_completed(future_to_inst):
             res = future.result()
             if res:
-                inst_sym, inst_strategies, top_inst = res
+                inst_sym, inst_strategies, top_inst, inst_unavailable = res
                 leaderboard.extend(inst_strategies)
                 top_by_instrument[inst_sym] = top_inst
+                unavailable_models.update(inst_unavailable)
 
     if not leaderboard:
         raise AppError("BENCHMARK_EMPTY", "No valid datasets could be evaluated. Ensure datasets are pulled and available on disk.", 400)
@@ -1297,6 +1299,7 @@ def multi_instrument_model_benchmark(
         "total_combinations": len(leaderboard),
         "instruments_evaluated": list(top_by_instrument.keys()),
         "models_evaluated": dedup_models,
+        "unavailable_models": sorted(unavailable_models),
         "champion": overall_champion,
         "selection_basis": "development deflated Sharpe (all evaluated combinations counted as trials); holdout not used for ranking",
         "edge_supported_count": len(supported),

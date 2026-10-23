@@ -6,6 +6,7 @@ Runs the router in a minimal app with auth stubbed (no Postgres needed).
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 
 import pytest
 from fastapi import FastAPI
@@ -105,6 +106,9 @@ def test_fetch_job_uses_service_and_validates(api, monkeypatch):
     assert calls["token"] == "tok" and calls["symbols"] == ["NIFTY", "INDIAVIX"]
     assert api.session_stub.added[-1].action == "research.multiyear.fetch"
 
+    # The end date is inclusive: fetching just one day (e.g. today) is allowed
+    assert api.post("/api/research/multiyear/fetch", json={**body, "start": "2021-01-01", "end": "2021-01-01"}).status_code == 200
+    assert calls["end"] - calls["start"] == timedelta(days=1)
     assert api.post("/api/research/multiyear/fetch", json={**body, "start": "2019-06-01"}).status_code == 422
     assert api.post("/api/research/multiyear/fetch", json={**body, "end": "2019-12-01", "start": "2020-02-01"}).status_code == 422
     assert api.post("/api/research/multiyear/fetch", json={**body, "symbols": ["CRUDE"]}).status_code == 422

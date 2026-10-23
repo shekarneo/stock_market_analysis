@@ -117,7 +117,7 @@ def test_macro_series_observations_valid_evidence(tmp_path):
         assert ev.verification_status in {"VERIFIED_PUBLIC_REPORT", "UNVERIFIED"}
 
 
-def test_quantitative_forecast_generation_and_no_model():
+def test_quantitative_forecast_generation_and_no_model(tmp_path):
     """Verify NIFTY generates active predictions while unsupported instruments cleanly return NO_FITTED_MODEL."""
     # 1. Feature resolution
     feats = resolve_trailing_features_for_instrument("NIFTY")
@@ -127,9 +127,17 @@ def test_quantitative_forecast_generation_and_no_model():
     assert "close_vs_sma_3" in feats  # scale-free model input (ohlc-2)
     assert "close_position" in feats
 
-    # 2. Live forecast for NIFTY
-    nifty_quote = {"instrument": "NIFTY", "last_price": 23146.15}
-    f_nifty = compute_live_forecast_for_instrument("NIFTY", nifty_quote)
+    # 2. Features from the historical dataset never back a live next-15m forecast
+    stale = compute_live_forecast_for_instrument("NIFTY", {"instrument": "NIFTY", "last_price": 23146.15})
+    assert stale["status"] == "STALE_FEATURES"
+    assert stale["probability_up"] is None
+
+    # 3. Live features (supplied with the quote) and a registered model give an active forecast.
+    # The model is a fixture registry on the current feature set, not the operator's registry.
+    from tests.live_model_fixture import write_fixture_registry
+
+    nifty_quote = {"instrument": "NIFTY", "last_price": 23146.15, "features": dict(feats)}
+    f_nifty = compute_live_forecast_for_instrument("NIFTY", nifty_quote, registry_path=write_fixture_registry(tmp_path))
     assert f_nifty["status"] == "ACTIVE"
     assert f_nifty["probability_up"] is not None
     assert f_nifty["probability_down"] is not None
@@ -151,8 +159,11 @@ def test_quantitative_forecast_generation_and_no_model():
 
     # 5. Full live forecast aggregation
     all_f = generate_all_live_forecasts()
-    assert all_f["status"] == "ACTIVE"
     assert len(all_f["forecasts"]) == 3
+    # ACTIVE only when some instrument has a live forecast (live bars and a current-feature model)
+    forecasts = all_f["forecasts"].values() if isinstance(all_f["forecasts"], dict) else all_f["forecasts"]
+    any_active = any(f.get("status") == "ACTIVE" for f in forecasts)
+    assert all_f["status"] == ("ACTIVE" if any_active else "NO_FITTED_MODEL")
 
 
 def test_outcome_tracker_logging_and_calibration(tmp_path):
@@ -219,10 +230,17 @@ def test_assemble_analysis_all_18_stages_and_invariants():
     assert stages["SENSEX"]["status"] in ("PRESENT", "UNVERIFIED", "VERIFIED")
     assert stages["India VIX, breadth and sectors"]["status"] in ("PRESENT", "PARTIAL")
     assert stages["FII/DII flows"]["status"] == "PRESENT"
-    assert stages["Quantitative forecasts"]["status"] == "PRESENT"
-    assert stages["Bullish, bearish and sideways scenarios"]["status"] in ("PRESENT", "UNCALIBRATED")
+    # A forecast needs features from the latest live bars; without them the stage reports missing data
+    quant = stages["Quantitative forecasts"]
+    assert quant["status"] in ("PRESENT", "MISSING_DATA")
+    if quant["status"] == "MISSING_DATA":
+        assert "null" in quant["detail"].lower()
+    # Scenarios are derived from the quantitative forecast; without one they are not invented
+    scenarios = stages["Bullish, bearish and sideways scenarios"]["status"]
+    assert scenarios in (("PRESENT", "UNCALIBRATED") if quant["status"] == "PRESENT" else ("MISSING_DATA",))
     assert stages["Contrarian challenge"]["status"] == "COMPLETED"
     assert stages["Options strategy evaluation"]["status"] == "BLOCKED"
     assert stages["Independent risk validation"]["status"] == "VETO"
     assert stages["Final decision"]["status"] == "NO_TRADE"
-    assert stages["Outcome tracking"]["status"] == "PRESENT"
+    # A forecast record is registered for later scoring only when a quantitative forecast exists
+    assert stages["Outcome tracking"]["status"] == ("PRESENT" if quant["status"] == "PRESENT" else "MISSING_DATA")
