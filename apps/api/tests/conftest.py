@@ -25,6 +25,18 @@ from app.main import app
 from app.settings import get_settings
 
 
+@pytest.fixture
+def validated_edge(monkeypatch):
+    """For tests of the readiness plumbing: state that research found an edge after costs.
+
+    Without it, Gate 3 reads the real research files, which (correctly) show no edge.
+    """
+    from app.research import paper_readiness_audit
+
+    monkeypatch.setattr(paper_readiness_audit, "validated_net_edge",
+                        lambda: {"supported": True, "sources": {"test_fixture": True}})
+
+
 @pytest.fixture(autouse=True)
 def isolated_forecast_log(tmp_path, monkeypatch):
     """The forecast log is the operator's record of what was shown; tests never write to it."""

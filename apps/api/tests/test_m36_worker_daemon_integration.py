@@ -60,6 +60,7 @@ def _setup_authoritative_calendar(session) -> None:
     session.commit()
 
 
+@pytest.mark.usefixtures("validated_edge")
 def test_worker_pre_market_readiness_audit(db):
     """Verify that worker executes 8-gate paper readiness audit during pre-market (08:30 IST)."""
     session = get_session_factory()()
@@ -214,6 +215,7 @@ def test_worker_live_trading_hard_safety_locks():
         place_live_order(intent)
 
 
+@pytest.mark.usefixtures("validated_edge")
 def test_worker_full_leader_tick_with_integrated_loops(db):
     """Verify full end-to-end execution of worker run_once() with all 4 integrated loops."""
     session = get_session_factory()()

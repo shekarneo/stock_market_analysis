@@ -308,8 +308,7 @@ def create_import(
                 "code": "GROWW_MCX_HISTORICAL_UNSUPPORTED",
                 "message": (
                     "Groww Developer Trading API only supports Equity (CASH) and Derivatives (FNO) on NSE/BSE. "
-                    "MCX Commodity historical candles (CRUDEOILMINI) are not served by Groww REST API. "
-                    "A pre-compiled 6,227-candle research dataset is ready in the Model Training Station below."
+                    "MCX Commodity historical candles (CRUDEOILMINI) are not served by Groww REST API."
                 ),
                 "instrument": "CRUDEOILMINI",
                 "provider": "groww",

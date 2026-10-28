@@ -196,6 +196,7 @@ def test_daily_ist_trading_timeline_enforcement():
     assert p6.force_square_off_now is False
 
 
+@pytest.mark.usefixtures("validated_edge")
 def test_premarket_health_audit_gate_verification(db):
     """Verify daily pre-market checklist execution evaluates all 8 readiness gates successfully."""
     session = get_session_factory()()

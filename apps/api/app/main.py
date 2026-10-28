@@ -871,7 +871,8 @@ def get_live_trend_chart(
         formatted_candles = []
         for c in selected_candles:
             time_str = str(c[0])
-            label = time_str[-8:-3] if len(time_str) >= 8 else time_str
+            # "2026-10-28T13:00:00+05:30" -> "13:00" (the offset is not part of the clock time)
+            label = time_str[11:16] if len(time_str) >= 16 and time_str[10] in "T " else time_str
             formatted_candles.append({
                 "time": label,
                 "full_time": time_str,
@@ -989,6 +990,7 @@ class BenchmarkTrainRequest(BaseModel):
 
 
 _BENCHMARK_REPORT_CACHE: dict[tuple, Any] = {}
+BENCHMARK_MAX_BARS = 8000  # ~1.3 years of 15-minute bars from the saved Groww history
 
 
 from app.market.dataset_resolver import resolve_dataset_file
@@ -1041,8 +1043,11 @@ def train_and_benchmark_model(
         )
 
     try:
+        from app.research.multiyear_service import completed_sessions
+
         data = json.loads(dataset_file.read_text(encoding="utf-8"))
-        candles = data.get("candles") or []
+        # Completed sessions only, and the most recent stretch so a run takes about as long as before
+        candles = completed_sessions(data.get("candles") or [])[-BENCHMARK_MAX_BARS:]
         if not candles:
             raise AppError("EMPTY_CANDLES", "Dataset contains 0 candles.", 400)
 
@@ -1226,8 +1231,10 @@ def multi_instrument_model_benchmark(
             return _BENCHMARK_REPORT_CACHE[cache_key]
 
         try:
+            from app.research.multiyear_service import completed_sessions
+
             raw_data = json.loads(dataset_file.read_text(encoding="utf-8"))
-            candles = raw_data.get("candles") or []
+            candles = completed_sessions(raw_data.get("candles") or [])[-BENCHMARK_MAX_BARS:]
             if not candles:
                 return None
 

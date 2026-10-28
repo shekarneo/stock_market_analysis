@@ -14,7 +14,7 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Literal
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -168,6 +168,52 @@ def read_intraday_range(
     """Rest-of-day range of one index from the latest stored Groww quote (no provider call is made here)."""
     read_session(request, settings)
     return _finite(svc.live_intraday_forecast(instrument))
+
+
+def _hourly(rows: list[list]) -> list[list]:
+    """Session-aligned hourly bars (09:15, 10:15, ...) from regular-session 15-minute bars."""
+    out: dict[tuple[str, int], list] = {}
+    for r in rows:
+        hh, mm = int(str(r[0])[11:13]), int(str(r[0])[14:16])
+        minute = hh * 60 + mm
+        if not 555 <= minute <= 915:  # 09:15 .. 15:15 bar starts
+            continue
+        key = (str(r[0])[:10], (minute - 555) // 60)
+        if key not in out:
+            out[key] = [r[0], r[1], r[2], r[3], r[4], r[5] if len(r) > 5 else None]
+        else:
+            b = out[key]
+            b[2], b[3], b[4] = max(b[2], r[2]), min(b[3], r[3]), r[4]
+            if b[5] is not None and len(r) > 5 and r[5] is not None:
+                b[5] += r[5]
+    return [out[k] for k in sorted(out)]
+
+
+@router.get("/api/research/history-candles")
+def read_history_candles(
+    request: Request,
+    instrument: Literal["NIFTY", "BANKNIFTY", "SENSEX"] = "NIFTY",
+    interval: Literal["15minute", "1hour", "1day"] = "15minute",
+    limit: int = Query(60, ge=10, le=500),
+    settings: Settings = Depends(_settings),
+) -> dict:
+    """The most recent saved Groww candles of an index (read from disk; no provider call)."""
+    read_session(request, settings)
+    symbol = svc.INTRADAY_INSTRUMENTS[instrument]
+    doc = svc.hl.load_series(symbol, "1day" if interval == "1day" else "15minute")
+    if not doc or not doc.get("candles"):
+        return {"instrument": instrument, "interval": interval, "status": "NO_HISTORY", "candles": [],
+                "message": f"No saved {instrument} history. Fetch it on the Backtest page (Multi-Year Research)."}
+    rows = svc.completed_sessions(doc["candles"])
+    if interval == "1hour":
+        rows = _hourly(rows)
+    rows = rows[-limit:]
+    return {
+        "instrument": instrument, "interval": interval, "status": "OK", "source": f"Groww {symbol} (saved history)",
+        "last_fetch": doc.get("updated_at"),
+        "candles": [{"time": str(r[0]), "open": r[1], "high": r[2], "low": r[3], "close": r[4],
+                     "volume": r[5] if len(r) > 5 else None} for r in rows],
+    }
 
 
 @router.get("/api/research/forecast-track-record")

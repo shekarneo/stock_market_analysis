@@ -12,6 +12,8 @@ Verifies:
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from starlette.testclient import TestClient
 
@@ -37,19 +39,35 @@ def test_instrument_catalog_completeness():
     from app.instrument_specs import lot_size_for
     assert nifty["contract_lot_size"] == lot_size_for("NIFTY")
     assert nifty["options_supported"] is True
-    assert "15m" in nifty["forecast_horizons"][0]
+    assert "15-minute" in nifty["forecast_horizons"][0]
+    assert nifty["validation_status"] == "RANGE_VALIDATED"
+    assert "6,227" not in (nifty["available_history"] or "")  # never a hard-coded count
 
     sensex = next(c for c in catalog if c["id"] == "SENSEX")
     assert sensex["exchange"] == "BSE"
     assert sensex["contract_lot_size"] == 20
     assert sensex["options_supported"] is True
-    assert sensex["validation_status"] == "INDEPENDENT_PROVENANCE_REQUIRED"
+    assert sensex["validation_status"] == "RANGE_VALIDATED"
 
     crude = next(c for c in catalog if c["id"] == "CRUDEOILMINI")
     assert crude["exchange"] == "MCX"
     assert crude["contract_lot_size"] == 10
     assert crude["options_supported"] is False  # MCX crude options feed unavailable
     assert crude["validation_status"] == "DATA_FEED_GAP_REPORTED"
+
+
+def test_history_depth_reports_the_saved_series(tmp_path, monkeypatch):
+    from app.forecasting import instrument_hub
+    from app.market import history_loader as hl
+
+    monkeypatch.setattr(hl, "HISTORY_DIR", tmp_path)
+    monkeypatch.setattr(instrument_hub, "_depth_cache", {})
+    assert instrument_hub.history_depth("NSE-NIFTY") == "No saved history yet (fetch it on the Backtest page)"
+    for interval, count, first in (("15minute", 45907, "2020-01-01T09:15:00+05:30"), ("1day", 1694, "2020-01-01T00:00:00+05:30")):
+        hl.series_path("NSE-NIFTY", interval, tmp_path).write_text(
+            json.dumps({"candle_count": count, "first": first, "last": "2026-10-28T00:00:00+05:30", "candles": []}))
+    assert instrument_hub.history_depth("NSE-NIFTY") == "45,907 15-minute + 1,694 daily candles (2020-01-01 to 2026-10-28)"
+    assert instrument_hub.history_depth(None) is None
 
 
 def test_independent_forecast_isolation():
@@ -109,12 +127,13 @@ def test_data_health_and_session_calendars():
     assert health["total_instruments_configured"] == 3
     items = {item["instrument"]: item for item in health["primary_instruments"]}
 
-    nifty_health = items["NIFTY"]
-    if nifty_health["stored_candles"] > 0 and nifty_health["last_price"] is not None:
-        assert nifty_health["health_status"] == "HEALTHY_VERIFIED"
-    else:
-        assert nifty_health["health_status"] == "DATA_GAP"
-    assert items["SENSEX"]["health_status"] == "PARTIAL_LTP_ONLY"
+    for inst in ("NIFTY", "SENSEX"):
+        h = items[inst]
+        if h["stored_candles"] > 0:
+            assert h["health_status"] == ("HEALTHY" if h["last_price"] is not None else "NO_LIVE_QUOTE")
+            assert "saved Groww 15-minute candles" in h["gap_disclosure"]
+        else:
+            assert h["health_status"] == "DATA_GAP"
     assert items["CRUDEOILMINI"]["health_status"] == "DATA_FEED_GAP"
 
     invariants = health["safety_invariants"]
@@ -123,6 +142,21 @@ def test_data_health_and_session_calendars():
     assert invariants["capital_commitment_allowed"] is False
     assert invariants["synthetic_orders_only"] is True
     assert invariants["real_money_loss_risk"] is False
+
+
+def test_data_health_counts_the_saved_groww_history(tmp_path, monkeypatch):
+    from app.forecasting import instrument_hub
+    from app.market import history_loader as hl
+
+    monkeypatch.setattr(hl, "HISTORY_DIR", tmp_path)
+    monkeypatch.setattr(instrument_hub, "_depth_cache", {})
+    monkeypatch.setattr(instrument_hub, "load_read", lambda: {"quotes": [{"instrument": "NIFTY", "last_price": 22700.0}]})
+    hl.series_path("NSE-NIFTY", "15minute", tmp_path).write_text(json.dumps(
+        {"candle_count": 45907, "first": "2020-01-01T09:15:00+05:30", "last": "2026-10-28T13:00:00+05:30", "candles": []}))
+    items = {i["instrument"]: i for i in instrument_hub.get_instrument_data_health()["primary_instruments"]}
+    assert items["NIFTY"]["stored_candles"] == 45907 and items["NIFTY"]["health_status"] == "HEALTHY"
+    assert items["NIFTY"]["gap_disclosure"] == "45,907 saved Groww 15-minute candles, 2020-01-01 to 2026-10-28."
+    assert items["SENSEX"]["stored_candles"] == 0 and items["SENSEX"]["health_status"] == "DATA_GAP"
 
 
 def test_api_endpoints_integration(client: TestClient):
@@ -179,6 +213,7 @@ def test_train_benchmark_endpoint_missing_dataset(client: TestClient):
 
 
 def test_train_benchmark_endpoint_crudeoilmini(client: TestClient):
+    """MCX crude has no Groww history; the old derived_crude file is not MCX data, so no training."""
     from tests.conftest import login
     login(client)
 
@@ -186,11 +221,8 @@ def test_train_benchmark_endpoint_crudeoilmini(client: TestClient):
         "/api/forecasting/train-benchmark",
         json={"instrument": "CRUDEOILMINI", "model_type": "lightgbm", "strategy_mode": "deadband"},
     )
-    assert res.status_code == 200
-    body = res.json()
-    assert body["ok"] is True
-    assert body["instrument"] == "CRUDEOILMINI"
-    assert body["num_folds"] == 19
+    assert res.status_code == 400
+    assert res.json()["code"] == "DATASET_NOT_FOUND"
 
 
 
@@ -242,10 +274,10 @@ def test_train_benchmark_sota_models(client: TestClient):
     assert b_xgb["ok"] is True
     assert b_xgb["model_name"] == "xgboost"
 
-    # Test CatBoost on CRUDEOILMINI
+    # Test CatBoost on SENSEX (MCX crude has no history to train on)
     res_cb = client.post(
         "/api/forecasting/train-benchmark",
-        json={"instrument": "CRUDEOILMINI", "model": "catboost", "strategy_mode": "regime_gated"},
+        json={"instrument": "SENSEX", "model": "catboost", "strategy_mode": "regime_gated"},
     )
     assert res_cb.status_code == 200
     b_cb = res_cb.json()
@@ -298,7 +330,7 @@ def test_multi_benchmark_endpoint(client: TestClient):
     assert "champion" in body
     assert "top_by_instrument" in body
     assert "NIFTY" in body["top_by_instrument"]
-    assert "CRUDEOILMINI" in body["top_by_instrument"]
+    assert "CRUDEOILMINI" not in body["top_by_instrument"]  # no MCX history: never ranked
 
     # Test full 9-model multi-dataset benchmark execution
     res_full = client.post(

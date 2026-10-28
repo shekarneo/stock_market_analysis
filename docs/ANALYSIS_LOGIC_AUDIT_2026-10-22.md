@@ -508,8 +508,30 @@ Still open:
 - **Sample:** two sessions; the checkpoints within a day are not independent.
 
 **Live forecast log** (`app/research/forecast_log.py`, `var/analysis/forecast_log.jsonl`): the stronger test is what the cards actually showed.
+
 - **Daily:** published next-session forecasts are logged once per target session, before it opens.
 - **Intraday:** the poller logs each index's rest-of-day forecast within 2 minutes of every checkpoint.
 - **Scoring:** after each history fetch and research run, against completed sessions only. Records are never edited except to add their outcome once.
 - **Where to see it:** `GET /api/research/forecast-track-record` and the Forecast Track Record card. The card marks fewer than 20 sessions as too early to judge.
 - **Tests:** an autouse fixture keeps them away from the real log.
+
+## UI truth pass (2026-10-28)
+
+All 16 pages were walked with the app running against live Groww data.
+
+**Fixed (each was showing something untrue):**
+- **Paper readiness:**
+  - The System card hard-coded `8/8 GATES PASSED / READY_FOR_PAPER_SIMULATION` whatever the audit returned. It also claimed a "verified positive net edge after STT, GST… slippage".
+  - Gate 3 read a 32-trade in-sample simulation (net +₹6,324 on ₹10 lakh). It only produced a WARNING, and warnings never blocked.
+  - Now Gate 3 passes only on research evidence of an edge after costs on unseen data: the daily direction research, the next-session forecast and the technical agent replay. None shows an edge today, so the verdict is `BLOCKED (NO_VALIDATED_NET_EDGE_AFTER_COSTS)`.
+  - The card renders the API report, and marks the gates that only check that a module exists.
+  - The tests that check the readiness plumbing state their edge explicitly (`validated_edge` fixture).
+- **History depth:** "6,227 M15 Candles (2026-04-16 to 2026-10-14)" was hard-coded in the catalog, the web fallback, the training panel and an error message. The depth is now read from the saved Groww history (`instrument_hub.history_depth`).
+- **Validation label:** the selector read `validationStatus` while the API sends `validation_status`, so NIFTY showed "DATA FEED GAP — Groww API does not provide MCX commodity candles". It now shows the real `RANGE_VALIDATED`.
+- **Trend chart and training panel:** both returned 400 "Dataset for NIFTY not found", because they read the retired derived files. `resolve_dataset_file` now serves the saved Groww 15-minute history for NIFTY, BANKNIFTY and SENSEX. When that history has not been fetched, it falls back to the older one-year Groww extracts for NIFTY and SENSEX. It never serves the synthetic BANKNIFTY file or `derived_crude_15m.json`: that file has exactly 6,227 bars on NIFTY's exact dates in NSE hours, so it is not MCX data. The "train on crude" tests had been passing on it; they now expect `DATASET_NOT_FOUND`. Training uses the latest 8,000 completed bars. Chart labels were "00+05" (cut from the timezone offset); they now show HH:MM.
+- **Data health / History:** these pages showed "0 bars / no persisted candles" and the chart said "no completed candles". When empty, the chart's window high/low was invented as the live price ±2%. They now use the saved Groww history (`/api/research/history-candles`), and the window stats show N/A without candles.
+- **Stale forecast:** the next-session card showed the 26-Oct forecast on 28-Oct as current. It now carries a red `STALE` pill and a note.
+- **Live page:** before any analysis, each card showed `BUY_CE` / `BUY_FUT`, and the fire button was enabled. It now reads `NO SIGNAL (ANALYSIS NOT RUN)`, and the button is disabled.
+- **USD/INR:** labelled "RBI Reference FX" while it came from ExchangeRate-API. The day change and the crude change were zero-filled when the feed had none. The label now names the source, and a missing change stays unknown.
+
+**Not changed, reported:** the quant agent still reads the retired 15-minute direction model, so it always reports UNKNOWN. The validated range forecasts are not yet an input to any agent.

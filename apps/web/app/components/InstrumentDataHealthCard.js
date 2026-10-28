@@ -87,8 +87,8 @@ export default function InstrumentDataHealthCard() {
               <tbody>
                 {items.map((item) => {
                   const isSelected = item.instrument === selectedInstrument;
-                  const isHealthy = item.health_status === "HEALTHY_VERIFIED";
-                  const isPartial = item.health_status === "PARTIAL_LTP_ONLY";
+                  const isHealthy = item.health_status === "HEALTHY";
+                  const isPartial = item.health_status === "NO_LIVE_QUOTE";
 
                   return (
                     <tr key={item.instrument} className={isSelected ? "active-row" : ""}>

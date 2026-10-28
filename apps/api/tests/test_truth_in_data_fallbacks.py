@@ -109,8 +109,37 @@ def test_backtest_serves_artifact_values_and_caveats(tmp_path):
 # --- Synthetic BANK NIFTY quarantine -----------------------------------------
 
 @pytest.mark.parametrize("symbol", ["BANKNIFTY", "NSE-BANKNIFTY", "BANK NIFTY"])
-def test_synthetic_banknifty_dataset_is_never_resolved(symbol):
-    assert resolve_dataset_file(symbol) is None
+def test_synthetic_banknifty_dataset_is_never_resolved(symbol, tmp_path, monkeypatch):
+    from app.market import history_loader as hl
+
+    monkeypatch.setattr(hl, "HISTORY_DIR", tmp_path)
+    assert resolve_dataset_file(symbol) is None  # nothing fetched: nothing served
+    (tmp_path / "derived_banknifty_15m_m40.json").write_text("{}")
+    assert resolve_dataset_file(symbol) is None  # the synthetic file is never picked up
+    real = hl.series_path("NSE-BANKNIFTY", "15minute")
+    real.write_text("{}")
+    assert resolve_dataset_file(symbol) == real  # only the saved Groww history
+
+
+@pytest.mark.parametrize("symbol", ["CRUDEOILMINI", "CRUDE", "UNKNOWN"])
+def test_no_groww_history_means_no_dataset(symbol):
+    assert resolve_dataset_file(symbol) is None  # derived_crude_15m.json is not MCX data
+
+
+def test_saved_history_is_preferred_over_the_legacy_extract(tmp_path, monkeypatch):
+    from app.market import dataset_resolver
+    from app.market import history_loader as hl
+
+    monkeypatch.setattr(hl, "HISTORY_DIR", tmp_path / "history")
+    monkeypatch.setattr("app.settings.REPO_ROOT", tmp_path)
+    (tmp_path / "var" / "datasets").mkdir(parents=True)
+    legacy = tmp_path / "var" / "datasets" / dataset_resolver._LEGACY_GROWW_FILES["SENSEX"]
+    legacy.write_text("{}")
+    assert resolve_dataset_file("SENSEX") == legacy
+    saved = hl.series_path("BSE-SENSEX", "15minute")
+    saved.parent.mkdir(parents=True)
+    saved.write_text("{}")
+    assert resolve_dataset_file("SENSEX") == saved
 
 
 # --- Live option quotes --------------------------------------------------------

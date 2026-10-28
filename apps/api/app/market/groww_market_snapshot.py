@@ -147,7 +147,9 @@ def fetch_official_groww_mcx_quote(trading_symbol: str | None = None, retrieved_
                     if ltp > 0 and vol > best_vol:
                         best_vol = vol
                         label = "19 Nov" if "NOV" in sym else "19 Oct" if "OCT" in sym else sym
-                        pct_val = float(p.get("day_change_perc") or 0)
+                        # A missing change stays missing (never zero-filled)
+                        chg = p.get("day_change")
+                        pct = p.get("day_change_perc")
                         best_quote = {
                             "instrument": "CRUDEOILMINI",
                             "name": f"MCX Crude Oil Mini ({label})",
@@ -155,8 +157,8 @@ def fetch_official_groww_mcx_quote(trading_symbol: str | None = None, retrieved_
                             "exchange": "MCX",
                             "segment": "COMMODITY",
                             "last_price": ltp,
-                            "day_change": float(p.get("day_change") or 0),
-                            "percent_change": f"{pct_val:+.2f}%",
+                            "day_change": float(chg) if isinstance(chg, (int, float)) else None,
+                            "percent_change": f"{float(pct):+.2f}%" if isinstance(pct, (int, float)) else "N/A",
                             "ohlc": p.get("ohlc") or {},
                             "volume": vol,
                             "open_interest": p.get("open_interest"),
@@ -303,7 +305,7 @@ def fetch_live_usdinr(retrieved_at: datetime | None = None) -> dict | None:
     stamp = (retrieved_at or datetime.now(timezone.utc)).isoformat()
     for url, source_label in [
         ("https://open.er-api.com/v6/latest/USD", "ExchangeRate-API Live FX"),
-        ("https://api.frankfurter.app/latest?from=USD&to=INR", "ECB / RBI Reference FX"),
+        ("https://api.frankfurter.app/latest?from=USD&to=INR", "ECB reference rate (via Frankfurter)"),
     ]:
         try:
             req = urllib.request.Request(url, headers={"User-Agent": HEADERS["User-Agent"]})
@@ -316,7 +318,7 @@ def fetch_live_usdinr(retrieved_at: datetime | None = None) -> dict | None:
                     "name": "USD / INR Exchange Rate",
                     "segment": "GLOBAL_MARKET",
                     "last_price": round(float(rate), 2),
-                    "day_change": 0.0,
+                    "day_change": None,  # the feed gives no change; unknown is not zero
                     "percent_change": "Live FX",
                     "unit": "INR/USD",
                     "retrieved_at": stamp,

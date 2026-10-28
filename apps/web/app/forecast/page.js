@@ -261,7 +261,7 @@ function DataPullWorkstation() {
 
           {instrument === "CRUDEOILMINI" && (
             <div style={{ gridColumn: "1 / -1", padding: "8px 12px", background: "rgba(56, 189, 248, 0.08)", border: "1px solid rgba(56, 189, 248, 0.25)", borderRadius: "6px", fontSize: "0.8rem", color: "var(--sub, #94a3b8)", lineHeight: 1.4 }}>
-              💡 <strong>MCX Commodity Guidance:</strong> Groww Developer API supports NSE/BSE. MCX Crude Oil live quotes stream via web snapshot, and historical bars are available via <strong>Upstox</strong> or <strong>Kite</strong>. A pre-compiled 6,227-candle dataset is ready for walk-forward training below.
+              💡 <strong>MCX Commodity Guidance:</strong> Groww Developer API supports NSE/BSE. MCX Crude Oil live quotes stream via web snapshot, and historical bars are available via <strong>Upstox</strong> or <strong>Kite</strong>. No crude history is saved, so crude cannot be trained below.
             </div>
           )}
         </div>
@@ -407,7 +407,7 @@ function ModelTrainingWorkstation() {
   const [error, setError] = useState("");
 
   // End-to-End Suite State
-  const [selectedDatasets, setSelectedDatasets] = useState(["NIFTY", "BANKNIFTY", "SENSEX", "CRUDEOILMINI"]);
+  const [selectedDatasets, setSelectedDatasets] = useState(["NIFTY", "BANKNIFTY", "SENSEX"]);
   const [selectedModels, setSelectedModels] = useState(["lightgbm", "xgboost", "catboost", "dlinear", "chronos", "random_forest", "mlp", "logistic_regression", "empirical_prior"]);
   const [selectedModes, setSelectedModes] = useState(["regime_gated", "deadband", "raw"]);
   const [suiteBusy, setSuiteBusy] = useState(false);
@@ -438,11 +438,13 @@ function ModelTrainingWorkstation() {
     { id: "empirical_prior", name: "Empirical Prior (Majority Baseline - M3)", tag: "CLIMATOLOGY" },
   ];
 
+  // Saved Groww 15-minute history (Backtest → Fetch history); runs use the most recent 8,000 completed bars.
+  // MCX crude has no Groww history, so it cannot be trained.
   const DATASETS_CATALOG = [
-    { id: "NIFTY", label: "NIFTY 50", exchange: "NSE", candles: "6,227 M15 Candles", ready: true },
-    { id: "BANKNIFTY", label: "BANK NIFTY", exchange: "NSE", candles: "6,227 M15 Candles", ready: true },
-    { id: "SENSEX", label: "BSE SENSEX", exchange: "BSE", candles: "6,831 M15 Candles", ready: true },
-    { id: "CRUDEOILMINI", label: "CRUDEOIL MINI", exchange: "MCX", candles: "6,227 M15 Candles", ready: true },
+    { id: "NIFTY", label: "NIFTY 50", exchange: "NSE", candles: "Groww 15m, last 8,000 bars", ready: true },
+    { id: "BANKNIFTY", label: "BANK NIFTY", exchange: "NSE", candles: "Groww 15m, last 8,000 bars", ready: true },
+    { id: "SENSEX", label: "BSE SENSEX", exchange: "BSE", candles: "Groww 15m, last 8,000 bars", ready: true },
+    { id: "CRUDEOILMINI", label: "CRUDEOIL MINI", exchange: "MCX", candles: "No Groww history", ready: false },
   ];
 
   const STRATEGY_MODES_CATALOG = [
@@ -630,10 +632,9 @@ function ModelTrainingWorkstation() {
                   onChange={(e) => setInstrument(e.target.value)}
                   style={{ width: "100%", padding: "8px 10px", background: "var(--bg, #0f172a)", border: "1px solid var(--line, #334155)", borderRadius: "6px", color: "var(--ink, #f8fafc)", fontSize: "0.9rem" }}
                 >
-                  <option value="NIFTY">NIFTY 50 (6,227 Candles)</option>
-                  <option value="BANKNIFTY">BANK NIFTY (6,227 Candles)</option>
-                  <option value="SENSEX">BSE SENSEX (6,831 Candles - Ready)</option>
-                  <option value="CRUDEOILMINI">CRUDEOIL MINI (6,227 Candles - Ready)</option>
+                  {DATASETS_CATALOG.map((d) => (
+                    <option key={d.id} value={d.id} disabled={!d.ready}>{d.label} ({d.candles})</option>
+                  ))}
                 </select>
               </div>
 
@@ -834,7 +835,7 @@ function ModelTrainingWorkstation() {
                 <div style={{ display: "flex", gap: "6px" }}>
                   <button
                     type="button"
-                    onClick={() => setSelectedDatasets(DATASETS_CATALOG.map((d) => d.id))}
+                    onClick={() => setSelectedDatasets(DATASETS_CATALOG.filter((d) => d.ready).map((d) => d.id))}
                     className="btn secondary"
                     style={{ fontSize: "0.75rem", padding: "2px 8px" }}
                   >
@@ -870,8 +871,9 @@ function ModelTrainingWorkstation() {
                       <input
                         type="checkbox"
                         checked={active}
+                        disabled={!d.ready}
                         onChange={() => toggleDataset(d.id)}
-                        style={{ cursor: "pointer" }}
+                        style={{ cursor: d.ready ? "pointer" : "not-allowed" }}
                       />
                       <div style={{ flex: 1 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>

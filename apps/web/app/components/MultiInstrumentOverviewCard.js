@@ -81,11 +81,12 @@ export default function MultiInstrumentOverviewCard() {
                 <div className="v6-meta-row">
                   <span>Model Status</span>
                   <span>
-                    {inst.id === "NIFTY"
-                      ? "Verified Research"
-                      : inst.id === "SENSEX"
-                      ? "Independent Data Req."
-                      : "Data Gap Reported"}
+                    {/* From the backend catalog: what was actually checked on unseen data */}
+                    {(inst.validation_status || inst.validationStatus) === "RANGE_VALIDATED"
+                      ? "Range validated · direction: no edge"
+                      : (inst.validation_status || inst.validationStatus) === "DATA_FEED_GAP_REPORTED"
+                      ? "Data Gap Reported"
+                      : "Not evaluated"}
                   </span>
                 </div>
               </div>

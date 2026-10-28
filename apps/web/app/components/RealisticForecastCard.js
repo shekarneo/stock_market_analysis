@@ -51,6 +51,9 @@ export default function RealisticForecastCard({ compact = false }) {
   const d = forecast.direction_next_session || {};
   const h = forecast.direction_next_half_day || {};
   const edge = d.status === "EDGE_SUPPORTED";
+  // A forecast for a session that has already passed is history, not a forecast
+  const todayIst = new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
+  const stale = forecast.for_session && forecast.for_session < todayIst;
 
   return (
     <div className="v6-card" data-testid="realistic-forecast-card">
@@ -62,6 +65,7 @@ export default function RealisticForecastCard({ compact = false }) {
           </h2>
         </div>
         <div className="v6-header-tags">
+          {stale ? <span className="v6-pill rose" data-testid="realistic-stale-pill">STALE: FOR {forecast.for_session}</span> : null}
           <span className="v6-pill indigo">RANGE: RELIABLE</span>
           <span className={`v6-pill ${edge ? "emerald" : "amber"}`} data-testid="realistic-direction-pill">
             DIRECTION: {edge ? "EDGE SUPPORTED" : "NO RELIABLE EDGE"}
@@ -69,8 +73,14 @@ export default function RealisticForecastCard({ compact = false }) {
         </div>
       </div>
 
+      {stale ? (
+        <p className="v6-section-desc rose-text" data-testid="realistic-stale-note">
+          This forecast was for {forecast.for_session}, which has passed. After today's close, run Fetch history and then
+          Run research (Backtest → Multi-Year Research) to publish the next one.
+        </p>
+      ) : null}
       {rng.status === "OK" ? (
-        <div className="v6-metrics-grid">
+        <div className="v6-metrics-grid" style={stale ? { opacity: 0.5 } : undefined}>
           <div className="v6-metric-card">
             <span className="v6-metric-label">Expected high–low range</span>
             <div className="v6-metric-val cyan-text">{pct(rng.expected_range_pct)}</div>

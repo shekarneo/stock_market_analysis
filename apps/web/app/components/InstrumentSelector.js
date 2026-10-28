@@ -2,6 +2,12 @@
 
 import { useMarketData } from "./MarketDataContext";
 
+const VALIDATION = {
+  RANGE_VALIDATED: { cls: "emerald", label: "RANGE VALIDATED", note: "Range checked on unseen sessions · direction: no edge" },
+  DATA_FEED_GAP_REPORTED: { cls: "rose", label: "DATA FEED GAP", note: "Groww API does not provide MCX commodity candles" },
+  UNKNOWN: { cls: "amber", label: "NOT EVALUATED", note: "No evaluation on unseen data yet" },
+};
+
 export default function InstrumentSelector({ compact = false }) {
   const {
     selectedInstrument,
@@ -18,6 +24,8 @@ export default function InstrumentSelector({ compact = false }) {
   const currentSpot = spots[activeId] || (activeId === "CRUDEOILMINI" ? spots["CRUDEMINI"] : null);
 
   const isOpen = activeId === "CRUDEOILMINI" ? isCommodityOpen : isEquityOpen;
+  // The backend catalog uses snake_case; the local fallback uses camelCase
+  const validation = VALIDATION[cfg.validation_status || cfg.validationStatus] || VALIDATION.UNKNOWN;
 
   if (compact) {
     return (
@@ -117,21 +125,9 @@ export default function InstrumentSelector({ compact = false }) {
         <div className="v6-meta-cell">
           <span className="v6-meta-label">Model Validation Status</span>
           <div className="v6-meta-val">
-            {cfg.validationStatus === "VERIFIED_RESEARCH_DATASET" ? (
-              <span className="v6-pill emerald">VERIFIED RESEARCH</span>
-            ) : cfg.validationStatus === "INDEPENDENT_PROVENANCE_REQUIRED" ? (
-              <span className="v6-pill amber">INDEPENDENT DATA REQUIRED</span>
-            ) : (
-              <span className="v6-pill rose">DATA FEED GAP</span>
-            )}
+            <span className={`v6-pill ${validation.cls}`} data-testid="instrument-validation-status">{validation.label}</span>
           </div>
-          <small className="v6-meta-sub">
-            {cfg.validationStatus === "VERIFIED_RESEARCH_DATASET"
-              ? "19-Fold Walk-Forward Verified"
-              : cfg.validationStatus === "INDEPENDENT_PROVENANCE_REQUIRED"
-              ? "BSE Holdout Required Before Model Claims"
-              : "Groww API does not provide MCX commodity candles"}
-          </small>
+          <small className="v6-meta-sub">{validation.note}</small>
         </div>
       </div>
     </div>

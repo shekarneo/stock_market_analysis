@@ -2074,6 +2074,18 @@ th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 8px 6p
   color: #34d399;
 }
 
+.v6-gate-status-pill.failed,
+.v6-gate-status-pill.warning {
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.v6-gate-status-pill.failed { background: rgba(244, 63, 94, 0.2); color: #fb7185; }
+.v6-gate-status-pill.warning { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+.v6-gate-row.failed .v6-gate-num { background: rgba(244, 63, 94, 0.15); color: #fb7185; }
+.v6-gate-row.warning .v6-gate-num { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+
 .v6-gate-desc {
   margin: 0 0 6px;
   font-size: 0.8rem;

@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMarketData } from "./MarketDataContext";
 
+// Indices with saved Groww history; MCX crude has none
+const HISTORY_INSTRUMENTS = new Set(["NIFTY", "BANKNIFTY", "SENSEX"]);
+
 export default function InstrumentHistoricalChart() {
   const { selectedInstrument, spots, instrumentConfig } = useMarketData();
   const [candles, setCandles] = useState([]);
@@ -14,21 +17,24 @@ export default function InstrumentHistoricalChart() {
   const cfg = instrumentConfig || {};
   const spot = spots[activeId] || (activeId === "CRUDEOILMINI" ? spots["CRUDEMINI"] : null);
 
+  const hasHistory = HISTORY_INSTRUMENTS.has(activeId);
+  const [note, setNote] = useState("");
+
   useEffect(() => {
     let cancelled = false;
     async function loadCandles() {
       setLoading(true);
+      setNote("");
       try {
-        if (activeId === "NIFTY") {
-          const res = await fetch(`/api/history/storage/candles?symbol=NSE-NIFTY&interval=${timeframe}`);
-          if (res.ok) {
-            const data = await res.json();
-            if (!cancelled && data.candles && Array.isArray(data.candles)) {
-              setCandles(data.candles.slice(-60)); // Show latest 60 bars for clean rendering
-            }
+        if (hasHistory) {
+          // Saved Groww history (completed sessions), the latest 60 bars for clean rendering
+          const res = await fetch(`/api/research/history-candles?instrument=${activeId}&interval=${timeframe}&limit=60`);
+          const data = await res.json().catch(() => ({}));
+          if (!cancelled) {
+            setCandles(res.ok && Array.isArray(data.candles) ? data.candles : []);
+            setNote(res.ok ? (data.status === "OK" ? `${data.source} · last fetch ${data.last_fetch ? data.last_fetch.slice(0, 16).replace("T", " ") : "unknown"} UTC` : data.message) : `HTTP ${res.status}`);
           }
-        } else {
-          // Non-NIFTY instruments have honest feed disclosures
+        } else if (!cancelled) {
           setCandles([]);
         }
       } catch {
@@ -42,12 +48,12 @@ export default function InstrumentHistoricalChart() {
     return () => {
       cancelled = true;
     };
-  }, [activeId, timeframe]);
+  }, [activeId, timeframe, hasHistory]);
 
-  // Derived price stats
+  // Window stats come from the candles only; nothing is shown without them
   const stats = useMemo(() => {
     if (!candles || candles.length === 0) {
-      return { min: spot ? spot * 0.98 : 0, max: spot ? spot * 1.02 : 100, last: spot || 0 };
+      return { min: null, max: null, last: null };
     }
     const highs = candles.map((c) => Number(c.high || c[2]));
     const lows = candles.map((c) => Number(c.low || c[3]));
@@ -100,22 +106,22 @@ export default function InstrumentHistoricalChart() {
             <span><strong>Instrument:</strong> {cfg.name || activeId}</span>
             <span><strong>Exchange:</strong> {cfg.exchange}</span>
             <span><strong>Session:</strong> {cfg.session}</span>
-            <span><strong>High (Window):</strong> ₹{stats.max.toLocaleString("en-IN")}</span>
-            <span><strong>Low (Window):</strong> ₹{stats.min.toLocaleString("en-IN")}</span>
+            <span><strong>High (Window):</strong> {stats.max != null ? `₹${stats.max.toLocaleString("en-IN")}` : "N/A"}</span>
+            <span><strong>Low (Window):</strong> {stats.min != null ? `₹${stats.min.toLocaleString("en-IN")}` : "N/A"}</span>
           </>
         )}
       </div>
 
+      {note ? <p className="v6-section-desc" style={{ fontSize: "0.78rem" }} data-testid="historical-chart-source">{note}</p> : null}
       {loading ? (
-        <div className="v6-loading-box">Loading historical candles from persistent storage…</div>
-      ) : activeId !== "NIFTY" ? (
+        <div className="v6-loading-box">Loading the saved Groww candles…</div>
+      ) : !hasHistory ? (
         <div className="v6-chart-data-gap-view">
           <div className="v6-gap-icon">📊</div>
           <h3>Historical Candle Ingestion Status for {cfg.name || activeId}</h3>
           <p>
-            {activeId === "SENSEX"
-              ? "BSE SENSEX live quote and LTP snapshot are actively monitored. A durable 15-minute historical candle dataset has not yet been ingested into local PostgreSQL storage. To maintain empirical rigor, no synthetic charts are plotted."
-              : "MCX Crude Oil Mini: Groww Trade API does not provide historical commodity candle feeds. External global crude benchmarks (Brent/WTI) serve as macro indicators and cannot be plotted as MCX exchange execution candles."}
+            MCX Crude Oil Mini: Groww Trade API does not provide historical commodity candle feeds. External global crude
+            benchmarks (Brent/WTI) serve as macro indicators and cannot be plotted as MCX exchange execution candles.
           </p>
           <div className="v6-provenance-box">
             <strong>Current Live Spot:</strong> ₹{spot != null ? Number(spot).toLocaleString("en-IN") : "Awaiting quote"}
@@ -189,8 +195,8 @@ export default function InstrumentHistoricalChart() {
       )}
 
       <div className="v6-chart-footer">
-        <span><strong>Storage:</strong> PostgreSQL Database Table <code>market_candles</code></span>
-        <span><strong>Interval:</strong> {timeframe} completed continuous bars</span>
+        <span><strong>Storage:</strong> saved Groww history <code>var/datasets/history</code></span>
+        <span><strong>Interval:</strong> {timeframe === "1hour" ? "1-hour bars built from 15-minute bars" : `${timeframe} bars`}, completed sessions only</span>
       </div>
     </div>
   );

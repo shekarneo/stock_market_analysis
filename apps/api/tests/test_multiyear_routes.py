@@ -65,6 +65,29 @@ def _save_series(root, symbol, bars):
                                 "last": rows[-1][0], "failed_windows": 0, "rejected_rows": 0}), encoding="utf-8")
 
 
+def test_history_candles_endpoint(api, tmp_path):
+    assert api.get("/api/research/history-candles?instrument=SENSEX").json()["status"] == "NO_HISTORY"
+    rows = []
+    for day in ("2026-10-26", "2026-10-27"):
+        for i in range(25):  # 09:15 .. 15:15
+            hh, mm = divmod(9 * 60 + 15 + 15 * i, 60)
+            px = 22500.0 + i
+            rows.append([f"{day}T{hh:02d}:{mm:02d}:00+05:30", px, px + 5, px - 5, px + 1, 100, None])
+    path = hl.series_path("NSE-NIFTY", "15minute", tmp_path / "history")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"candles": rows, "updated_at": "2026-10-27T10:30:00+00:00"}), encoding="utf-8")
+    body = api.get("/api/research/history-candles?instrument=NIFTY&interval=15minute&limit=10").json()
+    assert body["status"] == "OK" and len(body["candles"]) == 10
+    assert body["candles"][-1] == {"time": "2026-10-27T15:15:00+05:30", "open": 22524.0, "high": 22529.0,
+                                   "low": 22519.0, "close": 22525.0, "volume": 100}
+    hourly = api.get("/api/research/history-candles?instrument=NIFTY&interval=1hour&limit=500").json()["candles"]
+    assert len(hourly) == 14  # 7 session hours (the last is the 15:15 bar alone) x 2 days
+    first = hourly[0]
+    assert first["time"] == "2026-10-26T09:15:00+05:30" and first["open"] == 22500.0
+    assert first["high"] == 22508.0 and first["low"] == 22495.0 and first["close"] == 22504.0 and first["volume"] == 400
+    assert api.get("/api/research/history-candles?instrument=CRUDE").status_code == 422  # no MCX history
+
+
 def test_empty_state(api):
     body = api.get("/api/research/multiyear").json()
     assert body["report"] is None and body["job"] is None and body["pcr"] is None

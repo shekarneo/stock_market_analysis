@@ -1250,7 +1250,10 @@ export default function LiveTradingPage() {
               const plannedPick = isFutures
                 ? (rec?.contract || `${u.symbol} FUTURES`)
                 : (topPick?.contract || `${u.symbol} ATM`);
-              const side = isGated
+              // No analysis yet means no signal, never a default buy
+              const side = !rec
+                ? "NO SIGNAL (ANALYSIS NOT RUN)"
+                : isGated
                 ? (rec?.call || "STAND ASIDE (NO TRADE)")
                 : (isFutures
                     ? (rec?.call?.includes("SELL") ? "SELL_FUT" : "BUY_FUT")
@@ -1392,24 +1395,26 @@ export default function LiveTradingPage() {
                         <button
                           type="button"
                           onClick={() => handleFireOrderAndWatch(u.symbol, side, plannedPick, estPrice, rec)}
-                          disabled={killSwitchTriggered || isGated}
+                          disabled={killSwitchTriggered || isGated || !rec}
                           style={{
                             flex: 1,
-                            background: (killSwitchTriggered || isGated)
+                            background: (killSwitchTriggered || isGated || !rec)
                               ? "rgba(255, 255, 255, 0.08)"
                               : isOrderOpen
                               ? "rgba(56, 189, 248, 0.2)"
                               : "rgba(255, 255, 255, 0.12)",
-                            color: (killSwitchTriggered || isGated) ? "var(--muted)" : "#ffffff",
+                            color: (killSwitchTriggered || isGated || !rec) ? "var(--muted)" : "#ffffff",
                             border: isOrderOpen ? "1px solid #38bdf8" : "1px solid var(--line)",
                             padding: "8px 12px",
                             borderRadius: "8px",
                             fontSize: "0.82rem",
                             fontWeight: 600,
-                            cursor: (killSwitchTriggered || isGated) ? "not-allowed" : "pointer",
+                            cursor: (killSwitchTriggered || isGated || !rec) ? "not-allowed" : "pointer",
                           }}
                         >
-                          {isGated
+                          {!rec
+                            ? "⏸ Run the analysis first"
+                            : isGated
                             ? `🔒 Gated (${rec?.conviction || "NO TRADE"})`
                             : isOrderOpen
                             ? `⚡ Active Order (${executionMode})`

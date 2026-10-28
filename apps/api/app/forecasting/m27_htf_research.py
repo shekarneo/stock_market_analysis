@@ -210,8 +210,10 @@ def resample_candles_to_htf(
             b_high = max(float(x[2]) for x in bucket)
             b_low = min(float(x[3]) for x in bucket)
             b_close = float(last_c[4])
-            b_vol = sum(float(x[5]) for x in bucket)
-            b_oi = float(last_c[6]) if len(last_c) > 6 else 0.0
+            # Index candles carry no volume / OI: a missing value stays None (never summed as 0)
+            vols = [x[5] if len(x) > 5 else None for x in bucket]
+            b_vol = None if any(v is None for v in vols) else sum(float(v) for v in vols)
+            b_oi = float(last_c[6]) if len(last_c) > 6 and last_c[6] is not None else None
 
             # Point-in-time timestamp: close of the final constituent bar
             close_ts = str(last_c[0])
@@ -317,9 +319,12 @@ def extract_htf_features_and_targets(
         body_ratio = (c_t - o_t) / rng
 
         # 4. Volume ratio
-        v_t = candles[t].volume
-        v_avg = np.mean([candles[i].volume for i in range(t - 7, t + 1)])
-        vol_ratio = float(v_t / (v_avg + 1e-6))
+        # (neutral 1.0 when the bars have no volume, as index candles do: no information either way)
+        window_vols = [candles[i].volume for i in range(t - 7, t + 1)]
+        if any(v is None for v in window_vols):
+            vol_ratio = 1.0
+        else:
+            vol_ratio = float(window_vols[-1] / (np.mean(window_vols) + 1e-6))
 
         # 5. Cyclical time of day
         _, time_str = parse_candle_date(candles[t].timestamp)
@@ -365,7 +370,7 @@ def extract_htf_features_and_targets(
                 high=h_t,
                 low=l_t,
                 close=c_t,
-                volume=v_t,
+                volume=candles[t].volume,
                 features=feat_vec,
                 feature_names=feature_names,
                 exec_price_open=exec_open,

@@ -382,7 +382,9 @@ function Snapshot() {
                     <div style={{ fontSize: "1.15rem", fontWeight: 800, color: "#f8fafc", margin: "2px 0" }}>
                       ₹{live.global_indices?.find((g) => g.instrument === "USDINR" || g.instrument === "USDINR_REF")?.last_price || "—"}
                     </div>
-                    <span style={{ fontSize: "0.68rem", color: "#64748b" }}>RBI Reference FX</span>
+                    <span style={{ fontSize: "0.68rem", color: "#64748b" }}>
+                      {live.global_indices?.find((g) => g.instrument === "USDINR" || g.instrument === "USDINR_REF")?.source || "Source unknown"}
+                    </span>
                   </div>
 
                   <div style={{ padding: "10px 12px", background: "rgba(18, 26, 43, 0.65)", borderRadius: "8px", border: "1px solid rgba(255, 255, 255, 0.08)" }}>

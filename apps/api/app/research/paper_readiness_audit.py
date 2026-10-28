@@ -8,16 +8,17 @@ Core Objectives:
 1. Systematic Evaluation of 8 Readiness Gates:
    - Gate 1: Financial Safety Invariants Enforcement (All 5 strictly False)
    - Gate 2: Multi-Provider Data Verification & Bhavcopy Reconciliation (M29)
-   - Gate 3: Quantitative Friction Absorption & Statutory Cost Coverage (M33)
+   - Gate 3: Positive net edge after Indian statutory costs on unseen data (the multi-year
+     research and the agent replay); without it the verdict is BLOCKED
    - Gate 4: Volatility Parity & Half-Kelly Position Sizing (M31)
    - Gate 5: Statistical Distribution Drift & Automated Kill Switch (M32)
    - Gate 6: Multi-Agent Regime Consensus & Risk Veto Gating (M30)
    - Gate 7: Paper Account Ledger Replay & Capital Conservation (M33)
    - Gate 8: Operational Fencing & Failsafe Circuit Breakers (M0/M32)
-2. Formal Declaration:
-   - Engineering Readiness: COMPLETE (100% Verified)
-   - Paper Simulation Readiness: APPROVED for simulated quote stream
+2. Declaration:
+   - Paper Simulation Readiness: READY_FOR_PAPER_SIMULATION only when no gate fails
    - Live Trading Status: STRICT NO-GO (Hardcoded Locked)
+   Gates 2 and 4-7 confirm that the module exists; they do not measure its results.
 """
 
 from __future__ import annotations
@@ -77,6 +78,37 @@ class PaperReadinessReport:
         return data
 
 
+EVIDENCE_DIR = REPO_ROOT / "var" / "datasets"  # research outputs written by the multi-year research
+
+
+def _load(path) -> dict | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+    except (OSError, ValueError):
+        return None
+
+
+def validated_net_edge() -> dict:
+    """Evidence of a positive edge after costs on unseen data, from the research this app ran.
+
+    Each source is True / False when its evaluation exists and None when it was never run;
+    only a True counts. A small in-sample simulation is not evidence.
+    """
+    datasets = EVIDENCE_DIR
+    report = _load(datasets / "research_daily_report.json") or {}
+    forecast = _load(datasets / "realistic_forecast.json") or {}
+    agents = _load(datasets / "agent_backtest.json") or {}
+    summary = report.get("summary") or {}
+    direction = forecast.get("direction_next_session") or {}
+    technical = ((agents.get("agents") or {}).get("technical_analyst") or {}).get("verdict") or {}
+    sources = {
+        "daily_direction_research": summary.get("direction_edge_supported") if summary else None,
+        "next_session_forecast": (direction.get("status") == "EDGE_SUPPORTED") if direction else None,
+        "technical_agent_replay": technical.get("edge_supported") if technical else None,
+    }
+    return {"supported": any(v is True for v in sources.values()), "sources": sources}
+
+
 def audit_paper_trading_readiness(session: Session | None = None) -> PaperReadinessReport:
     """Perform a comprehensive audit of all engineering and risk readiness gates."""
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -123,32 +155,22 @@ def audit_paper_trading_readiness(session: Session | None = None) -> PaperReadin
         blockers.append("BHAVCOPY_ADAPTER_MISSING")
 
     # --------------------------------------------------------------------------
-    # Gate 3: Quantitative Friction Absorption & Statutory Cost Coverage
+    # Gate 3: a positive edge after costs on data the strategy never saw
     # --------------------------------------------------------------------------
-    m33_artifact = REPO_ROOT / "var/datasets/m33_paper_simulation_results.json"
-    cost_covered = False
-    net_pnl = 0.0
-    fee_drag = 0.0
-    if m33_artifact.exists():
-        try:
-            with open(m33_artifact, "r", encoding="utf-8") as f:
-                sim_data = json.load(f)
-            net_pnl = sim_data.get("net_pnl_inr", 0.0)
-            fee_drag = sim_data.get("fee_drag_pct", 0.0)
-            cost_covered = net_pnl > 0.0 and fee_drag < 30.0
-        except Exception:
-            pass
-
+    edge = validated_net_edge()
+    cost_covered = edge["supported"]
     gates["GATE_3_COST_ABSORPTION"] = ReadinessGateResult(
         gate_id="GATE_3_COST_ABSORPTION",
-        name="Statutory Friction Absorption (STT, GST, NSE, Slippage)",
-        status="PASSED" if cost_covered else "WARNING",
-        description="Strategy must yield positive net PnL after all Indian statutory costs.",
-        verified_by="app.execution.paper_simulation_harness, m33_paper_simulation_results.json",
-        metrics={"net_pnl_inr": net_pnl, "fee_drag_pct": fee_drag, "cost_covered": cost_covered},
+        name="Positive Net Edge After Costs (unseen data)",
+        status="PASSED" if cost_covered else "FAILED",
+        description="A strategy must show a positive edge after STT, GST, exchange charges and slippage on unseen data.",
+        verified_by="research_daily_report.json, realistic_forecast.json, agent_backtest.json",
+        metrics=edge,
     )
     if not cost_covered:
-        notes.append("Friction absorption marginally positive; monitor high-turnover regimes.")
+        blockers.append("NO_VALIDATED_NET_EDGE_AFTER_COSTS")
+        notes.append("No strategy has shown a positive edge after costs on unseen data "
+                     "(direction research and the agent replay); paper simulation would only test plumbing.")
 
     # --------------------------------------------------------------------------
     # Gate 4: Volatility Parity & Half-Kelly Position Sizing

@@ -54,6 +54,7 @@ def test_cli_health_text_and_json(db):
     assert data["safety_invariants"]["live_broker_routing_enabled"] is False
 
 
+@pytest.mark.usefixtures("validated_edge")
 def test_cli_audit_command(db):
     """Verify audit command evaluates all 8 readiness gates and returns 0."""
     code_text, out_text = _run_cli(["audit"])

@@ -53,6 +53,7 @@ def test_m43_cli_health_and_json(capsys):
     assert data["safety_invariants"]["live_approved"] is False
 
 
+@pytest.mark.usefixtures("validated_edge")
 def test_m43_cli_audit_command(capsys):
     """Verify 8-Gate audit command executes via CLI with JSON output."""
     exit_code = main(["audit", "--json"])
@@ -121,6 +122,7 @@ def test_m43_hard_financial_safety_invariants_lock(db):
         session.close()
 
 
+@pytest.mark.usefixtures("validated_edge")
 def test_m43_all_eight_gates_certification(db):
     """Verify all 8 gates pass without blockers and live trading remains STRICT_NO_GO_LOCKED."""
     session = get_session_factory()()

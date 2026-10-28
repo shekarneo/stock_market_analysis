@@ -153,9 +153,11 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   2. **Multi-Instrument Overview Card (`<MultiInstrumentOverviewCard />`)**:
      - 3-card comparison grid for NIFTY 50, SENSEX, and CRUDEOIL MINI.
      - Displays Spot LTP, Day Change (pts & %), Session Phase (`OPEN` / `CLOSED`), Trading Hours, Data Source, and options support status.
+     - `Model Status`, from the backend catalog: `Range validated · direction: no edge` (NIFTY, SENSEX), `Data Gap Reported` (MCX crude) or `Not evaluated`.
   3. **Live Candlestick & Forward Projected Trend Chart (`<PredictedTrendChart />`)**:
      - Embedded directly on the overview desk to provide visual price context.
-     - Renders verified historical candlesticks (selectable 20, 35, or 50 bars), live streaming spot quotes, vertical cyan `NOW (Live Spot)` boundary line, forward projected 4-step trajectory path, expanding $\pm 1\sigma$ volatility confidence corridor, and target/stop badges.
+     - The candles come from the saved Groww 15-minute history of that index (NIFTY, BANKNIFTY, SENSEX), labelled by their IST clock time. They are as fresh as the last history fetch. MCX crude has no history, so the chart reports it unavailable.
+     - Renders historical candlesticks (selectable 20, 35, or 50 bars), live streaming spot quotes, vertical cyan `NOW (Live Spot)` boundary line, forward projected 4-step trajectory path, expanding $\pm 1\sigma$ volatility confidence corridor, and target/stop badges.
      - The projection, target, stop and `P(Up)` appear **only** when the live forecast is `ACTIVE`. Otherwise the chart shows candles only, `P(Up): N/A`, and a `No projection: <status>` label (hover for the reason, e.g. `STALE_FEATURES`, `NO_FITTED_MODEL`, `MODEL_NOT_DEPLOYED`). No default direction or probability is ever drawn.
   4. **Visual Multi-Agent Decision & Execution Cockpit (`<VisualAgentDecisionCard />`)**:
      - **Purpose**: Translates complex mathematical, macro, order flow, and regime assessments across 8 implemented LangGraph specialist agents and 4 research reference desks into high-impact visual indicators, meters, and cards instead of dense text paragraphs.
@@ -226,7 +228,7 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
      - `Blocker List (`<BlockerList />`)`: Renders active pipeline gate blockers as visual tag chips.
   6. **Market Tape & Verified Macro Indicators (`<Snapshot />`)**:
      - `<MarketBoard />`: Real-time quote cards across 10 domestic and global benchmarks (NIFTY, SENSEX, CRUDE MINI, INDIA VIX, S&P 500, NASDAQ, DOW JONES, US VIX, CRUDE OIL, USD/INR).
-     - `Verified Market Macro Indicators Grid`: Clean visual cards displaying live prints for India VIX (NSE Volatility), USD/INR (RBI Reference), MCX Crude Oil, MCX Gold, Dow Jones, and GIFT Nifty.
+     - `Verified Market Macro Indicators Grid`: Clean visual cards displaying live prints for India VIX (NSE Volatility), USD/INR, MCX Crude Oil, MCX Gold, Dow Jones, and GIFT Nifty. The USD/INR card names its actual feed, e.g. `ExchangeRate-API Live FX` or `ECB reference rate (via Frankfurter)`. These are unofficial live rates, not the RBI/FBIL reference. When the feed gives no day change, the change is shown as unknown, never as 0.
      - `Collapsible Feed Provenance & Compliance Archive`: Expandable `<details>` drawer cleanly archiving raw tick inspection tables, provider readiness metadata, and synthetic fixtures for compliance auditing without cluttering the executive view.
   7. **Diagnostics Grid (`<LiveQuotes />` & `<Quarantine />`)**:
      - **Live Quotes Reader (`<LiveQuotes />`)**: Direct inspection of raw quotes retrieved from Groww with domestic indices, MCX commodities, global benchmarks, and sectoral/volatility prints, plus `Read Groww quotes` button.
@@ -380,6 +382,7 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
   - Trading session hours, exchange tag (`NSE`, `BSE`, `MCX`), and session market state.
   - Commodity Instrument Tag: Dedicated `⚡ FUTURES` badge appears for MCX commodities (e.g. `CRUDEOILMINI`), recommending outright futures contracts (`CRUDEOILMINI FUTURES`) rather than call options.
   - Multi-Agent Bias & Signal: Stance badge (`STAND ASIDE (NO TRADE)`, `BUY_CE`, `BUY_PE`, `BUY_FUT`, or `SELL_FUT`). When the backend decision is `NO_TRADE` or active consensus vetoes exist, strictly enforces `STAND ASIDE (NO TRADE)` in red.
+    - Before any analysis has run for the card, the signal reads `NO SIGNAL (ANALYSIS NOT RUN)` and is never a default buy. The `⚡ Fire & Auto-Add` button is disabled and reads `⏸ Run the analysis first`.
     - One decision path: when gated, the backend also sets the market's `decision` to `NO_TRADE`, its options verdict to `NO_TRADE`, and clears target/stop premiums and per-lot risk on every listed strike (strike and any live entry premium remain for reference). The pre-gate signal is kept in `ungated_signal` for transparency.
     - A market whose call disagrees with its own fused bias (`CALL_CONFLICTS_WITH_FUSED_BIAS`) or with the consensus direction (`CALL_CONFLICTS_WITH_CONSENSUS` / `NO_DIRECTIONAL_CONSENSUS`) is gated individually.
     - For `BUY PE` calls the spot target is below the reference spot and the stop above it.
@@ -505,6 +508,7 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
     - **Heading**: `NIFTY Forecast for <date>` with the last completed close it is based on. The date is the next weekday; exchange holidays are not checked.
     - **Pills**:
       - `RANGE: RELIABLE`: the range model beat the naive forecast significantly on the holdout.
+      - `STALE: FOR <date>` (red): shown when the forecast's session has already passed. A red note under the header says to run Fetch history, then Run research, after the close, and the old numbers are dimmed.
       - `DIRECTION: EDGE SUPPORTED` (green) or `NO RELIABLE EDGE` (amber). Supported needs a development deflated Sharpe of at least 0.95 across every tuned trial and a holdout PSR of at least 0.9.
     - **Tiles**:
       - `Expected high–low range`: the session's expected high-to-low range in % and points, with the 90% band (about 1 session in 10 falls outside it).
@@ -649,10 +653,8 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
       - `🚀 End-to-End Suite & Leaderboard`: Switches to multi-dataset, multi-model cross-validation suite evaluating all combinations concurrently.
     - **Individual Model Controls**:
       - `Target Asset Dropdown`:
-        - `NIFTY`: NSE NIFTY 50 (6,227 M15 candles across 19 walk-forward folds).
-        - `BANKNIFTY`: NSE BANK NIFTY (6,227 M15 candles across 19 walk-forward folds).
-        - `SENSEX`: BSE SENSEX (6,831 M15 candles across 19 walk-forward folds).
-        - `CRUDEOILMINI`: MCX CRUDEOIL MINI (6,227 M15 candles across 19 walk-forward folds).
+        - `NIFTY`, `BANKNIFTY`, `SENSEX`: the saved Groww 15-minute history, using the most recent 8,000 completed bars (about 1.3 years) across 19 walk-forward folds.
+        - `CRUDEOILMINI`: disabled ("No Groww history"). The suite's dataset checkboxes disable it too, and `Select All` skips it.
       - `Model Architecture Dropdown`:
         - `lightgbm`: LightGBM GBDT (Leaf-Wise SOTA - M37).
         - `xgboost`: XGBoost Classifier (Regularized Boosting SOTA).
@@ -757,20 +759,43 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
 - **Purpose**: Operational health verification, data provenance audit, and statutory 8-Gate Paper Readiness certification.
 - **System Health Strip**:
   - Reports API server status (`HEALTHY`), SQLite database connectivity (`CONNECTED`), Operating Mode, Live Orders lock status (`LOCKED`), and Kill Switch state (`NORMAL (ARMED)`).
+- **Instrument Selector panel (`<InstrumentSelector />`)**:
+  - `Actual Data Source`: where the instrument's numbers come from. For NIFTY and SENSEX this is the Groww live quote with the day's OHLC, plus the saved Groww history.
+  - `Available History Depth`: read from the saved Groww history files, e.g. `45,908 15-minute + 1,694 daily candles (2020-01-01 to 2026-10-28)`. It reads "No saved history yet" when nothing has been fetched. It is never a fixed number.
+  - `Model Validation Status`:
+    - `RANGE VALIDATED` (green): the range forecasts were checked on unseen sessions; direction has no edge.
+    - `DATA FEED GAP` (red): MCX crude has no Groww history.
+    - `NOT EVALUATED` (amber): any other status.
 - **Instrument Data Health Card (`<InstrumentDataHealthCard />`)**:
-  - Verifies data provenance for the selected instrument.
-  - `Last price` shows `N/A` when no live quote exists; `Stored candles` is the actual persisted count (NIFTY is `DATA_GAP` when none are stored).
-  - Checks candle boundary alignment, holiday calendars, clock drift, and quarantine logs.
-- **V6 8-Gate Paper Readiness Certification Card (`<V6ReadinessAuditCard />`)**:
-  - Displays the 8 mandatory gates required for algorithmic trading:
-    1. Gate 1: Real Market Data Provenance (Groww/Exchange verified).
-    2. Gate 2: Invariant Checksums & Boundary Validation.
-    3. Gate 3: 19-Fold Walk-Forward Cross-Validation.
-    4. Gate 4: Statutory Friction & Slippage Accounting.
-    5. Gate 5: 12-Agent Deterministic Consensus.
-    6. Gate 6: Risk Budget & Hard Loss Limit Enforcement.
-    7. Gate 7: Fail-Closed Kill Switch & Emergency Stop.
-    8. Gate 8: Execution Isolation (Simulation vs Live Broker).
+  - Verifies data provenance for each instrument.
+  - `Last price` shows `N/A` when no live quote exists.
+  - `Stored candles`: the saved Groww 15-minute history plus any rows in the database table.
+  - `Health rating`:
+    - `HEALTHY` (green): history saved and a live quote present.
+    - `NO_LIVE_QUOTE` (amber): history saved but no live quote.
+    - `DATA_GAP` (red): nothing saved; fetch it on the Backtest page.
+    - `DATA_FEED_GAP` (red): MCX crude.
+  - `Authoritative Data Gap Disclosures`: one line per instrument, e.g. `45,908 saved Groww 15-minute candles, 2020-01-01 to 2026-10-28.`
+- **8-Gate Paper Readiness Audit Card (`<V6ReadinessAuditCard />`)**:
+  - Every number and status comes from `GET /api/research/paper-readiness`; nothing is hard-coded.
+  - **Header pills**:
+    - `n/8 GATES PASSED`: green when all pass, amber with warnings, red when a gate failed.
+    - `LIVE: STRICT_NO_GO_LOCKED`.
+  - **`Re-Run Readiness Audit`**: runs the audit again. If the audit cannot run, an error shows instead of a verdict.
+  - **Verdict banner**: `READY_FOR_PAPER_SIMULATION` only when no gate failed. Otherwise `BLOCKED`, with the blockers listed, e.g. `NO_VALIDATED_NET_EDGE_AFTER_COSTS`.
+  - **The 5 Financial Safety Invariants**: each flag's actual value; all must be `false`.
+  - **Gates**, each with its status pill (PASSED green, WARNING amber, FAILED red):
+    1. Hard financial safety boundaries.
+    2. NSE Bhavcopy reconciliation adapter (checks the module exists).
+    3. **Positive net edge after costs (unseen data).** Passes only when the daily direction research, the next-session forecast or the technical agent replay shows an edge after costs. Its `Evidence` line shows each source as `edge shown`, `no edge` or `not run`. Today all three show no edge, so the verdict is `BLOCKED`.
+    4. Volatility-parity sizing (checks the module exists).
+    5. Drift monitoring (checks the module exists).
+    6. Multi-agent consensus (checks the module exists).
+    7. Paper account ledger (checks the module exists).
+    8. Operational state and kill switch.
+  - **"Checks that the module exists, not its results"**: shown under gates 2 and 4–7, because those gates do not measure results.
+  - **Audit notes**: listed under the gates.
+  - **Kill switch bar**: `Trip / Clear Kill Switch` sends the change. The indicator then shows the server's state; a rejected change shows an error instead of a false state.
 - **Diagnostics Section**: Quick navigation links to secondary diagnostic tools.
 
 ---
@@ -790,7 +815,15 @@ Accessible via the collapsible `Tools Show (7) ▾` toggle in the left navigatio
 - **Cross-Provider Reconciliation Form**:
   - Compares historical prints between Provider A and Provider B within a specified tolerance (pts) to identify data errors.
 - **Interactive Candle Chart (`<InstrumentHistoricalChart />`)**:
-  - Canvas chart for reviewing ingested OHLCV bars.
+  - The latest 60 bars of the saved Groww history for NIFTY, BANKNIFTY or SENSEX (`GET /api/research/history-candles`), completed sessions only.
+  - **Timeframe buttons**:
+    - `15m`;
+    - `1H`: session-aligned hourly bars (09:15, 10:15, …) built from the 15-minute bars;
+    - `1D`.
+  - **Source line**: names the series and the time of the last fetch. When nothing is saved, it says to fetch history on the Backtest page.
+  - **High / Low (Window)**: taken from the plotted candles only, and `N/A` without them. They are never estimated from the live price.
+  - **MCX crude**: shows the data-gap explanation instead of a chart.
+  - **Footer**: the storage location and the interval.
 - **Quarantined Records Table**:
   - Displays candle files rejected due to timestamp ambiguity or data gaps.
 

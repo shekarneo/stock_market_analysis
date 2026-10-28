@@ -54,16 +54,14 @@ INSTRUMENT_CATALOG: dict[str, dict[str, Any]] = {
         "strike_step": strike_step_for("NIFTY"),
         "session_timings": "09:15 - 15:30 IST",
         "session_type": "NSE Regular Session",
-        "data_source": "Groww Trade API / Quarantined Storage",
-        "data_freshness": "Live / M15 Verified",
-        "available_history": "6,227 M15 Candles (2026-04-16 to 2026-10-14)",
-        "forecast_horizons": ["15m (HTF Resampled)", "1D Daily Swing"],
-        "validation_status": "VERIFIED_RESEARCH_DATASET",
+        "data_source": "Groww live quote (with day OHLC) + saved Groww history",
+        "data_freshness": "Live quote every 15 s; history as of the last fetch",
+        "available_history": None,  # filled from the saved Groww history (history_depth)
+        "forecast_horizons": ["Rest of day (15-minute checkpoints)", "Next session"],
+        "validation_status": "RANGE_VALIDATED",
         "models_validated": [
-            "Logistic Regression (M3)",
-            "Persistence Baseline (M3)",
-            "Majority Baseline (M3)",
-            "Regime-Gated HTF LightGBM (M37)",
+            "Next-session range (HAR, holdout-checked)",
+            "Rest-of-day range (per checkpoint, holdout-checked)",
         ],
         "options_supported": True,
         "options_provider": "NSE Option Chain",
@@ -92,12 +90,12 @@ INSTRUMENT_CATALOG: dict[str, dict[str, Any]] = {
         "strike_step": strike_step_for("SENSEX"),
         "session_timings": "09:15 - 15:30 IST",
         "session_type": "BSE Regular Session",
-        "data_source": "BSE Cash Feed / Groww LTP",
-        "data_freshness": "Live LTP Snapshot (Historical Ingestion Pending)",
-        "available_history": "Live Quotes / LTP (No persistent 15m dataset ingested)",
-        "forecast_horizons": ["15m (Experimental)", "1D Daily Swing"],
-        "validation_status": "INDEPENDENT_PROVENANCE_REQUIRED",
-        "models_validated": [],
+        "data_source": "Groww live quote (BSE, with day OHLC) + saved Groww history",
+        "data_freshness": "Live quote every 15 s; history as of the last fetch",
+        "available_history": None,  # filled from the saved Groww history (history_depth)
+        "forecast_horizons": ["Rest of day (15-minute checkpoints)"],
+        "validation_status": "RANGE_VALIDATED",
+        "models_validated": ["Rest-of-day range (per checkpoint, holdout-checked; history since Sep-2022)"],
         "options_supported": True,
         "options_provider": "BSE Derivative Chain",
         "options_note": "BSE Weekly/Monthly Option Contracts (Lot 20, Step 100) with Black-76 Greeks",
@@ -147,6 +145,37 @@ INSTRUMENT_CATALOG: dict[str, dict[str, Any]] = {
 }
 
 
+_depth_cache: dict[str, tuple[float, str]] = {}
+
+
+def history_depth(groww_symbol: str | None) -> str | None:
+    """What the saved Groww history actually holds, e.g. '45,907 15-minute + 1,694 daily candles (2020-01-01 to 2026-10-28)'."""
+    if not groww_symbol:
+        return None
+    from app.market import history_loader as hl
+
+    parts, first, last, stamp = [], None, None, 0.0
+    for interval, label in (("15minute", "15-minute"), ("1day", "daily")):
+        path = hl.series_path(groww_symbol, interval)
+        if not path.is_file():
+            continue
+        stamp += path.stat().st_mtime
+        key = f"{groww_symbol}:{interval}"
+        cached = _depth_cache.get(key)
+        if cached is None or cached[0] != path.stat().st_mtime:
+            doc = hl.load_series(groww_symbol, interval) or {}
+            cached = (path.stat().st_mtime, json.dumps([doc.get("candle_count"), doc.get("first"), doc.get("last")]))
+            _depth_cache[key] = cached
+        count, f, la = json.loads(cached[1])
+        if count:
+            parts.append(f"{count:,} {label}")
+            first = min(first, f[:10]) if first else f[:10]
+            last = max(last, la[:10]) if last else la[:10]
+    if not parts:
+        return "No saved history yet (fetch it on the Backtest page)"
+    return f"{' + '.join(parts)} candles ({first} to {last})"
+
+
 def get_supported_instruments() -> list[dict[str, Any]]:
     """Return all configured instruments with active session status."""
     now = datetime.now(timezone.utc)
@@ -154,6 +183,8 @@ def get_supported_instruments() -> list[dict[str, Any]]:
     for inst_id, cfg in INSTRUMENT_CATALOG.items():
         sess = assess_market_session(inst_id, now)
         item = dict(cfg)
+        if item.get("available_history") is None:
+            item["available_history"] = history_depth(item.get("groww_symbol"))
         item["is_market_open"] = sess.is_open
         item["market_state"] = sess.market_state.value
         item["session_phase"] = sess.session_phase.value
@@ -563,6 +594,18 @@ def get_instrument_backtest(instrument: str) -> dict[str, Any]:
     }
 
 
+def _saved_15m(groww_symbol: str | None) -> dict | None:
+    """Count and span of the saved Groww 15-minute history, or None when nothing is saved."""
+    if not groww_symbol:
+        return None
+    depth = history_depth(groww_symbol)  # fills the cache from the file's own counts
+    cached = _depth_cache.get(f"{groww_symbol}:15minute")
+    if not depth or cached is None:
+        return None
+    count, first, last = json.loads(cached[1])
+    return {"count": count, "first": first, "last": last} if count else None
+
+
 def get_instrument_data_health(session: Session | None = None) -> dict[str, Any]:
     """Audit real-time and persistent data health across all 3 primary instruments."""
     now = datetime.now(timezone.utc)
@@ -586,22 +629,24 @@ def get_instrument_data_health(session: Session | None = None) -> dict[str, Any]
     for inst_id, cfg in INSTRUMENT_CATALOG.items():
         sess = assess_market_session(inst_id, now)
 
-        if inst_id == "NIFTY":
-            q = quotes.get("NIFTY")
+        if inst_id in ("NIFTY", "SENSEX"):
+            # Candles: the saved Groww history (multi-year fetch) plus any rows in the database table
+            q = quotes.get(inst_id)
             last_px = float(q["last_price"]) if q and q.get("last_price") is not None else None
-            stored_cnt = stored_counts.get("NSE-NIFTY", 0)
-            status = "HEALTHY_VERIFIED" if stored_cnt > 0 and last_px is not None else "DATA_GAP"
+            symbol = cfg["groww_symbol"]
+            saved = _saved_15m(symbol)
+            stored_cnt = (saved["count"] if saved else 0) + stored_counts.get(symbol, 0)
+            if saved and last_px is not None:
+                status = "HEALTHY"
+            elif saved:
+                status = "NO_LIVE_QUOTE"
+            else:
+                status = "DATA_GAP"
             gap_note = (
-                f"{stored_cnt:,} persisted NIFTY candles in storage."
-                if stored_cnt > 0
-                else "No persisted NIFTY candles found in storage."
+                f"{saved['count']:,} saved Groww 15-minute candles, {saved['first'][:10]} to {saved['last'][:10]}."
+                if saved
+                else f"No saved {inst_id} history. Fetch it on the Backtest page (Multi-Year Research)."
             )
-        elif inst_id == "SENSEX":
-            q = quotes.get("SENSEX")
-            last_px = float(q["last_price"]) if q and q.get("last_price") is not None else None
-            stored_cnt = stored_counts.get("BSE-SENSEX", 0)
-            status = "PARTIAL_LTP_ONLY"
-            gap_note = "Historical candle dataset pending ingestion. Live LTP snapshot verified via BSE feed."
         else:  # CRUDEOILMINI
             q = commodities.get("CRUDEOILMINI") or commodities.get("CRUDEMINI")
             last_px = float(q["last_price"]) if q and q.get("last_price") is not None else None

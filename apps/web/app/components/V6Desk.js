@@ -548,7 +548,7 @@ export default function V6Desk({ defaultTab = "trades", hideTickers = false } = 
                           </div>
                         ) : (
                           <div style={{ fontSize: "0.68rem", color: "var(--muted)", marginTop: "6px" }}>
-                            <span>{q.instrument === "SENSEX" ? "BSE CASH Spot Quote (Groww LTP)" : (q.instrument.includes("CRUDE") ? "MCX Live Commodity Feed" : "Live Market Feed")}</span>
+                            <span>{q.instrument === "SENSEX" ? (q.ohlc ? "BSE CASH Spot Quote (Groww quote)" : "BSE CASH Spot Quote (Groww LTP)") : (q.instrument.includes("CRUDE") ? "MCX Live Commodity Feed" : "Live Market Feed")}</span>
                           </div>
                         )}
                       </div>
