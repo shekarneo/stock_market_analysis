@@ -25,6 +25,15 @@ from app.main import app
 from app.settings import get_settings
 
 
+@pytest.fixture(autouse=True)
+def isolated_forecast_log(tmp_path, monkeypatch):
+    """The forecast log is the operator's record of what was shown; tests never write to it."""
+    from app.research import forecast_log
+
+    monkeypatch.setattr(forecast_log, "LOG_PATH", tmp_path / "forecast_log.jsonl")
+    monkeypatch.setattr(forecast_log, "_logged_keys", None)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def keep_real_quarantine_clean():
     """Some tests write fixture chunks into the real var/history/quarantine. Remove only the

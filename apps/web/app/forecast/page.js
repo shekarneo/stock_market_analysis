@@ -8,6 +8,7 @@ import InstrumentForecastCard from "../components/InstrumentForecastCard";
 import PredictedTrendChart from "../components/PredictedTrendChart";
 import RealisticForecastCard from "../components/RealisticForecastCard";
 import IntradayRangeCard from "../components/IntradayRangeCard";
+import ForecastTrackRecordCard from "../components/ForecastTrackRecordCard";
 import AgentTrackRecordCard from "../components/AgentTrackRecordCard";
 import { flagLabel } from "../research/status.mjs";
 import { observationClass, valueText } from "../research/present.mjs";
@@ -56,6 +57,7 @@ export default function ForecastPage() {
         <>
           <IntradayRangeCard />
           <RealisticForecastCard />
+          <ForecastTrackRecordCard />
           <AgentTrackRecordCard />
           <PredictedTrendChart />
           <InstrumentForecastCard />

@@ -134,6 +134,14 @@ def perform_live_sync(session: Session, settings: Settings, caller: Any = None) 
     except Exception as exc:
         logger.warning("Snapshot merge failed during live sync: %s", exc)
 
+    # Put each index's rest-of-day forecast on the record as a checkpoint passes (scored after the close)
+    try:
+        from app.research.forecast_log import log_live_intraday
+
+        log_live_intraday(now=now_ist)
+    except Exception as exc:
+        logger.warning("Forecast log failed during live sync: %s", exc)
+
     # Evaluate open watchlist items against the fresh quotes
     try:
         with session.begin_nested():

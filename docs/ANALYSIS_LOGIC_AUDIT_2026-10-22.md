@@ -488,3 +488,28 @@ Still open:
 - **SENSEX:** Groww's history starts in Sep-2022, so its holdout is only 85 sessions and its coverage numbers are less certain.
 - **MCX crude:** no model. Groww's historical API does not serve MCX, so a crude model cannot be tested.
 - **Replay of 23-Oct** at 10:15, 12:15 and 14:15: the rest-of-day high and low of all three indices stayed inside the 90% levels at every checkpoint.
+
+## First unseen sessions and the live forecast log (2026-10-28)
+
+**Out-of-sample check on 26 and 27 Oct.** The models were trained, and the daily forecast made, on data up to 23-Oct. The app itself was down over these days, so the forecasts were rebuilt from the data that existed at the time.
+- **Next-session NIFTY range:**
+  - 26-Oct: forecast 2.07%, actual 1.90%;
+  - 27-Oct: forecast 2.09%, actual 2.14%.
+  Both were inside the 68% band. Direction (P(up) 0.54, the base rate) went up one day and down the other.
+- **Rest-of-day** (48 checkpoints per index):
+
+  | Index | Range in 90% band | High under 90% level | Low above 90% level | Typical size miss |
+  |---|---|---|---|---|
+  | NIFTY | 98% | 92% | 98% | ±20% |
+  | BANKNIFTY | 96% | 100% | 98% | ±33% |
+  | SENSEX | 98% | 94% | 100% | ±20% |
+
+- **Close 68% band:** held on only 48–58% of checkpoints.
+- **Sample:** two sessions; the checkpoints within a day are not independent.
+
+**Live forecast log** (`app/research/forecast_log.py`, `var/analysis/forecast_log.jsonl`): the stronger test is what the cards actually showed.
+- **Daily:** published next-session forecasts are logged once per target session, before it opens.
+- **Intraday:** the poller logs each index's rest-of-day forecast within 2 minutes of every checkpoint.
+- **Scoring:** after each history fetch and research run, against completed sessions only. Records are never edited except to add their outcome once.
+- **Where to see it:** `GET /api/research/forecast-track-record` and the Forecast Track Record card. The card marks fewer than 20 sessions as too early to judge.
+- **Tests:** an autouse fixture keeps them away from the real log.

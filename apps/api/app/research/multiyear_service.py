@@ -220,6 +220,13 @@ def run_realistic_forecast(*, output: Path | None = None, log: Callable[[str], N
     tmp = out.with_suffix(".tmp")
     tmp.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
     tmp.replace(out)
+    if output is None:  # a published forecast goes on the record before its session happens
+        from app.research.forecast_log import record_daily
+
+        try:
+            record_daily(report)
+        except Exception as exc:  # noqa: BLE001 - logging never blocks publishing
+            log(f"Forecast log not written: {exc}")
     return report, out
 
 

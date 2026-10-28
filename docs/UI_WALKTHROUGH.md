@@ -514,6 +514,27 @@ Located immediately beneath the page header across trading desks (`/dashboard`, 
     - **Full view only**: the next half-day direction, the raw model output labelled unreliable when there is no edge, the caveats, and when the forecast was generated.
     - **Compact view** (dashboard): the first three tiles and a `Details →` link to `/forecast`.
     - **No forecast yet**: a note says how to create one (Backtest → Multi-Year Research → Fetch history, then Run research; or `python -m app.cli forecast-daily`).
+  - **Forecast Track Record (live) Card (`<ForecastTrackRecordCard />`)** (`GET /api/research/forecast-track-record`):
+    - **Purpose**: the live test of the two forecast cards above. It scores the numbers they actually showed, saved before the outcome existed and never edited, against the Groww closes that followed. Backtests rebuild old forecasts; this card records real ones.
+    - **What is logged** (`var/analysis/forecast_log.jsonl`):
+      - The next-session NIFTY range forecast, once per target session, when the research run publishes it before that session opens. A rebuild for the same session, or one made after it opened, is not logged.
+      - The rest-of-day forecast of each index (NIFTY, BANKNIFTY, SENSEX) at every 15-minute checkpoint, saved by the live poller within 2 minutes of the checkpoint.
+      - A checkpoint the app was not running for is missing, never filled in.
+    - **Scoring**: after each history fetch and each research run, against completed sessions only. The rest-of-day forecasts need that day's full 15-minute history (25 bars).
+    - **Header**:
+      - Subtitle: the date of the first record.
+      - Sample pill: amber `EARLY: n SESSIONS` while fewer than 20 sessions are scored (too few to judge), then `n SESSIONS`.
+    - **Next-session NIFTY range**:
+      - Summary line: how often the actual range was inside the 68% and 90% bands, and how often the close move stayed within its 9-in-10 limit.
+      - Table of the last 15 forecasts: session, forecast range, 68% / 90% bands, actual range.
+      - Result pill: `IN 68% BAND` (green), `IN 90% BAND` (amber), `OUTSIDE 90%` (red) or `PENDING`.
+    - **Rest-of-day table**, one row per index:
+      - checkpoints scored of logged (sessions);
+      - range inside its 90% and 68% bands;
+      - rest-of-day high under its 90% level, and low above its 90% level;
+      - close inside its 68% band;
+      - typical size miss: the geometric mean of actual ÷ forecast, shown as ±%.
+    - **Reading it**: 90% bands should hold about 90% of the time and 68% bands about 68%. Much higher means the bands are too wide; much lower means they are too narrow.
   - **Agent Track Records Card (`<AgentTrackRecordCard />`)** (`GET /api/research/agents`):
     - **Purpose**: shows how often each agent's calls were actually right, so its suggestions can be weighed by evidence. Agent calls are locked to their scored rule: the LLM may add an explanation but cannot change a call's direction or confidence.
     - **Header pill**: `TECHNICAL: TRADEABLE EDGE` (green) or `NO TRADEABLE EDGE` (amber). A tradeable edge needs the unseen period to beat 50% and the same-bias baseline (p < 0.05), and to make money after index-futures costs.

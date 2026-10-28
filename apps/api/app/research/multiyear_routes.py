@@ -170,6 +170,15 @@ def read_intraday_range(
     return _finite(svc.live_intraday_forecast(instrument))
 
 
+@router.get("/api/research/forecast-track-record")
+def read_forecast_track_record(request: Request, settings: Settings = Depends(_settings)) -> dict:
+    """The forecasts the cards showed, logged when shown, scored against the closes that followed."""
+    from app.research import forecast_log
+
+    read_session(request, settings)
+    return _finite(forecast_log.summarize())
+
+
 @router.get("/api/research/agents")
 def read_agent_track_records(request: Request, settings: Settings = Depends(_settings)) -> dict:
     """Historical backtest of the price-based agents and the forward scorecard of every agent."""
@@ -219,6 +228,10 @@ def start_fetch(
 
             result["scorecard_scoring"] = score_from_saved_history()
             log(f"Agent scorecard: {result['scorecard_scoring']}")
+        from app.research import forecast_log
+
+        result["forecast_log_scoring"] = forecast_log.score_from_saved_history()
+        log(f"Forecast log: {result['forecast_log_scoring']}")
         return result
 
     job = _start("fetch", params, work)
@@ -244,6 +257,9 @@ def start_research(
         forecast, fpath = svc.run_realistic_forecast(log=log)
         log(f"Forecast for {forecast.get('for_session')} written to {fpath.name}")
         intraday = svc.run_intraday_ranges(log=log)  # an index without 15m history is reported, not fatal
+        from app.research import forecast_log
+
+        log(f"Forecast log: {forecast_log.score_from_saved_history()}")
         agents = None
         try:
             agents = svc.run_agent_evaluation(log=log)

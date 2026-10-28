@@ -108,8 +108,10 @@ def test_fetch_job_uses_service_and_validates(api, monkeypatch):
     assert api.post("/api/research/multiyear/fetch", json=body).status_code == 200
     job = api.get("/api/research/multiyear").json()["job"]
     assert job["status"] == "SUCCEEDED" and "fetched" in job["log"]
-    assert job["log"][-1].startswith("Agent scorecard:")  # a NIFTY 1day fetch scores pending calls
+    assert any(line.startswith("Agent scorecard:") for line in job["log"])  # a NIFTY 1day fetch scores pending calls
+    assert job["log"][-1].startswith("Forecast log:")  # and the logged forecasts
     assert job["result"]["scorecard_scoring"] == {"records": 0, "newly_scored": 0, "pending": 0}
+    assert job["result"]["forecast_log_scoring"] == {"records": 0, "newly_scored": 0, "pending": 0}
     assert calls["token"] == "tok" and calls["symbols"] == ["NIFTY", "INDIAVIX"]
     assert api.session_stub.added[-1].action == "research.multiyear.fetch"
 
